@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 #include "Keys.h"
+#include "AgentLog.h"
 #include "Music.h"
 #include "Sections.h"
 
@@ -521,8 +522,27 @@ public:
 	void KeepListen(const std::string &Text) { m_LastListen = Text; }
 	const std::string &LastListen() const { return m_LastListen; }
 
+	// Which song is open, for its agent log (AgentLog.h): Serial changes whenever another song comes in its place (File >
+	// New, Open, a song from the tools), FileName is its file's name ("Town.ftm", "" while it has none). A host without
+	// songs of its own (this default) keeps one log
+	virtual void SongIdentity(long long &Serial, std::string &FileName)
+	{
+		Serial = 0;
+		FileName.clear();
+	}
+	// The open song's agent log (write_log, read_user_notes, the change lines AfterCall writes, View > Agent log): read
+	// from the file next to the song (AgentLogFileName) when another song comes, kept by the host while it runs
+	AgentLog &Log();
+	// Writes the log next to the song (SaveFile) when it changed since and the song has a file; a song without one keeps
+	// it until its first save (or Save As), which the next Log or SaveLog notices. False with the reason
+	bool SaveLog(std::string &Error);
+
 private:
 	std::string m_LastListen;
+	AgentLog m_Log;
+	bool m_LogFollowed = false;
+	long long m_LogSerial = 0;
+	std::string m_LogFile;
 };
 
 }	// namespace ftapi

@@ -95,6 +95,8 @@ const int ACT_MCP_TEMPO = 0x1100;		// action ID, away from the others
 const int ACT_MCP_METER = 0x1101;
 const UINT WM_MCP_REQUEST = WM_APP + 0x3C1;
 const UINT_PTR PLAY_TIMER = 1;
+const UINT_PTR LOG_TIMER = 2;	// the agent log written next to the song once it has a file (its first save, Save As)
+const UINT LOG_MS = 2000;
 const TCHAR WINDOW_CLASS[] = _T("FamiTrackerClaudeCode");
 const TCHAR WSL_HELPER[] = _T("famitracker-mcp.exe");	// for Claude Code in WSL (Api/Bridge.h)
 const char SECTIONS_REFUSED[] = "FamiTracker can't keep those sections: each is a run of the track's frames, apart from the "
@@ -712,10 +714,13 @@ public:
 
 	void Shutdown()
 	{
+		if (!m_bStopping)
+			KeepLog();	// the agent log's last lines, next to the song
 		m_bStopping = true;
 		m_Server.Stop();
 		if (m_hWindow != NULL) {
 			KillTimer(m_hWindow, PLAY_TIMER);
+			KillTimer(m_hWindow, LOG_TIMER);
 			DestroyWindow(m_hWindow);
 			m_hWindow = NULL;
 		}
@@ -1829,6 +1834,36 @@ public:
 
 	const std::vector<ftapi::ToolInfo> &ToolList() const { return m_Tools.List(); }
 
+	// The agent log (Api/AgentLog.h): the open song is the document's, by its serial (another one with each File > New
+	// or Open) and its file's name; none while a song is being read in
+	void SongIdentity(long long &Serial, std::string &FileName)
+	{
+		Serial = 0;
+		FileName.clear();
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL || !pDoc->IsFileLoaded())
+			return;
+		Serial = static_cast<long long>(pDoc->GetSongSerial()) + 1;
+		const CString Path = pDoc->GetPathName();
+		if (!Path.IsEmpty())
+			FileName = Utf8(Path.Mid(Path.ReverseFind(_T('\\')) + 1));
+	}
+
+	// For View > Agent log, between the tools' calls
+	ftapi::AgentLog *SongLogForWindow()
+	{
+		return m_bBusy ? NULL : &Log();
+	}
+
+	// Written next to the song when it changed (the tools write it after each call; this catches a song's first save)
+	void KeepLog()
+	{
+		if (m_bBusy || m_bStopping)
+			return;
+		std::string Error;
+		SaveLog(Error);
+	}
+
 	bool CanChange(std::string &Why)
 	{
 		CFamiTrackerDoc *pDoc = Doc();
@@ -2780,6 +2815,10 @@ private:
 			pLink->CheckPlayback();
 			return 0;
 		}
+		if (pLink != NULL && Message == WM_TIMER && wParam == LOG_TIMER) {
+			pLink->KeepLog();
+			return 0;
+		}
 		return DefWindowProc(hWnd, Message, wParam, lParam);
 	}
 
@@ -2795,8 +2834,10 @@ private:
 		Class.lpszClassName = WINDOW_CLASS;
 		RegisterClass(&Class);	// fails harmlessly when already registered
 		m_hWindow = CreateWindowEx(0, WINDOW_CLASS, _T(""), 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, AfxGetInstanceHandle(), NULL);
-		if (m_hWindow != NULL)
+		if (m_hWindow != NULL) {
 			SetWindowLongPtr(m_hWindow, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+			SetTimer(m_hWindow, LOG_TIMER, LOG_MS, NULL);
+		}
 	}
 
 	bool Listen(CString &Error)
@@ -3320,6 +3361,16 @@ bool CMcpConnection::Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std
 int CMcpConnection::MakeSound(const ftapi::SoundEntry &Sound, std::string &Error)
 {
 	return m_pImpl->Link.MakeSound(Sound, Error);
+}
+
+ftapi::AgentLog *CMcpConnection::SongLog()
+{
+	return m_pImpl->Link.SongLogForWindow();
+}
+
+void CMcpConnection::SaveAgentLog()
+{
+	m_pImpl->Link.KeepLog();
 }
 
 bool CMcpConnection::IsBusy() const

@@ -25,7 +25,7 @@
 #include <vector>
 
 class CMainFrame;
-namespace ftapi { struct TrackHarmony; struct SoundEntry; struct ToolInfo; }
+namespace ftapi { struct TrackHarmony; struct SoundEntry; struct ToolInfo; class AgentLog; }
 
 // File > Connect Claude Code: FamiTracker as an MCP server, so Claude Code on
 // the same computer can work on the open song in musical terms (the tools are
@@ -74,6 +74,10 @@ public:
 	// reference_sound makes it: its index. False, or -1, with the reason when busy with Claude Code or without a song.
 	bool Sounds(int Cursor, std::vector<ftapi::SoundEntry> &Out, std::string &Error, bool Library = true);
 	int MakeSound(const ftapi::SoundEntry &Sound, std::string &Error);
+	// The open song's agent log (Api/AgentLog.h), for View > Agent log; NULL while a tool runs. SaveAgentLog writes it
+	// next to the song when it changed and the song has a file
+	ftapi::AgentLog *SongLog();
+	void SaveAgentLog();
 
 private:
 	struct Impl;

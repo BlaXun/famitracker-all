@@ -175,7 +175,10 @@ public:
 private:
 	// After a call, so undo says what it undoes and a call that failed leaves nothing of its own to undo: the change a
 	// call made gets its label (SongHost::LabelUndo), what a call that failed had changed is taken back
-	void AfterCall(const std::string &Name, long long UndoBefore, ToolResult &Result);
+	void AfterCall(const std::string &Name, const Json &Args, long long UndoBefore, ToolResult &Result, const Caller &Who);
+	// Then the agent log (AgentLog.h): the change lines and errors AfterCall added are written next to the song, and a
+	// client hears of notes from the user it hasn't read
+	void AfterLog(const std::string &Name, const Json &Args, ToolResult &Result, const Caller &Who);
 
 	SongHost &m_Host;
 	std::vector<ToolInfo> m_Tools;

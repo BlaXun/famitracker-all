@@ -239,6 +239,7 @@ BEGIN
         MENUITEM "Problems",                    ID_VIEW_PROBLEMS
         MENUITEM "What next",                   ID_VIEW_WHATNEXT
         MENUITEM "Ask",                         ID_VIEW_ASK
+        MENUITEM "Agent log",                   ID_VIEW_AGENTLOG
         MENUITEM "Mixer",                       ID_VIEW_MIXER
         MENUITEM SEPARATOR
         POPUP "Frame editor position"
@@ -627,6 +628,7 @@ BEGIN
     ID_VIEW_PROBLEMS        "What doesn't sound right in the track (notes that vanish, clicks, clashes...), listed and marked in the song\nProblems"
     ID_VIEW_WHATNEXT        "The song's one next step in plain words, why, and a button that does it\nWhat next"
     ID_VIEW_ASK             "Ask your own model about the song or about making music, or let it work on the song\nAsk"
+    ID_VIEW_AGENTLOG        "What agents did in the song and why, by category, with a box for notes to them\nAgent log"
     ID_VIEW_MIXER           "Each channel's level and pan, with meters, mute and solo, saved with the song\nMixer"
     ID_VIEW_PIANOROLL       "Show the song as a piano roll: notes on a grid, time from left to right\nPiano roll"
     ID_VIEW_PATTERNEDITOR   "Show or hide the pattern editor, the channel grid; while it's hidden, the piano roll takes its place\nPattern editor"

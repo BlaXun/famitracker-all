@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 38 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 40 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -1000,7 +1000,8 @@ the writes kept back would leave them, so `TryWrite` hears a variation's
 or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRACKER_PRINT`
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
-(`CoreTools`) is `what_next` and every tool its steps call and `explain`, 38 (with `song_shape` and `listen`), not
+(`CoreTools`) is `what_next` and every tool its steps call and `explain`, 38 (with `song_shape` and `listen`; 40 with
+the agent log's `write_log` and `read_user_notes`), not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -1836,6 +1837,47 @@ of the finished soundtrack moves and `what_next` asks no new step on its 79
 tracks; a local model's calm song went from 46 clashes to 14 (2 worth fixing,
 a held third under the tune, and 12 passing notes over the pads' thirds) in
 one call. `TestClashFix` covers it.
+
+Agent log (from `feat-agent-log`, GitHub issue #5): `Source/Api/AgentLog.cpp`
+(portable) keeps a song's log, `AgentLog`: entries of a `log_category_t`
+(write_log's seven, `LOG_WRITTEN`, then `LOG_CHANGE` and `LOG_USER`, the
+user's notes with `Read`), each with a `LogTime` to the minute
+(`LogTimeNow`, this computer's), its text cleaned by `CleanLogText` (at most
+`MAX_LOG_TEXT` bytes; an error just like the newest isn't added twice), and
+the file next to the song (`AgentLogFileName`: "Town agent log.md";
+`FileText` and `ReadFileText`, a line an entry, "2026-10-30 22:31  [Fix]
+text", "[You, unread]", further lines indented two spaces, the newest that fit
+900 KB, since `CMcpLink::ReadFile` reads 1 MB). The host keeps it:
+`SongHost::Log` follows `SongIdentity` (a serial that changes with another
+song, the document's `GetSongSerial` in `CMcpLink`, none while a song is
+read in, and the file's name), reads the file when another song comes and
+marks the whole log unsaved when the same song gets a file (its first save,
+Save As); `SaveLog` writes it through `SaveFile` when it changed, after every
+call (`ToolSet::AfterLog`) and on `CMcpLink`'s `LOG_TIMER` (2 s, and at
+`Shutdown`), so a song saved for the first time gets its log within
+seconds; the `.ftm` format doesn't change. `write_log` and `read_user_notes`
+(`WriteLogTool`, `ReadUserNotesTool` before `ToolSet::Call`, which runs them
+without a song) are read-only for the song, reading in `AssistantToolKinds`,
+and in `CoreTools`; `AfterCall` (which takes the call's arguments and its
+`Caller` now) adds a change line with the undo label (`ChangeLabel`) for
+every call that moved `UndoSerial` and, for `BESIDE_UNDO`'s tools and a
+clip saved, every call that `AssistantCallChanges` says changes, and an
+error line for a failed call from a client or of a tool that isn't
+read-only (FamiTracker's panels ask check_song and what_next again and
+again); `AfterLog` ends a client's replies (not JSON, not
+read_user_notes') with a line while notes wait unread. View > Agent log
+(`ID_VIEW_AGENTLOG`, `Source/AgentLogPanel.cpp`, a bar in
+`PlaceBottomPanel`'s row or on the right, after Ask in `ArrangeBars`, its
+registry section "Agent log panel" with the categories hidden as bits,
+"Hidden") reads the log through `CMcpConnection::SongLog` (NULL while a tool
+runs) on a 300 ms timer by its `Version`, draws the list off screen
+(`CAgentLogList`, the time, a tag in `TAG_COLORS`, Okabe and Ito's as
+`ROLE_COLORS`, with the category's name in it, the text wrapped with
+`DrawTextW`; the user's notes say whether an agent read them), keeps to the
+bottom unless scrolled up (`Stick`), and adds a note with `LOG_USER`, then
+`CMcpConnection::SaveAgentLog`. FakeSong's `SongIdentity` counts `SongSerial`
+(New, Open, OpenText) and `FilesBeside` leaves the log out of the tests that
+count the files next to the song. `TestAgentLog` covers it.
 
 ## What this repository is
 

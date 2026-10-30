@@ -975,6 +975,11 @@
 #define IDC_ASK_TALK                    2536
 #define IDC_ASK_SETUPHELP               2537
 #define ID_VIEW_ASK                     38000
+#define IDC_AGENTLOG_NOTE               2660
+#define IDC_AGENTLOG_SEND               2661
+#define IDC_AGENTLOG_CLEAR              2662
+#define IDC_AGENTLOG_LIST               2663
+#define ID_VIEW_AGENTLOG                38160
 
 // Next default values for new objects
 // 

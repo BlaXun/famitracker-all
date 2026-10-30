@@ -106,8 +106,8 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 38 of them:
-`what_next`, the tools its steps call and `explain`. Reading and writing: `get_song`,
+clear step better than a list of eight tips. `/mcp/core` serves 40 of them:
+`what_next`, the tools its steps call, `explain` and the agent log's two. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
 `find_sound`, `reference_sound`, `set_instrument`; parts:
@@ -119,7 +119,8 @@ frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
 song heard as FamiTracker plays it), `finish_song` (the last of them in one
 call); and `play`, `stop`, `save_song`,
 `export_for_game`, `get_recipe` and `explain` (the glossary's words for a
-term, to explain things to you in). Not `set_mixer`:
+term, to explain things to you in), `write_log` and `read_user_notes` (see
+[The agent log](#the-agent-log-why-and-notes-back)). Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
 its mix). Its instructions are a page instead of four, built around a
 loop: ask `what_next`, make the call it gives, ask again until it says done
@@ -421,7 +422,7 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
 - **Key**: only if the server wants one (`llama-server --api-key`); it's
   kept encrypted for your Windows account (DPAPI), never as plain text.
 - **Tools**: all of them (the default, for big models with a big context)
-  or the small set (`/mcp/core`'s 38, with its short instructions and short
+  or the small set (`/mcp/core`'s 40, with its short instructions and short
   replies) for smaller models, or a context under 64K.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then
@@ -952,6 +953,51 @@ and `findings`, heard worst first as in the text. Each finding has:
   click); a fix with calls after it is Claude's to make, and **Explain**
   gives its calls.
 
+## The agent log: why, and notes back
+
+**View > Agent log** shows what an agent working on the song did and why, in
+its own words, newest at the bottom: each line has its time, a colored tag
+with its category's name in it (Idea, Plan, Research, Fix, Check, Note,
+Error) and the text. The agent writes them with `write_log` as it goes:
+
+```
+write_log {"text": "Chose D dorian for the cave: dark but not sad.", "category": "plan"}
+```
+
+FamiTracker adds a quieter grey line of its own for every change a tool
+makes, labelled as Edit > Undo labels it (`write_notes: 12 notes on 2A03
+Pulse 1, bars 1-4`), also for what undo doesn't take back (a clip, a sound
+added, a file saved), whether Claude Code, the Ask panel or one of
+FamiTracker's own panels asked for it, and a red Error line for a call that
+failed (any of an agent's, and those of FamiTracker's windows that would have
+changed something). The toggles along the top show or hide each category,
+the change lines (Changes) and your notes (You); FamiTracker remembers them.
+**Clear** empties the song's log after asking; a right-click copies the lines
+shown or docks the panel along the bottom or on the right.
+
+Under the list, **Note for the agent** takes a note to the agents: Enter
+sends it (Shift+Enter starts a new line). It shows in the log as yours,
+"Not read by an agent yet" until an agent calls `read_user_notes`, which
+gives it the notes it hasn't read with their times and marks them read. While
+a note waits, the replies to a connected agent's other calls end by saying
+so, so it doesn't have to ask after every step; the instructions tell it to
+call `read_user_notes` between steps anyway.
+
+The log is the open song's. FamiTracker keeps it while it runs and in a
+text file next to the song, `<song> agent log.md` (`Town agent log.md` for
+`Town.ftm`), one line an entry:
+
+```
+2026-10-30 22:31  [Fix]  The bass walks now; it sat on roots for 8 bars.
+2026-10-30 22:32  [Change]  write_notes: 32 notes on 2A03 Triangle, bars 1-8
+2026-10-30 22:35  [You, unread]  Keep the hook, it's the best part.
+```
+
+It's written as the log changes once the song has a file, and read back when
+the song opens again. A song not saved yet keeps its log in memory and
+writes it next to the song when it's first saved. The `.ftm` file itself
+doesn't change.
+
 ## What Claude can do (the tools)
 
 | Tool | What it does |
@@ -993,6 +1039,8 @@ and `findings`, heard worst first as in the text. Each finding has:
 | `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `explain` | A music, sound or tracker term in plain words, as FamiTracker's glossary (**Help > Glossary**) explains it to you: what it is, an everyday comparison, where it is in FamiTracker, what its Hear it example plays and the terms to see too; an effect as written (`447`) with what its numbers do. Without a term, the terms by category. See [The glossary](#the-glossary) |
+| `write_log` | Writes a line into FamiTracker's agent log (**View > Agent log**): `text`, and a `category` (idea, plan, research, fix, check, note or error; note when none is given; any other is refused with the list). FamiTracker stamps the time; the song and its undo history stay as they are. See [The agent log](#the-agent-log-why-and-notes-back) |
+| `read_user_notes` | The notes you wrote to the agents in the agent log's note box since they last read them, each with its time, marked read; "No new notes from the user." when there are none. `all` true gives every note |
 | `check_exercise` | One of FamiTracker's exercises for newcomers (**Help > Exercises**) checked on the selected track as its Check button checks it: what's right already, the one thing to change next in plain words, the bars that show it, and once it passes, what it taught and the exercise after it (`format` `json`: the same as data). Without an exercise, the list. See [Exercises](#exercises) |
 | `reference_sound` | Adds one of a reference's sounds to the song as an instrument, with the original's exact envelopes, and says when it's gone so fast that a tune's notes on it would sound missing. It also takes a track of the twelve soundtracks FamiTracker carries by its id (`castlevania-02`), with or without the library. An FDS game's sound plays on the FDS channel with its own wave and modulator (see [FDS sounds](#fds-sounds)); on an N163 channel or the VRC6 Plus's soft layer any melodic sound becomes a wave sound, an N163 game's with its own waves (see [VRC6 Plus](#vrc6-plus)) |
 | `find_sound` | Searches every sound the song can get in one list, as **Instrument > Sound browser** shows them: the ready-made sounds for its chips (the presets and FamiTracker's own sound library, some 230 more sounds of every kind for every chip's channels), the studied sounds of the twelve soundtracks FamiTracker carries (see [Sounds from twelve soundtracks](#sounds-from-twelve-soundtracks)), each sound of your reference library's studies and the song's own instruments, by words ("warm bell", "pluck", a game; when no sound has every word, the ones with some), kind (lead, bass, pad, pluck, bell, keys, drums, effect) and source. Studied sounds of the same name, of one study or two, are numbered ("Green Planet lead 2"), so each can be added. Each comes with where it's from, the channel it plays on, its words, the call that adds it (`add_instrument` or `reference_sound`) and the warnings: notes gone within four frames, a vibrato that clicks on the 2A03's pulses. With `other_chips`, the ready-made sounds of the chips the song doesn't have come too, after its own, each with the `set_expansion` call that adds its chip first (every note stays). With a channel, every sound that plays there |

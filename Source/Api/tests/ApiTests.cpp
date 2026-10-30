@@ -1263,6 +1263,26 @@ public:
 		return true;
 	}
 
+	// Which song is open, for its agent log: another one comes with NewSong, OpenSong and OpenText (as CMcpLink reads the
+	// document's GetSongSerial, counted when its contents go)
+	long long SongSerial = 1;
+
+	// The files next to the song but its agent log (which every change writes)
+	std::map<std::string, std::string> FilesBeside() const
+	{
+		std::map<std::string, std::string> Out;
+		for (std::map<std::string, std::string>::const_iterator it = Files.begin(); it != Files.end(); ++it)
+			if (it->first.size() < 13 || it->first.compare(it->first.size() - 13, 13, " agent log.md") != 0)
+				Out.insert(*it);
+		return Out;
+	}
+
+	void SongIdentity(long long &Serial, std::string &FileName) override
+	{
+		Serial = SongSerial;
+		FileName = Info.FileName;
+	}
+
 	bool ReadFile(const std::string &FileName, std::string &Bytes, std::string &) override
 	{
 		std::map<std::string, std::string>::const_iterator it = Files.find(FileName);
@@ -1399,6 +1419,7 @@ public:
 			return false;
 		}
 		++NewSongs;
+		++SongSerial;
 		const FakeSong Fresh(1);
 		const bool Direct = Info.DirectChanges;
 		Info = Fresh.Info;
@@ -1493,6 +1514,7 @@ public:
 			return false;
 		}
 		++OpenedSongs;
+		++SongSerial;
 		const bool Direct = Info.DirectChanges;
 		Info = it->second.Info;
 		Info.DirectChanges = Direct;
@@ -1623,6 +1645,7 @@ public:
 	bool OpenText(const std::string &Text, std::string &) override
 	{
 		OpenedText = Text;
+		++SongSerial;
 		Info.Modified = false;
 		return true;
 	}
@@ -20839,7 +20862,7 @@ void TestFinishSong()
 		CHECK(!Run(Separate, "export_for_game", "{\"loudness\": -20}").IsError);
 		CHECK(Song.Rows == Separate.Rows);
 		CHECK(Song.Mix == Separate.Mix && Song.Mix.Level(Song.Info.Channels[5].ChanId) == 0);
-		CHECK(Song.Files.size() == 1u && Song.Files == Separate.Files);
+		CHECK(Song.FilesBeside().size() == 1u && Song.FilesBeside() == Separate.FilesBeside());
 		CHECK(Song.Rows != Before.Rows);
 		CHECK(Song.Undos.size() == 1u && Song.Groups == Before.Groups + 1);
 		std::string Message;
@@ -20894,7 +20917,7 @@ void TestFinishSong()
 		std::string Text = Run(Song, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"polish\", \"export\"]}").Text;
 		CHECK_LACKS(Text, "\n- Polish:");
 		CHECK_LACKS(Text, "\n- Export:");
-		CHECK(Song.Files.empty());
+		CHECK(Song.FilesBeside().empty());
 		CHECK_HAS(Text, "\n- Mix (lively): ");
 		Song = FinishTestSong();
 		Text = Run(Song, "finish_song", "{\"kind\": \"lively\", \"faders\": \"keep\", \"skip\": \"export\"}").Text;
@@ -20914,7 +20937,7 @@ void TestFinishSong()
 		CHECK(R.IsError);
 		CHECK_HAS(R.Text, "needs direct changes");
 		R = Run(Clips, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"polish\", \"mix\", \"loop\"]}");
-		CHECK(!R.IsError && Clips.Files.size() == 1u);
+		CHECK(!R.IsError && Clips.FilesBeside().size() == 1u);
 		FakeSong Unsaved = FinishTestSong();
 		Unsaved.Info.FileName.clear();
 		Text = Run(Unsaved, "finish_song", "{\"kind\": \"lively\", \"loudness\": -21}").Text;
@@ -25580,7 +25603,7 @@ void TestSaveIntoSongs()
 	R = FinishTools.Call("finish_song", Parse("{\"kind\": \"lively\", \"skip\": [\"polish\", \"mix\", \"loop\"]}"), Client);
 	CHECK_HAS(R.Text, "\n- Saved: the song had no file yet, so FamiTracker saved it first, as C:\\Games\\FamiTracker\\Songs\\");
 	CHECK_HAS(R.Text, "\n- Export: ");
-	CHECK(!Finished.Info.FileName.empty() && Finished.Files.size() == 1u && R.Files.size() == 1u);
+	CHECK(!Finished.Info.FileName.empty() && Finished.FilesBeside().size() == 1u && R.Files.size() == 1u);
 }
 
 // The files export_for_game saves as MCP resources, for a client that can't fetch them by HTTP: listed, read as blobs,
@@ -26058,12 +26081,12 @@ void TestFinishSongListens()
 	CHECK_HAS(R.Text, "(VRC6 Pulse 1, bars ");
 	Check(Contains(R.Text, ("). Fix: " + Fix + " {").c_str()), R.Text.c_str(), __LINE__);
 	CHECK(R.Text.find("\n- Listen: ") < R.Text.find("\n- Export: Town.ogg: "));	// the file still made, after the listen
-	CHECK(Song.Files.size() == 1u);
+	CHECK(Song.FilesBeside().size() == 1u);
 	// skip listen: none, and none kept
 	FakeSong Skipped = FinishTestSong();
 	const std::string Text = Run(Skipped, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"listen\"]}").Text;
 	CHECK_LACKS(Text, "\n- Listen:");
-	CHECK(Skipped.LastListen().empty() && Skipped.Files.size() == 1u);
+	CHECK(Skipped.LastListen().empty() && Skipped.FilesBeside().size() == 1u);
 	// A listen of the song as it is already isn't made again: only the file renders
 	FakeSong Again = FinishTestSong();
 	CHECK(!Run(Again, "listen", "{}").IsError);
@@ -26071,7 +26094,7 @@ void TestFinishSongListens()
 	const int Passes = Again.Passes;
 	const std::string Exported = Run(Again, "finish_song", "{\"kind\": \"lively\", \"skip\": [\"polish\", \"mix\", \"loop\"]}").Text;
 	CHECK_HAS(Exported, "\n- Listen: ");
-	CHECK(Again.Passes == Passes && Again.LastListen() == Kept && Again.Files.size() == 1u);
+	CHECK(Again.Passes == Passes && Again.LastListen() == Kept && Again.FilesBeside().size() == 1u);
 }
 
 // The problems panel's Listen (from feat-listen-rest): the listen tool's JSON read into the list beside check_song's, its
@@ -26526,6 +26549,173 @@ void TestClashFix()
 	}
 }
 
+// The agent log (AgentLog.h, issue #5): write_log's lines by category with FamiTracker's time, refusals, the user's notes
+// through read_user_notes (marked read, a client told of new ones), the change and error lines every call leaves, and the
+// file next to the song read back as the song opens again
+void TestAgentLog()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	CHECK(Tools.Has("write_log") && Tools.Has("read_user_notes"));
+	CHECK(ToolSet::IsCoreTool("write_log") && ToolSet::IsCoreTool("read_user_notes"));
+	const long long UndoBefore = Song.UndoPushes;
+
+	// Lines by category, the default a note, any case
+	ToolResult Result = Tools.Call("write_log", Parse("{\"text\": \"Chose D dorian for the cave: dark but not sad.\", \"category\": \"plan\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Logged at ");
+	CHECK_HAS(Result.Text, " as Plan.");
+	Result = Tools.Call("write_log", Parse("{\"text\": \"  The bass\\r\\nwalks now.\\t \", \"category\": \"Fix\"}"));
+	CHECK(!Result.IsError);
+	Result = Tools.Call("write_log", Parse("{\"text\": \"Trying a music box lead.\"}"));
+	CHECK_HAS(Result.Text, " as Note.");
+	const std::vector<LogEntry> *pEntries = &Song.Log().Entries();
+	CHECK_EQ(pEntries->size(), 3u);
+	CHECK((*pEntries)[0].Category == LOG_PLAN && (*pEntries)[0].Text == "Chose D dorian for the cave: dark but not sad.");
+	CHECK((*pEntries)[1].Category == LOG_FIX && (*pEntries)[1].Text == "The bass\nwalks now.");
+	CHECK((*pEntries)[2].Category == LOG_NOTE && (*pEntries)[2].Read);
+	CHECK((*pEntries)[0].Time.Year >= 2026 && (*pEntries)[0].Time.Month >= 1 && (*pEntries)[0].Time.Month <= 12);
+	CHECK((*pEntries)[0].Id < (*pEntries)[1].Id && (*pEntries)[1].Id < (*pEntries)[2].Id);
+	// The song and its undo history stay as they were
+	CHECK_EQ(Song.UndoPushes, UndoBefore);
+	CHECK(Song.Undos.empty() && !Song.Info.Modified);
+
+	// Refusals: a category it doesn't have (the list given), no text, an argument it doesn't take; nothing logged but the error
+	// (a client's: FamiTracker's own windows' failed reads aren't logged)
+	Caller Client;
+	Client.Client = true;
+	Result = Tools.Call("write_log", Parse("{\"text\": \"Hmm.\", \"category\": \"musing\"}"));
+	CHECK(Result.IsError && Song.Log().Entries().size() == 3u);
+	Result = Tools.Call("write_log", Parse("{\"text\": \"Hmm.\", \"category\": \"musing\"}"), Client);
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "write_log has no category \"musing\", so nothing was logged. Its categories: idea, plan, research, fix, "
+		"check, note or error");
+	CHECK(Song.Log().Entries().back().Category == LOG_ERROR);
+	CHECK_HAS(Song.Log().Entries().back().Text, "write_log: write_log has no category");
+	const size_t Before = Song.Log().Entries().size();
+	Result = Tools.Call("write_log", Parse("{\"text\": \"Hmm.\", \"category\": \"musing\"}"), Client);
+	CHECK(Result.IsError && Song.Log().Entries().size() == Before);	// the same error again isn't added again
+	CHECK(Tools.Call("write_log", Parse("{\"text\": \"   \"}")).IsError);
+	Result = Tools.Call("write_log", Parse("{\"message\": \"Hi\"}"));
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "write_log has no argument \"message\"");
+	for (size_t i = 0; i < Song.Log().Entries().size(); ++i)
+		CHECK(Song.Log().Entries()[i].Text != "Hi");
+	// A long text is cut, and the reply says so
+	Result = Tools.Call("write_log", Parse("{\"text\": \"" + std::string(3000, 'a') + "\", \"category\": \"research\"}"));
+	CHECK_HAS(Result.Text, "cut to its first 2000 characters");
+	CHECK(Song.Log().Entries().back().Text.size() == MAX_LOG_TEXT);
+	int Category = -1;
+	CHECK(ParseLogCategory(" Idea ", Category) && Category == LOG_IDEA);
+	CHECK(!ParseLogCategory("change", Category) && !ParseLogCategory("you", Category));
+
+	// The user's notes: none, then two (one of two lines), read and marked, then all of them
+	CHECK_EQ(Tools.Call("read_user_notes", Json::MakeObject()).Text, std::string("No new notes from the user."));
+	Song.Log().Add(LOG_USER, "Make the drums softer.", LogTime(2026, 10, 30, 22, 31));
+	Song.Log().Add(LOG_USER, "Keep the hook.\nIt's the best part.", LogTime(2026, 10, 30, 22, 35));
+	CHECK_EQ(Song.Log().UnreadNotes(), 2);
+	CHECK(!Song.Log().Entries().back().Read);
+	// A client hears of them in its other replies (not a reply of JSON, nor read_user_notes')
+	Result = Tools.Call("write_log", Parse("{\"text\": \"Mixing next.\", \"category\": \"plan\"}"), Client);
+	CHECK_HAS(Result.Text, "The user wrote you 2 new notes in FamiTracker's agent log: read them with read_user_notes.");
+	Result = Tools.Call("write_log", Parse("{\"text\": \"Mixing next.\", \"category\": \"plan\"}"));
+	CHECK_LACKS(Result.Text, "read_user_notes");	// FamiTracker's own windows aren't told
+	Result = Tools.Call("read_user_notes", Json::MakeObject(), Client);
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "2 new notes from the user, oldest first:\n2026-10-30 22:31  Make the drums softer.\n"
+		"2026-10-30 22:35  Keep the hook.\n  It's the best part.");
+	CHECK_LACKS(Result.Text, "The user wrote you");
+	CHECK_EQ(Song.Log().UnreadNotes(), 0);
+	CHECK_EQ(Tools.Call("read_user_notes", Json::MakeObject(), Client).Text, std::string("No new notes from the user."));
+	Result = Tools.Call("read_user_notes", Parse("{\"all\": true}"));
+	CHECK_HAS(Result.Text, "Every note the user wrote to you (2), oldest first:");
+	CHECK_HAS(Result.Text, "Make the drums softer.");
+	Result = Tools.Call("write_log", Parse("{\"text\": \"Softer drums.\", \"category\": \"fix\"}"), Client);
+	CHECK_LACKS(Result.Text, "read_user_notes");
+
+	// Every change a call makes leaves a quieter line, labelled as undo labels it; a call that failed, an error line
+	Song.Info.DirectChanges = true;
+	const size_t Count = Song.Log().Entries().size();
+	Result = Tools.Call("write_notes", Parse("{\"channel\": 1, \"instrument\": \"Square\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}]}"));
+	CHECK(!Result.IsError);
+	CHECK_EQ(Song.Log().Entries().size(), Count + 1);
+	CHECK(Song.Log().Entries().back().Category == LOG_CHANGE);
+	CHECK_HAS(Song.Log().Entries().back().Text, "write_notes: ");
+	CHECK(!Song.Undos.empty() && Song.Log().Entries().back().Text == Song.Undos.back().Label);
+	Result = Tools.Call("write_notes", Parse("{\"channel\": \"Kazoo\", \"notes\": [{\"bar\": 1, \"pitch\": \"C-4\", \"beats\": 1}]}"));
+	CHECK(Result.IsError);
+	CHECK(Song.Log().Entries().back().Category == LOG_ERROR);
+	CHECK_HAS(Song.Log().Entries().back().Text, "write_notes: ");
+	// A read that fails from FamiTracker's own windows isn't logged; from a client it is
+	const size_t Reads = Song.Log().Entries().size();
+	CHECK(Tools.Call("read_notes", Parse("{\"channel\": \"Kazoo\"}")).IsError);
+	CHECK_EQ(Song.Log().Entries().size(), Reads);
+	CHECK(Tools.Call("read_notes", Parse("{\"channel\": \"Kazoo\"}"), Client).IsError);
+	CHECK_EQ(Song.Log().Entries().size(), Reads + 1);
+	// Reads leave nothing; undo leaves a change line
+	Tools.Call("get_song", Json::MakeObject());
+	CHECK_EQ(Song.Log().Entries().size(), Reads + 1);
+	CHECK(!Tools.Call("undo", Json::MakeObject()).IsError);
+	CHECK(Song.Log().Entries().back().Category == LOG_CHANGE);
+	CHECK_HAS(Song.Log().Entries().back().Text, "undo: ");
+	// Without direct changes, a part arrives as a clip, which undo doesn't take back: a change line too
+	Song.Info.DirectChanges = false;
+	Result = Tools.Call("write_notes", Parse("{\"channel\": 1, \"instrument\": \"Square\", \"notes\": [{\"bar\": 2, \"pitch\": \"D-4\", \"beats\": 1}]}"));
+	CHECK(!Result.IsError);
+	CHECK(Song.Log().Entries().back().Category == LOG_CHANGE);
+	CHECK_HAS(Song.Log().Entries().back().Text, "write_notes: Saved as the clip");
+
+	// The file next to the song: every line, a note not read yet marked so, written after each call
+	Song.Log().Add(LOG_USER, "Brighter in B.", LogTime(2026, 10, 30, 23, 5));
+	CHECK(Tools.Call("get_song", Json::MakeObject()).Text.size() > 0);
+	CHECK(Song.Files.count("test agent log.md") == 1);
+	const std::string File = Song.Files["test agent log.md"];
+	CHECK_HAS(File, "# Agent log: test\r\n");
+	CHECK_HAS(File, "  [Plan]  Chose D dorian for the cave: dark but not sad.\r\n");
+	CHECK_HAS(File, "  [Fix]  The bass\r\n  walks now.\r\n");
+	CHECK_HAS(File, "2026-10-30 22:31  [You]  Make the drums softer.\r\n");
+	CHECK_HAS(File, "2026-10-30 23:05  [You, unread]  Brighter in B.\r\n");
+	CHECK_HAS(File, "  [Change]  write_notes: ");
+	CHECK_HAS(File, "  [Error]  write_notes: ");
+	// Read back as the song opens again: the same entries
+	const std::vector<LogEntry> Kept = Song.Log().Entries();
+	++Song.SongSerial;
+	const std::vector<LogEntry> &Again = Song.Log().Entries();
+	CHECK_EQ(Again.size(), Kept.size());
+	for (size_t i = 0; i < Kept.size() && i < Again.size(); ++i)
+		Check(Again[i].Category == Kept[i].Category && Again[i].Text == Kept[i].Text && Again[i].Read == Kept[i].Read &&
+			Again[i].Time == Kept[i].Time, Kept[i].Text.c_str(), __LINE__);
+	CHECK(!Song.Log().Unsaved());
+	CHECK_EQ(Song.Log().UnreadNotes(), 1);
+	CHECK_HAS(Tools.Call("read_user_notes", Json::MakeObject()).Text, "A new note from the user:\n2026-10-30 23:05  Brighter in B.");
+	CHECK_HAS(Song.Files["test agent log.md"], "[You]  Brighter in B.");
+	// Lines that aren't entries are left out; a label it doesn't know reads as a note
+	AgentLog Read;
+	Read.ReadFileText("# Agent log: x\n\nSome words.\n2026-01-02 03:04  [Musing]  odd\n2026-01-02 03:05 [Idea] tight\nnot an entry\n");
+	CHECK_EQ(Read.Entries().size(), 2u);
+	CHECK(Read.Entries()[0].Category == LOG_NOTE && Read.Entries()[0].Text == "odd" && Read.Entries()[0].Time == LogTime(2026, 1, 2, 3, 4));
+	CHECK(Read.Entries()[1].Category == LOG_IDEA && Read.Entries()[1].Text == "tight");
+	CHECK_EQ(AgentLogFileName("Town theme.FTM"), std::string("Town theme agent log.md"));
+	CHECK_EQ(AgentLogFileName(""), std::string());
+
+	// Another song comes: its own log, empty without a file; a song without a file keeps it until its first save
+	std::string Error;
+	Song.Info.Modified = false;
+	CHECK(Song.NewSong(NewSongSettings(), Error));
+	CHECK(Song.Log().Entries().empty());
+	Tools.Call("write_log", Parse("{\"text\": \"A new song for the shop.\", \"category\": \"plan\"}"));
+	CHECK(Song.Files.empty());
+	CHECK_EQ(Song.Log().Entries().size(), 1u);
+	Song.Info.FileName = "Shop.ftm";	// saved (File > Save As): the whole log goes next to it
+	CHECK(Song.SaveLog(Error));
+	CHECK(Song.Files.count("Shop agent log.md") == 1);
+	CHECK_HAS(Song.Files["Shop agent log.md"], "  [Plan]  A new song for the shop.\r\n");
+	// Cleared (the panel's Clear): the file says so
+	Song.Log().Clear();
+	CHECK(Song.SaveLog(Error));
+	CHECK_LACKS(Song.Files["Shop agent log.md"], "A new song");
+}
+
 int main()
 {
 	TestJson();
@@ -26787,6 +26977,7 @@ int main()
 	TestProblemListHeard();
 	TestNewSongs();
 	TestClashFix();
+	TestAgentLog();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -109,7 +109,7 @@ const AssistantToolKind TOOL_KINDS[] = {
 	{ "compare_versions", ASSISTANT_READS }, { "effects", ASSISTANT_READS }, { "find_sound", ASSISTANT_READS },
 	{ "review_arrangement", ASSISTANT_READS }, { "check_song", ASSISTANT_READS }, { "look_at_song", ASSISTANT_READS },
 	{ "play", ASSISTANT_READS }, { "stop", ASSISTANT_READS }, { "get_recipe", ASSISTANT_READS }, { "explain", ASSISTANT_READS },
-	{ "check_exercise", ASSISTANT_READS },
+	{ "check_exercise", ASSISTANT_READS }, { "write_log", ASSISTANT_READS }, { "read_user_notes", ASSISTANT_READS },
 	// Reading or changing as their arguments say (AssistantCallChanges)
 	{ "grow_melody", ASSISTANT_DEPENDS }, { "soundtrack_notes", ASSISTANT_DEPENDS }, { "references", ASSISTANT_DEPENDS },
 	{ "study_nsf", ASSISTANT_DEPENDS }, { "study_module", ASSISTANT_DEPENDS },
