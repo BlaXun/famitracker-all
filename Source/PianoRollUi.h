@@ -80,6 +80,12 @@ struct roll_hint_t {
 
 std::string RollHint(const roll_hint_t &State);
 
+// The status line after the selected notes got louder or softer (Alt+Up and
+// Alt+Down, Shift: 4 steps; Effects > Volume > Louder and Softer): Steps
+// louder (negative: softer) for Count notes, which now play at volumes Low to
+// High (0-15); Changed false when they were as loud or soft as they go already
+std::string VolumeStepText(int Steps, int Count, int Low, int High, bool Changed);
+
 // The status line over another channel's note, one of the faint ones: a click
 // there does what it does on an empty spot of the bright channel (Draw adds a
 // note, Paint paints), so a click near one's own notes never lands on another

@@ -113,7 +113,7 @@ std::string RollHint(const roll_hint_t &State)
 	const bool Keys = !State.TypesNotes;
 	if (State.Selected > 0)
 		return Notes(State.Selected) + " selected   |   Ctrl+Shift+C: save as a clip. Drag to move (Shift: copy), arrows to move, "
-			"Shift+arrows: octave, Delete, Ctrl+C / Ctrl+V, " + std::string(Keys ? "E: effects, H: chords on their bars, " :
+			"Shift+arrows: octave, Alt+Up / Alt+Down: louder / softer, Delete, Ctrl+C / Ctrl+V, " + std::string(Keys ? "E: effects, H: chords on their bars, " :
 			"Effects: their effects, Chords: chords on their bars, ") + "Groove: drums, bass and chords under them, Esc: none";
 	if (State.Empty) {
 		std::string Text = "The song is empty. Groove (at the top) starts it: pick a mood, and drums, a bass line and chords "
@@ -141,6 +141,25 @@ std::string RollHint(const roll_hint_t &State)
 	return std::string("Click to add a note, drag to make it longer. Double-click a faint note to edit its channel. Drag a "
 		"note to move it (Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. ") + (Keys ? "Double-click a note (or press E) for effects. "
 		"H: chords. " : "Double-click a note for effects. Chords: a chord on the free channels. ") + "Ctrl+Z undoes." + PAN_HINT;
+}
+
+std::string VolumeStepText(int Steps, int Count, int Low, int High, bool Changed)
+{
+	const bool Louder = Steps > 0;
+	const std::string Volume = (Low == High ? "volume " + std::to_string(Low) : "volumes " + std::to_string(Low) + " to " +
+		std::to_string(High)) + " of 15" + (High == 0 ? ", silent" : "");
+	if (!Changed)
+		return std::string(Count == 1 ? "The note is" : "The notes are") + " as " + (Louder ? "loud" : "soft") + " as " +
+			(Count == 1 ? "it goes" : "they go") + " already: " + Volume + ".";
+	const int Size = Steps < 0 ? -Steps : Steps;
+	std::string Text = std::string(Louder ? "Louder" : "Softer") + ": " + Volume + " (" + Notes(Count);
+	if (Size > 1 || Low != High)
+		Text += std::string(Count == 1 ? ", " : ", each ") + (Size == 1 ? "a step" : std::to_string(Size) + " steps") +
+			(Louder ? " louder" : " softer");
+	Text += "). Ctrl+Z undoes it";
+	if (Size == 1)
+		Text += std::string(", Shift+Alt+") + (Louder ? "Up" : "Down") + " goes 4 steps";
+	return Text + ".";
 }
 
 std::string FaintNoteHint(int Tool, const std::string &Faint, const std::string &Bright)

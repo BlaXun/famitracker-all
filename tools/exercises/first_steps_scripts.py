@@ -115,7 +115,7 @@ step
 show: piano-roll
 play: bar 1
 check: loud-soft
-text: Each note has a [[volume]], how loud it plays, from 15 (the loudest) down to 1. Make the third note quieter: double-click it, point at Volume in the menu that opens, and click Soft.
+text: Each note has a [[volume]], how loud it plays, from 15 (the loudest) down to 1. Make the third note quieter: click it and press Alt+Down a few times (or double-click it, point at Volume in the menu that opens, and click Soft).
 
   The note gets thinner. Press Play bar 1 to hear it step back, then press Check.
 hint: Double-click right on the third note from the left. If no menu opens, click the note once, then use the Effects button at the top of the piano roll. Pointing at a note shows its volume in the line at the bottom.

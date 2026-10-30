@@ -1082,6 +1082,35 @@ void CChannelNotes::SetVolume(const int *pStarts, int Count, int Volume)
 	d.Keep(Before, Placed);
 }
 
+int SteppedVolume(int Volume, int Steps)
+{
+	return std::max(0, std::min(MAX_VOLUME - 1, Volume + Steps));
+}
+
+int CChannelNotes::ChangeVolume(const int *pStarts, int Count, int Steps)
+{
+	Impl &d = *m_pImpl;
+	const Sounds Before = d.SoundsNow();
+	Sounds Placed;
+	int Changed = 0;
+	for (int k = 0; k < Count; ++k) {
+		const int Index = d.Find(pStarts[k]);
+		if (Index < 0 || Placed.count(pStarts[k]) != 0)
+			continue;
+		const int Was = d.Notes[static_cast<size_t>(Index)].Volume;
+		const int Volume = SteppedVolume(Was, Steps);
+		if (Volume == Was)
+			continue;
+		d.CellAt(pStarts[k]).Vol = static_cast<unsigned char>(Volume);
+		const Sound Now = { -1, Volume, -1 };
+		Placed[pStarts[k]] = Now;
+		++Changed;
+	}
+	d.Parsed = false;
+	d.Keep(Before, Placed);
+	return Changed;
+}
+
 void CChannelNotes::SelfContained()
 {
 	Impl &d = *m_pImpl;

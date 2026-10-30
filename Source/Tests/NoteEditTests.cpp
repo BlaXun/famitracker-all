@@ -388,6 +388,38 @@ static void TestVolume()
 	CHECK_EQ(Heard(ch), "0 3, 0 3, 0 6, 0 15");
 }
 
+// Louder and softer by steps (the piano roll's Alt+Up and Alt+Down): each note from its own volume
+static void TestChangeVolume()
+{
+	CHECK(SteppedVolume(9, 1) == 10 && SteppedVolume(15, 1) == 15 && SteppedVolume(0, -1) == 0);
+	CHECK(SteppedVolume(13, 4) == 15 && SteppedVolume(2, -4) == 0 && SteppedVolume(7, -4) == 3);
+	CChannelNotes ch = Channel(16);
+	ch.SetCell(0, Cell(G, 4, 0, 6));
+	ch.SetCell(4, Cell(G, 4, 0, 14));
+	ch.SetCell(8, Cell(G, 4));
+	ch.SetCell(12, Cell(G, 4, 0, 9));
+	const int three[] = { 0, 4, 8 };
+	CHECK(ch.ChangeVolume(three, 3, 1) == 3);
+	CHECK_EQ(Heard(ch), "0 7, 0 15, 0 15, 0 9");
+	CHECK(At(ch, 8).Vol == 15 && At(ch, 12).Vol == 9);	// it played at 14 before: now written
+	CHECK(ch.ChangeVolume(three, 3, 1) == 1);			// two are at 15 already
+	CHECK_EQ(Heard(ch), "0 8, 0 15, 0 15, 0 9");
+	CHECK(ch.ChangeVolume(three, 3, -4) == 3);
+	CHECK_EQ(Heard(ch), "0 4, 0 11, 0 11, 0 9");
+	CHECK(ch.ChangeVolume(three, 3, -15) == 3);
+	CHECK_EQ(Heard(ch), "0 0, 0 0, 0 0, 0 9");
+	CHECK(ch.ChangeVolume(three, 3, -1) == 0);
+	// The note after them keeps its volume when it took it over
+	CChannelNotes run = Channel(16);
+	run.SetCell(0, Cell(G, 4, 0, 10));
+	run.SetCell(4, Cell(G, 4));
+	const int first[] = { 0, 0 };	// twice: one step
+	CHECK(run.ChangeVolume(first, 2, -2) == 1);
+	CHECK_EQ(Heard(run), "0 8, 0 10");
+	const int none[] = { 5 };
+	CHECK(run.ChangeVolume(none, 1, 1) == 0);
+}
+
 // The pattern editor's letter for an effect
 static char Letter(int effect)
 {
@@ -949,6 +981,7 @@ int main()
 	TestCopyPaste();
 	TestInstrument();
 	TestVolume();
+	TestChangeVolume();
 	TestEffectsShown();
 	TestSetLasting();
 	TestSlidesAndBends();
