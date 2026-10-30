@@ -132,8 +132,17 @@ bool Contains(const std::string &Text, const char *Part)
 	return Text.find(Part) != std::string::npos;
 }
 
-#define CHECK_HAS(text, part) Check(Contains((text), (part)), "\"" part "\" in " #text, __LINE__)
-#define CHECK_LACKS(text, part) Check(!Contains((text), (part)), "no \"" part "\" in " #text, __LINE__)
+// On a failure, the text looked in is printed too (CI's job logs can't be read from sandboxed sessions;
+// the Linux test report shows this output)
+void CheckText(bool Condition, const std::string &Text, const char *What, int Line)
+{
+	Check(Condition, What, Line);
+	if (!Condition)
+		std::printf("  in: %s\n", Text.substr(0, 1200).c_str());
+}
+
+#define CHECK_HAS(text, part) do { const std::string Text_ = (text); CheckText(Contains(Text_, (part)), Text_, "\"" part "\" in " #text, __LINE__); } while (0)
+#define CHECK_LACKS(text, part) do { const std::string Text_ = (text); CheckText(!Contains(Text_, (part)), Text_, "no \"" part "\" in " #text, __LINE__); } while (0)
 
 // Renders made together, kept until each is taken (FakeSong::RenderParts)
 class FakeRenderSet : public RenderSet {
