@@ -234,7 +234,7 @@ jobs:
               echo; echo "## $d"
               if [ -f "$d/CMakeCache.txt" ] && ! ls "$d"/Testing/Temporary/LastTest*.log >/dev/null 2>&1; then echo "(not built or not tested: see the build step)"; fi
               ctest --test-dir "$d" --rerun-failed --output-on-failure 2>&1 | tail -120
-              if [ "$d" = build/api ]; then FT_DEBUG_SESSION=1 "$d"/api_tests 2>&1 | sed -n '/Song:/,/FAIL line/p' | head -150; fi
+              if [ "$d" = build/api ]; then FT_DEBUG_SESSION=1 "$d"/api_tests 2>&1 | grep -A45 '^"Test song"' | head -60; fi
             done
           } > linux-report.txt 2>&1
           python3 - <<'PY'
