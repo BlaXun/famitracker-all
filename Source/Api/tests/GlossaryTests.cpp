@@ -199,6 +199,8 @@ void TestNewcomerTerms()
 	CHECK_EQ(Entry("counter melody", __LINE__).Id, std::string("counter-melody"));
 	CHECK_EQ(Entry("portamento", __LINE__).Id, std::string("effect-3xx"));
 	CHECK(FindGlossaryEntry("") == 0 && FindGlossaryEntry("xyzzy") == 0);
+	// The piano roll says how to move around in it (CPianoRollWnd::OnMButtonDown)
+	CHECK(Entry("piano roll", __LINE__).Text.find("middle mouse button") != std::string::npos);
 }
 
 void TestEffects()

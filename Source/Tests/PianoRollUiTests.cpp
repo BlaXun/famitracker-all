@@ -206,6 +206,8 @@ void TestHints()
 							CHECK(Has(Hint, "3 notes selected") && Has(Hint, "Groove"));
 						if (S.Empty)
 							CHECK(Has(Hint, "Groove") && Has(Hint, "mood"));
+						else if (Selected == 0)		// every tool's hint says how the view moves
+							CHECK(Has(Hint, "Middle-drag moves the view") && Has(Hint, "Shift+wheel"));
 					}
 
 	roll_hint_t S;

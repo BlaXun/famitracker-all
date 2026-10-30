@@ -1601,6 +1601,24 @@ drops each line's full stop. `TestPanelBands` (`noteviews_tests`),
 `TestShapeByTrackName` and `TestFirstSongSmall` (the first song through What
 next to its end) cover them.
 
+Panning the piano roll (from `feat-roll-pan`, issue #6): holding the middle
+button grabs the view, which follows the mouse along the rows and the
+pitches (`CPianoRollWnd::OnMButtonDown`, also `OnMButtonDblClk` for a quick
+second press, and `OnMButtonUp`; `Impl::StartPan`, `Pan` and `EndPan`). It
+captures the mouse and shows the size-all cursor (`OnSetCursor`), moves
+`ScrollX` and `ScrollY` by the mouse's step and clamps them through
+`UpdateScrollBars`, so the view slips at the scroll bars' ends rather than
+running ahead of the hand. `Impl::Panning` is kept apart from `Drag`: a
+middle press during a left or right drag does nothing, a left or right
+press while panning is ignored, playback and the cursor don't scroll the
+view meanwhile (`Poll`'s `FollowRow` calls), and it ends on button up, on a
+move without `MK_MBUTTON` or when another window takes the capture
+(`OnCaptureChanged`). A middle click that only closed a menu is ignored
+(`ClickClosedMenu`). The middle button did nothing here before; Shift+wheel
+already scrolled sideways (`OnMouseWheel`). `RollHint` ends every tool's
+idle hint with both (`PAN_HINT`, `TestHints`), and the glossary's piano
+roll says the middle button moves around in it (`TestNewcomerTerms`).
+
 Asking your own model (from `feat-ask-panel`): View > Ask (`ID_VIEW_ASK`,
 `Source/AskPanel.cpp`, a bar in `PlaceBottomPanel`'s row or on the right,
 after What next in `ArrangeBars`) asks the user's own model, any

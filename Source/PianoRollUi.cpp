@@ -101,6 +101,9 @@ std::string Notes(int Count)
 	return std::to_string(Count) + (Count == 1 ? " note" : " notes");
 }
 
+// How the view moves, after each tool's hint (CPianoRollWnd::OnMButtonDown pans, OnMouseWheel scrolls)
+const char PAN_HINT[] = " Middle-drag moves the view, Shift+wheel scrolls sideways.";
+
 }	// namespace
 
 std::string RollHint(const roll_hint_t &State)
@@ -125,19 +128,19 @@ std::string RollHint(const roll_hint_t &State)
 	}
 	if (State.Tool == ROLL_TOOL_PAINT)
 		return "Paint: drag to paint a melody, a note per grid step; hold a pitch for a longer note. Right-click erases. "
-			"Double-click a faint note to edit its channel.";
+			"Double-click a faint note to edit its channel." + std::string(PAN_HINT);
 	if (State.Tool == ROLL_TOOL_SELECT)
 		return std::string("Select: drag around notes, or along the ruler above for whole bars. Click a note to select it (Shift: "
 			"more), double-click a faint one to edit its channel. Then Ctrl+Shift+C saves them as a clip, ") + (Keys ? "H" : "Chords") + " puts chords on their bars and Groove "
-			"a groove under them.";
+			"a groove under them." + PAN_HINT;
 	if (State.Snaps)
 		return std::string("Click to add a note: it lands on the key's notes (the lighter lanes; Alt: any note). Double-click a "
 			"faint note to edit its channel. Drag a note to move it (Shift: copy), its end to change its length. Right-click "
 			"erases. Ctrl+drag selects. ") +
-			(Keys ? "E: effects." : "Double-click a note for effects.") + " Ctrl+Z undoes.";
+			(Keys ? "E: effects." : "Double-click a note for effects.") + " Ctrl+Z undoes." + PAN_HINT;
 	return std::string("Click to add a note, drag to make it longer. Double-click a faint note to edit its channel. Drag a "
 		"note to move it (Shift: copy), its end to change its length. Right-click erases. Ctrl+drag selects. ") + (Keys ? "Double-click a note (or press E) for effects. "
-		"H: chords. " : "Double-click a note for effects. Chords: a chord on the free channels. ") + "Ctrl+Z undoes.";
+		"H: chords. " : "Double-click a note for effects. Chords: a chord on the free channels. ") + "Ctrl+Z undoes." + PAN_HINT;
 }
 
 std::string FaintNoteHint(int Tool, const std::string &Faint, const std::string &Bright)
