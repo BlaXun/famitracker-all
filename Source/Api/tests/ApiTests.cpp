@@ -5679,11 +5679,6 @@ void TestSession()
 		"{\"bar\":1,\"beat\":3,\"pitch\":\"C-5\",\"beats\":2},{\"bar\":2,\"beat\":1,\"pitch\":\"A-4\",\"beats\":4}]}"), "Changed the song");
 	CHECK_HAS(Call("add_chords_and_bass", "{\"melody_channel\":\"VRC6 Pulse 1\"}"), "Chords:");
 	CHECK_HAS(Call("check_song", "{}"), "Checked bars 1-8");
-	if (std::getenv("FT_DEBUG_SESSION")) {
-		std::printf("%s\n", Call("get_song", "{}").c_str());
-		for (const char *Ch : { "Pulse 1", "Pulse 2", "Triangle", "VRC6 Pulse 2", "Sawtooth" })
-			std::printf("%s\n", Call("read_notes", std::string("{\"channel\":\"") + Ch + "\",\"to_bar\":2}").c_str());
-	}
 	CHECK_HAS(Call("transpose", "{\"to_mode\":\"minor\"}"), "to C minor");
 	CHECK_HAS(Call("add_vibrato", "{\"channel\":\"VRC6 Pulse 1\",\"speed\":\"slow\",\"depth\":\"strong\"}"), "vibrato 437");
 	CHECK_HAS(Call("add_echo", "{\"channel\":\"VRC6 Pulse 1\"}"), "an echo of VRC6 Pulse 1 on VRC6 Pulse 2");
