@@ -26626,7 +26626,8 @@ void TestBusyFindings()
 		BusyBase(Song);
 		BusyLine(Song, 5, true);
 		BusyLine(Song, 6, true, Kind == 0 ? 4 : 0, Kind == 0 ? 0 : 2);
-		const std::vector<const Json *> Found = FindingsOf(Parse(Run(Song, "check_song", Args).Text), "too_busy");
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "too_busy");
 		CHECK_EQ(Found.size(), static_cast<size_t>(1));
 		CHECK(!Found.empty() && IntegerOf(Found[0], "channel") == 6);
 	}
