@@ -219,6 +219,32 @@ jobs:
           cmake --build build/tests -j 4
           ctest --test-dir build/tests --output-on-failure
 
+      # Job logs can't be read from sandboxed sessions: on a failure, post the
+      # failing tests' output as a check run, "Linux test report", which
+      # gh api repos/<owner>/<repo>/commits/<sha>/check-runs can read
+      - name: Linux test report
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## Toolchain"; gcc --version | head -1; cmake --version | head -1; lsb_release -ds || true
+            for d in build/transcribe build/api build/nsf build/tests; do
+              [ -d "$d" ] || continue
+              echo; echo "## $d"
+              if [ -f "$d/CMakeCache.txt" ] && ! ls "$d"/Testing/Temporary/LastTest*.log >/dev/null 2>&1; then echo "(not built or not tested: see the build step)"; fi
+              ctest --test-dir "$d" --rerun-failed --output-on-failure 2>&1 | tail -120
+            done
+          } > linux-report.txt 2>&1
+          python3 - <<'PY'
+          import json, os
+          text = open('linux-report.txt', errors='replace').read()[-60000:]
+          body = {"name": "Linux test report", "head_sha": os.environ["GITHUB_SHA"], "status": "completed",
+                  "conclusion": "neutral", "output": {"title": "Linux tests failed", "summary": "The failing tests' output.", "text": text}}
+          open('linux-report.json', 'w').write(json.dumps(body))
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" --method POST --input linux-report.json > /dev/null
+
   # After a green build on the main working branches (and on feat-* feature
   # branches, so their builds can be tried before they're merged), replace
   # that branch's rolling release (tag build-<branch>) with the new
