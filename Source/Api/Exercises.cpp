@@ -336,7 +336,7 @@ std::vector<ExerciseNote> Sounding(const ExerciseChannel *pChannel)
 	for (size_t i = 0; i < pChannel->Notes.size(); ++i)
 		if (pChannel->Notes[i].Volume > 0)
 			Out.push_back(pChannel->Notes[i]);
-	std::sort(Out.begin(), Out.end(), [](const ExerciseNote &a, const ExerciseNote &b) { return a.Row < b.Row; });
+	std::stable_sort(Out.begin(), Out.end(), [](const ExerciseNote &a, const ExerciseNote &b) { return a.Row < b.Row; });
 	return Out;
 }
 
@@ -1367,7 +1367,7 @@ void CheckLoudSoft(const ExerciseFacts &F, ExerciseVerdict &V)
 	PlayBars(V, F, 1, SongBars(F));
 	if (pTune != 0) {
 		std::vector<ExerciseNote> All(pTune->Notes);
-		std::sort(All.begin(), All.end(), [](const ExerciseNote &a, const ExerciseNote &b) { return a.Row < b.Row; });
+		std::stable_sort(All.begin(), All.end(), [](const ExerciseNote &a, const ExerciseNote &b) { return a.Row < b.Row; });
 		for (size_t i = 0; i < All.size(); ++i)
 			if (All[i].Volume == 0) {
 				V.Next = Format("Your %s note is at volume 0, so it's silent now. Give it Soft instead (double-click it, then Volume > "

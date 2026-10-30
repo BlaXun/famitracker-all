@@ -22,6 +22,9 @@ if(MSVC)
 	add_compile_options(/W3)
 else()
 	add_compile_options(-Wall -Wextra)
+	# Floating point as MSVC does it: no fused multiply-adds (newer GCCs on x86-64-v3 contract a*b+c,
+	# which broke near ties between costs, so Linux and Windows chose different voicings and keys)
+	add_compile_options(-ffp-contract=off)
 endif()
 
 # libogg and libvorbis (BSD licensed, Source/libogg and Source/libvorbis as

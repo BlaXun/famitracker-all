@@ -1652,7 +1652,7 @@ bool FindKey(Session &S, int First, int End, Key &Out)
 			}
 		}
 		if (All.size() >= 4 || (Pass == 1 && !All.empty())) {
-			std::sort(All.begin(), All.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
+			std::stable_sort(All.begin(), All.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
 			const transcribe::Key K = transcribe::FindKey(All);
 			Out = Key(K.tonic, K.minor ? MODE_MINOR : MODE_MAJOR);
 			// A key the notes keep leaving (the G naturals of a song heard as F# minor) gives way to one they
@@ -7360,7 +7360,7 @@ std::vector<ChordAt> ChordsForMelody(Session &S, const Json &Args, int Melody, c
 		return Chords;
 	}
 	std::vector<transcribe::MelodyNote> Line = MelodyOf(S.Notes(Melody), First, End);
-	std::sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
+	std::stable_sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
 	std::vector<transcribe::Bar> TBars;
 	for (size_t i = 0; i < Bars.size(); ++i) {
 		transcribe::Bar B;
@@ -7714,7 +7714,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		transcribe::HarmonyOptions Options;
 		Options.rowsPerBeat = R;
 		Options.halfBars = BoolArg(Args, "half_bars", true);
-		std::sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
+		std::stable_sort(Line.begin(), Line.end(), [](const transcribe::MelodyNote &a, const transcribe::MelodyNote &b) { return a.row < b.row; });
 		std::vector<transcribe::MelodyNote> Heard = Line;
 		const std::vector<transcribe::MelodyNote> Others = OtherLines(S, First, End, Melody, ChordChannel, BassChannel,
 			VoiceChannels);
