@@ -1837,6 +1837,16 @@ tracks; a local model's calm song went from 46 clashes to 14 (2 worth fixing,
 a held third under the tune, and 12 passing notes over the pads' thirds) in
 one call. `TestClashFix` covers it.
 
+Open folder after export (from `feat-export-folder`, issue #3): File >
+Export for games has an Open folder button (`IDC_GAME_OPEN_FOLDER`, 2600),
+disabled until an export saved a file. `CMcpLink::ExportForGames` hands the
+dialog the full paths of the files `export_for_game` reported in
+`ToolResult::Files` that are there next to the song (built as `ReadExport`
+builds them); `CGameExportDlg::OnOpenFolder` runs `explorer.exe /select,` on
+the first one (the folder alone if it's gone). The What next panel's
+export and `finish_song` steps show their reply in a message box and get no
+such button.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

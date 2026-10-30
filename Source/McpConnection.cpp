@@ -1700,9 +1700,11 @@ public:
 	}
 
 	// File > Export for games: the export_for_game tool, for the dialog
-	// Loudness: the loudness in LUFS to bring every track to, or 0 for its loudest peak at -1 dBFS
-	CString ExportForGames(bool All, double Quality, double Loudness, CWnd *pProgress)
+	// Loudness: the loudness in LUFS to bring every track to, or 0 for its loudest peak at -1 dBFS; Saved: the full paths
+	// of the files it saved that are there (next to the song), for the dialog's Open folder
+	CString ExportForGames(bool All, double Quality, double Loudness, CWnd *pProgress, std::vector<CString> &Saved)
 	{
+		Saved.clear();
 		if (m_bBusy)
 			return _T("FamiTracker is busy with Claude Code; try again in a moment.");
 		m_bBusy = true;
@@ -1723,6 +1725,17 @@ public:
 		m_pProgress = NULL;
 		m_bOwnDialog = false;
 		m_bBusy = false;
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Song = pDoc != NULL ? pDoc->GetPathName() : CString();
+		for (size_t i = 0; i < Result.Files.size() && !Song.IsEmpty(); ++i) {
+			const CString File = Ansi(Result.Files[i].Name);
+			if (!PlainName(Result.Files[i].Name) || Utf8(File) != Result.Files[i].Name)
+				continue;	// a name this computer can't spell: not one ReadExport could open either
+			const CString Full = Song.Left(Song.ReverseFind(_T('\\')) + 1) + File;
+			const DWORD Attributes = GetFileAttributes(Full);
+			if (Attributes != INVALID_FILE_ATTRIBUTES && (Attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+				Saved.push_back(Full);
+		}
 		CString Text = Ansi(Result.Text);
 		Text.Replace(_T("\n"), _T("\r\n"));
 		return Text;
@@ -3119,6 +3132,7 @@ protected:
 	virtual void OnCancel();
 	afx_msg void OnExport();
 	afx_msg void OnCopy();
+	afx_msg void OnOpenFolder();
 	afx_msg void OnLoudnessChange();
 
 	DECLARE_MESSAGE_MAP()
@@ -3126,11 +3140,13 @@ protected:
 private:
 	CMcpLink *m_pLink;
 	bool m_bWorking;
+	CString m_sExported;	// the first file the last export saved, for Open folder; empty before one did
 };
 
 BEGIN_MESSAGE_MAP(CGameExportDlg, CDialog)
 	ON_BN_CLICKED(IDC_GAME_EXPORT, OnExport)
 	ON_BN_CLICKED(IDC_GAME_COPY, OnCopy)
+	ON_BN_CLICKED(IDC_GAME_OPEN_FOLDER, OnOpenFolder)
 	ON_CBN_SELCHANGE(IDC_GAME_LOUDNESS, OnLoudnessChange)
 END_MESSAGE_MAP()
 
@@ -3218,9 +3234,13 @@ void CGameExportDlg::OnExport()
 	const int Count = static_cast<int>(sizeof(Buttons) / sizeof(Buttons[0]));
 	for (int i = 0; i < Count; ++i)
 		GetDlgItem(Buttons[i])->EnableWindow(FALSE);
-	const CString Result = m_pLink->ExportForGames(All, QUALITIES[std::min(Quality, 2)], Loudness, GetDlgItem(IDC_GAME_RESULT));
+	GetDlgItem(IDC_GAME_OPEN_FOLDER)->EnableWindow(FALSE);
+	std::vector<CString> Saved;
+	const CString Result = m_pLink->ExportForGames(All, QUALITIES[std::min(Quality, 2)], Loudness, GetDlgItem(IDC_GAME_RESULT), Saved);
 	for (int i = 0; i < Count; ++i)
 		GetDlgItem(Buttons[i])->EnableWindow(TRUE);
+	m_sExported = Saved.empty() ? CString() : Saved[0];
+	GetDlgItem(IDC_GAME_OPEN_FOLDER)->EnableWindow(m_sExported.IsEmpty() ? FALSE : TRUE);
 	OnLoudnessChange();
 	SetDlgItemText(IDC_GAME_RESULT, Result);
 	m_bWorking = false;
@@ -3247,6 +3267,20 @@ void CGameExportDlg::OnCopy()
 			GlobalFree(hMemory);
 	}
 	CloseClipboard();
+}
+
+// Explorer on the song's folder with the (first) file the export saved selected; the folder alone if that file is gone
+void CGameExportDlg::OnOpenFolder()
+{
+	if (m_sExported.IsEmpty())
+		return;
+	const DWORD Attributes = GetFileAttributes(m_sExported);
+	if (Attributes != INVALID_FILE_ATTRIBUTES && (Attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+		const CString Arguments = _T("/select,\"") + m_sExported + _T("\"");
+		ShellExecute(NULL, _T("open"), _T("explorer.exe"), Arguments, NULL, SW_SHOWNORMAL);
+	}
+	else
+		ShellExecute(NULL, _T("open"), m_sExported.Left(m_sExported.ReverseFind(_T('\\')) + 1), NULL, NULL, SW_SHOWNORMAL);
 }
 
 void CGameExportDlg::OnCancel()
