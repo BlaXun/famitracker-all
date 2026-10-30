@@ -4,7 +4,7 @@
 # (Source/DrumGrid.cpp), reading tutorials (Source/TutorialScript.cpp,
 # with the built-in ones in res/tutorials, the example songs' walkthroughs
 # in res/examples and the exercises' scripts in res/exercises), the views
-# shown (Source/NoteViews.cpp), the piano roll's
+# shown (Source/NoteViews.cpp), the panels' tabs (Source/PanelTabs.cpp), the piano roll's
 # toolbar rows, hints and menu clicks (Source/PianoRollUi.cpp) and the sound
 # chips' emulation
 # with its stereo mixer (Source/APU), against working
@@ -121,6 +121,11 @@ add_test(NAME tutorial_tests COMMAND tutorial_tests)
 add_executable(noteviews_tests NoteViewsTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../NoteViews.cpp)
 target_include_directories(noteviews_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 add_test(NAME noteviews_tests COMMAND noteviews_tests)
+
+# The panels' tabs and windows (Source/PanelTabs.cpp)
+add_executable(paneltabs_tests PanelTabsTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../PanelTabs.cpp)
+target_include_directories(paneltabs_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_test(NAME paneltabs_tests COMMAND paneltabs_tests)
 
 add_executable(pianoroll_ui_tests PianoRollUiTests.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../PianoRollUi.cpp)
 target_include_directories(pianoroll_ui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)

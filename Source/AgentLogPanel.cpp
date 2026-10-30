@@ -51,8 +51,6 @@ const int DEFAULT_WIDTH = 360;				// along the right
 const int MIN_HEIGHT = 110;
 const int ROW_LEAST = 150;					// beside the others along the bottom: the toggles, a few lines, the note box
 const int MIN_WIDTH = 240;
-const int MIN_VIEW_WIDTH = 300;
-const int DIVIDER = 5;
 const int MARGIN = 6;
 const int TOGGLE_HEIGHT = 18;				// a category's toggle along the top
 const int TOGGLE_GAP = 4;
@@ -168,13 +166,17 @@ struct LogView {
 	};
 	std::vector<row_t> Rows;
 	long long Version;					// the log's, as last read
+	// The log and its version as it last showed on screen: lines added since, while another tab shows, mark its tab
+	const ftapi::AgentLog *pSeenLog;
+	long long SeenVersion;
 	int Width;							// the list's, as laid out
 	int Scroll, Content;
 	bool Stick;							// at the bottom: new entries keep it there
 	std::map<long long, std::pair<int, int> > Heights;	// an entry's height by its id, at a width
 	int TimeWidth, TagWidth, LineHeight;
 
-	LogView() : pPanel(NULL), pTools(NULL), pList(NULL), Open(false), Hidden(0), TopHeight(0), Version(-1), Width(0), Scroll(0),
+	LogView() : pPanel(NULL), pTools(NULL), pList(NULL), Open(false), Hidden(0), TopHeight(0), Version(-1),
+		pSeenLog(NULL), SeenVersion(-1), Width(0), Scroll(0),
 		Content(0), Stick(true), TimeWidth(0), TagWidth(0), LineHeight(0) {}
 
 	ftapi::AgentLog *Log() const
@@ -617,25 +619,25 @@ void LogView::Copy()
 
 void LogView::Menu(CPoint Screen)
 {
-	CAgentLogBar *pBar = dynamic_cast<CAgentLogBar*>(pPanel->GetParent());
+	CPanelBar *pBar = CPanelBar::Of(pPanel);
 	CMenu Popup;
 	Popup.CreatePopupMenu();
 	Popup.AppendMenu(MF_STRING | (Rows.empty() ? MF_GRAYED : 0), 1, _T("Copy the lines shown"));
 	Popup.AppendMenu(MF_STRING | (Entries.empty() ? MF_GRAYED : 0), 2, _T("Clear the log..."));
 	Popup.AppendMenu(MF_SEPARATOR, 0, (LPCTSTR)NULL);
 	if (pBar != NULL)
-		Popup.AppendMenu(MF_STRING, 3, pBar->IsOnRight() ? _T("Dock along the bottom") : _T("Dock on the right"));
+		pBar->AddPlaceItems(Popup, 10);	// a tab at the bottom, on the right, its own window
 	Popup.AppendMenu(MF_STRING, 4, _T("Close"));
 	const UINT Picked = Popup.TrackPopupMenu(TPM_LEFTALIGN | TPM_RETURNCMD | TPM_NONOTIFY, Screen.x, Screen.y, pPanel);
 	switch (Picked) {
 	case 1: Copy(); break;
 	case 2: Clear(); break;
-	case 3:
-		if (pBar != NULL)
-			pBar->DockOnRight(!pBar->IsOnRight());
-		break;
 	case 4:
 		AfxGetMainWnd()->PostMessage(WM_COMMAND, ID_VIEW_AGENTLOG);
+		break;
+	default:
+		if (pBar != NULL)
+			pBar->PickPlace(Picked, 10);
 		break;
 	}
 }
@@ -835,9 +837,21 @@ void CAgentLogPanelWnd::OnSize(UINT nType, int cx, int cy)
 
 void CAgentLogPanelWnd::OnTimer(UINT_PTR nIDEvent)
 {
-	if (nIDEvent == TMR_LOOK && m_pImpl->Open)
+	if (nIDEvent == TMR_LOOK && m_pImpl->Open) {
 		m_pImpl->Refresh(false);
+		// On screen (or another song's log, whose lines aren't new): seen. None while a tool runs
+		const ftapi::AgentLog *pLog = m_pImpl->Log();
+		if (pLog != NULL && (IsWindowVisible() || pLog != m_pImpl->pSeenLog)) {
+			m_pImpl->pSeenLog = pLog;
+			m_pImpl->SeenVersion = m_pImpl->Version;
+		}
+	}
 	CWnd::OnTimer(nIDEvent);
+}
+
+bool CAgentLogPanelWnd::HasNews() const
+{
+	return m_pImpl->Open && m_pImpl->pSeenLog != NULL && m_pImpl->Version != -1 && m_pImpl->Version != m_pImpl->SeenVersion;
 }
 
 void CAgentLogPanelWnd::OnLButtonDown(UINT nFlags, CPoint point)
@@ -876,23 +890,10 @@ void CAgentLogPanelWnd::OnDestroy()
 	CWnd::OnDestroy();
 }
 
-// ---- The bar it is docked in
+// ---- The bar it is docked in, or its own window (PanelBar.h)
 
-BEGIN_MESSAGE_MAP(CAgentLogBar, CControlBar)
-	ON_WM_SIZE()
-	ON_WM_PAINT()
-	ON_WM_ERASEBKGND()
-	ON_WM_LBUTTONDOWN()
-	ON_WM_LBUTTONUP()
-	ON_WM_MOUSEMOVE()
-	ON_WM_SETCURSOR()
-	ON_WM_CAPTURECHANGED()
-	ON_WM_DESTROY()
-	ON_MESSAGE(WM_SIZEPARENT, OnSizeParent)
-END_MESSAGE_MAP()
-
-CAgentLogBar::CAgentLogBar() : m_bRight(false), m_iHeight(DEFAULT_HEIGHT), m_iWidth(DEFAULT_WIDTH), m_iRoom(0), m_iDragFrom(-1),
-	m_iDragSize(0), m_iDragMax(0)
+CAgentLogBar::CAgentLogBar() : CPanelBar(CMainFrame::PANEL_AGENT_LOG, SECTION, _T("Agent log"), DEFAULT_HEIGHT, DEFAULT_WIDTH,
+	MIN_HEIGHT, MIN_WIDTH)
 {
 }
 
@@ -902,27 +903,15 @@ CAgentLogBar::~CAgentLogBar()
 
 bool CAgentLogBar::Create(CFrameWnd *pFrame, CMcpConnection *pTools)
 {
-	m_bRight = theApp.GetProfileInt(SECTION, _T("On the right"), 0) != 0;
-	m_iHeight = std::max(SY(MIN_HEIGHT), static_cast<int>(theApp.GetProfileInt(SECTION, _T("Height"), SY(DEFAULT_HEIGHT))));
-	m_iWidth = std::max(SX(MIN_WIDTH), static_cast<int>(theApp.GetProfileInt(SECTION, _T("Width"), SX(DEFAULT_WIDTH))));
-	m_dwStyle = m_bRight ? CBRS_ALIGN_RIGHT : CBRS_ALIGN_BOTTOM;
-	const CString Class = AfxRegisterWndClass(0, ::LoadCursor(NULL, IDC_ARROW), NULL, NULL);
-	if (!CWnd::Create(Class, _T("Agent log"), WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CRect(0, 0, 0, 0), pFrame,
-		AFX_IDW_CONTROLBAR_FIRST + 55))
+	if (!CreateBar(pFrame, AFX_IDW_CONTROLBAR_FIRST + 55) || !m_wndPanel.Create(this, pTools))
 		return false;
-	return m_wndPanel.Create(this, pTools);
+	SetPanel(&m_wndPanel);
+	return true;
 }
 
-void CAgentLogBar::Opened(bool Open)
+void CAgentLogBar::PanelOpened(bool Open)
 {
-	if (!Open && (::GetFocus() == m_wndPanel.GetSafeHwnd() || ::IsChild(m_wndPanel.GetSafeHwnd(), ::GetFocus()))) {
-		CFrameWnd *pFrame = GetParentFrame();
-		CView *pView = pFrame != NULL ? pFrame->GetActiveView() : NULL;
-		if (pView != NULL)
-			pView->SetFocus();
-	}
 	m_wndPanel.Opened(Open);
-	theApp.WriteProfileInt(SECTION, _T("Open"), Open ? 1 : 0);
 }
 
 void CAgentLogBar::Focus()
@@ -935,182 +924,14 @@ bool CAgentLogBar::WasOpen()
 	return theApp.GetProfileInt(SECTION, _T("Open"), 0) != 0;
 }
 
-void CAgentLogBar::DockOnRight(bool Right)
-{
-	if (Right == m_bRight)
-		return;
-	m_bRight = Right;
-	m_dwStyle = (m_dwStyle & ~CBRS_ALIGN_ANY) | (Right ? CBRS_ALIGN_RIGHT : CBRS_ALIGN_BOTTOM);
-	theApp.WriteProfileInt(SECTION, _T("On the right"), Right ? 1 : 0);
-	CFrameWnd *pFrame = GetParentFrame();
-	if (pFrame != NULL)
-		pFrame->RecalcLayout();
-	Invalidate();
-}
-
-int CAgentLogBar::LeastHeight(int Width) const
+int CAgentLogBar::PanelLeast(int Width) const
 {
 	// The toggles (on more rows when narrow), a few lines and the note box
-	return std::max(SY(MIN_HEIGHT), SY(ROW_LEAST) + (Width < SX(420) ? SY(TOGGLE_HEIGHT + TOGGLE_GAP) : 0));
+	return SY(ROW_LEAST) + (Width < SX(420) ? SY(TOGGLE_HEIGHT + TOGGLE_GAP) : 0);
 }
 
-int CAgentLogBar::RowWeight() const
+int CAgentLogBar::News() const
 {
-	return SX(DEFAULT_WIDTH);	// beside the others in the row, as wide as along the right
-}
-
-void CAgentLogBar::SetBottomHeight(int Height)
-{
-	m_iHeight = std::max(SY(MIN_HEIGHT), Height);
-}
-
-int CAgentLogBar::Divider() const
-{
-	return std::max(4, m_bRight ? SX(DIVIDER) : SY(DIVIDER));
-}
-
-int CAgentLogBar::MaxSize() const
-{
-	if (m_bRight)
-		return std::max(SX(MIN_WIDTH), m_iRoom - SX(MIN_VIEW_WIDTH));
-	// As tall as the note views and the other panels along the bottom leave it (CMainFrame::PlaceBottomPanel)
-	const CMainFrame *pMain = dynamic_cast<const CMainFrame*>(GetParentFrame());
-	if (pMain != NULL)
-		return std::max(SY(MIN_HEIGHT), pMain->BottomPanelMost(this));
-	return std::max(SY(MIN_HEIGHT), m_iRoom / 2);
-}
-
-LRESULT CAgentLogBar::OnSizeParent(WPARAM wParam, LPARAM lParam)
-{
-	AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<AFX_SIZEPARENTPARAMS*>(lParam);
-	m_iRoom = m_bRight ? pLayout->rect.right - pLayout->rect.left : pLayout->rect.bottom - pLayout->rect.top;
-	// Along the bottom the main window places it, in a row with the other panels there
-	CMainFrame *pMain = dynamic_cast<CMainFrame*>(GetParentFrame());
-	if (!m_bRight && pMain != NULL && pMain->PlaceBottomPanel(this, pLayout)) {
-		RecalcDelayShow(pLayout);	// a show the layout was to make, made
-		return 0;
-	}
-	return CControlBar::OnSizeParent(wParam, lParam);
-}
-
-CSize CAgentLogBar::CalcFixedLayout(BOOL bStretch, BOOL bHorz)
-{
-	const int Shown = std::max(0, std::min(Size(), MaxSize()));
-	return m_bRight ? CSize(Shown, 32767) : CSize(32767, Shown);
-}
-
-void CAgentLogBar::OnUpdateCmdUI(CFrameWnd *pTarget, BOOL bDisableIfNoHndler)
-{
-}
-
-BOOL CAgentLogBar::PreTranslateMessage(MSG *pMsg)
-{
-	// Not as a dialog (as control bars are): the panel sends its keys where they belong
-	return CWnd::PreTranslateMessage(pMsg);
-}
-
-void CAgentLogBar::OnSize(UINT nType, int cx, int cy)
-{
-	CControlBar::OnSize(nType, cx, cy);
-	if (m_wndPanel.GetSafeHwnd() == NULL)
-		return;
-	if (m_bRight)
-		m_wndPanel.MoveWindow(Divider(), 0, std::max(0, cx - Divider()), cy);
-	else
-		m_wndPanel.MoveWindow(0, Divider(), cx, std::max(0, cy - Divider()));
-}
-
-void CAgentLogBar::OnPaint()
-{
-	CPaintDC dc(this);
-	CRect Rect;
-	GetClientRect(&Rect);
-	const int Line = Divider();
-	const COLORREF Face = ::GetSysColor(COLOR_3DFACE), Light = ::GetSysColor(COLOR_3DHILIGHT), Shadow = ::GetSysColor(COLOR_3DSHADOW);
-	if (m_bRight) {
-		dc.FillSolidRect(Rect.left, Rect.top, Line, Rect.Height(), Face);
-		dc.FillSolidRect(Rect.left, Rect.top, 1, Rect.Height(), Light);
-		dc.FillSolidRect(Rect.left + Line - 1, Rect.top, 1, Rect.Height(), Shadow);
-		const int Y = Rect.top + Rect.Height() / 2 - SY(12);
-		for (int i = 0; i < 4; ++i)
-			dc.FillSolidRect(Rect.left + Line / 2 - 1, Y + i * SY(7), 2, SY(3), Shadow);
-	}
-	else {
-		dc.FillSolidRect(Rect.left, Rect.top, Rect.Width(), Line, Face);
-		dc.FillSolidRect(Rect.left, Rect.top, Rect.Width(), 1, Light);
-		dc.FillSolidRect(Rect.left, Rect.top + Line - 1, Rect.Width(), 1, Shadow);
-		const int X = Rect.left + Rect.Width() / 2 - SX(12);
-		for (int i = 0; i < 4; ++i)
-			dc.FillSolidRect(X + i * SX(7), Rect.top + Line / 2 - 1, SX(3), 2, Shadow);
-	}
-}
-
-BOOL CAgentLogBar::OnEraseBkgnd(CDC *pDC)
-{
-	return TRUE;
-}
-
-void CAgentLogBar::OnLButtonDown(UINT nFlags, CPoint point)
-{
-	if ((m_bRight ? point.x : point.y) >= Divider())
-		return;
-	CPoint Screen = point;
-	ClientToScreen(&Screen);
-	m_iDragFrom = static_cast<int>(m_bRight ? Screen.x : Screen.y);
-	CRect Shown;
-	GetWindowRect(&Shown);
-	m_iDragSize = m_bRight ? Size() : Shown.Height();	// along the bottom as it shows: its row's height
-	m_iDragMax = MaxSize();
-	SetCapture();
-}
-
-void CAgentLogBar::OnMouseMove(UINT nFlags, CPoint point)
-{
-	if (m_iDragFrom < 0)
-		return;
-	CPoint Screen = point;
-	ClientToScreen(&Screen);
-	const int Moved = static_cast<int>(m_bRight ? Screen.x : Screen.y) - m_iDragFrom;
-	const int Least = m_bRight ? SX(MIN_WIDTH) : SY(MIN_HEIGHT);
-	const int New = std::max(Least, std::min(m_iDragMax, m_iDragSize - Moved));
-	if (New != Size()) {
-		Size() = New;
-		CFrameWnd *pFrame = GetParentFrame();
-		CMainFrame *pMain = dynamic_cast<CMainFrame*>(pFrame);
-		if (!m_bRight && pMain != NULL)
-			pMain->BottomPanelDragged(this, New);	// the panels beside it in the row too
-		else if (pFrame != NULL)
-			pFrame->RecalcLayout();
-	}
-}
-
-void CAgentLogBar::OnLButtonUp(UINT nFlags, CPoint point)
-{
-	if (m_iDragFrom >= 0) {
-		m_iDragFrom = -1;
-		ReleaseCapture();
-		theApp.WriteProfileInt(SECTION, m_bRight ? _T("Width") : _T("Height"), Size());
-	}
-}
-
-void CAgentLogBar::OnCaptureChanged(CWnd *pWnd)
-{
-	m_iDragFrom = -1;
-	CControlBar::OnCaptureChanged(pWnd);
-}
-
-BOOL CAgentLogBar::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
-{
-	if (pWnd == this && nHitTest == HTCLIENT) {
-		::SetCursor(::LoadCursor(NULL, m_bRight ? IDC_SIZEWE : IDC_SIZENS));
-		return TRUE;
-	}
-	return CControlBar::OnSetCursor(pWnd, nHitTest, message);
-}
-
-void CAgentLogBar::OnDestroy()
-{
-	theApp.WriteProfileInt(SECTION, _T("Height"), m_iHeight);
-	theApp.WriteProfileInt(SECTION, _T("Width"), m_iWidth);
-	CControlBar::OnDestroy();
+	// Lines added while another tab showed
+	return m_wndPanel.HasNews() ? PANEL_NEWS_MARK : PANEL_NEWS_NONE;
 }

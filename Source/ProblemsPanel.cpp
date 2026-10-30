@@ -61,8 +61,6 @@ const int DEFAULT_HEIGHT = 150;			// along the bottom
 const int DEFAULT_WIDTH = 340;			// along the right
 const int MIN_HEIGHT = 60;
 const int MIN_WIDTH = 200;
-const int MIN_VIEW_WIDTH = 300;			// what the pattern editor keeps at least, beside the panel
-const int DIVIDER = 5;
 const int HEADER_HEIGHT = 26;
 const int LINE_HEIGHT = 19;
 const int MARGIN = 6;
@@ -98,8 +96,8 @@ const COLORREF BUTTON_HOT = RGB(60, 120, 215);
 
 // The right-click menu
 enum {
-	MENU_GO = 1, MENU_ACTION, MENU_EXPLAIN, MENU_COPY, MENU_FOLD, MENU_CHECK, MENU_AUTO, MENU_DOCK, MENU_CLOSE, MENU_PLAY,
-	MENU_PLAY_ALONE, MENU_PLAY_MIX, MENU_PLAY_FIX, MENU_STOP, MENU_LISTEN
+	MENU_GO = 1, MENU_ACTION, MENU_EXPLAIN, MENU_COPY, MENU_FOLD, MENU_CHECK, MENU_AUTO, MENU_CLOSE, MENU_PLAY,
+	MENU_PLAY_ALONE, MENU_PLAY_MIX, MENU_PLAY_FIX, MENU_STOP, MENU_LISTEN, MENU_PLACE = 100	// three: CPanelBar::AddPlaceItems
 };
 
 // What the panel and the status bar say while the listen runs (it renders, then listens, on the UI thread)
@@ -1374,8 +1372,12 @@ struct CProblemsPanelWnd::Impl {
 		Popup.AppendMenu(MF_STRING, MENU_CHECK, _T("Check now\tF5"));
 		Popup.AppendMenu(MF_STRING, MENU_LISTEN, _T("Listen to the track\tF6"));
 		Popup.AppendMenu(MF_STRING | (Auto ? MF_CHECKED : MF_UNCHECKED), MENU_AUTO, _T("Check as you edit"));
-		CProblemsBar *pBar = static_cast<CProblemsBar*>(pWnd->GetParent());
-		Popup.AppendMenu(MF_STRING, MENU_DOCK, pBar->IsOnRight() ? _T("Dock at the bottom") : _T("Dock on the right"));
+		// Where it goes: a tab at the bottom, on the right, or its own window
+		CPanelBar *pBar = CPanelBar::Of(pWnd);
+		if (pBar != NULL) {
+			Popup.AppendMenu(MF_SEPARATOR);
+			pBar->AddPlaceItems(Popup, MENU_PLACE);
+		}
 		Popup.AppendMenu(MF_STRING, MENU_CLOSE, _T("Close"));
 		const UINT Chosen = Popup.TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, Screen.x, Screen.y, pWnd);
 		switch (Chosen) {
@@ -1401,9 +1403,11 @@ struct CProblemsPanelWnd::Impl {
 				CheckSoon(CHECK_MS);
 			pWnd->Invalidate(FALSE);
 			break;
-		case MENU_DOCK: pBar->DockOnRight(!pBar->IsOnRight()); break;
 		case MENU_CLOSE: AfxGetMainWnd()->PostMessage(WM_COMMAND, ID_VIEW_PROBLEMS); break;
-		default: break;
+		default:
+			if (pBar != NULL)
+				pBar->PickPlace(Chosen, MENU_PLACE);
+			break;
 		}
 	}
 
@@ -1723,6 +1727,11 @@ void CProblemsPanelWnd::Opened(bool Open)
 	}
 }
 
+int CProblemsPanelWnd::ProblemCount() const
+{
+	return m_pImpl->Open ? m_pImpl->List.Total() : 0;
+}
+
 void CProblemsPanelWnd::SongChanged()
 {
 	if (!m_pImpl->Open || GetSafeHwnd() == NULL)
@@ -2016,23 +2025,10 @@ void CProblemsPanelWnd::OnDestroy()
 	CWnd::OnDestroy();
 }
 
-// The bar it is docked in
+// The bar it is docked in, or its own window (PanelBar.h)
 
-BEGIN_MESSAGE_MAP(CProblemsBar, CControlBar)
-	ON_WM_SIZE()
-	ON_WM_PAINT()
-	ON_WM_ERASEBKGND()
-	ON_WM_LBUTTONDOWN()
-	ON_WM_LBUTTONUP()
-	ON_WM_MOUSEMOVE()
-	ON_WM_SETCURSOR()
-	ON_WM_CAPTURECHANGED()
-	ON_WM_DESTROY()
-	ON_MESSAGE(WM_SIZEPARENT, OnSizeParent)
-END_MESSAGE_MAP()
-
-CProblemsBar::CProblemsBar() : m_bRight(false), m_iHeight(DEFAULT_HEIGHT), m_iWidth(DEFAULT_WIDTH), m_iRoom(0), m_iDragFrom(-1),
-	m_iDragSize(0), m_iDragMax(0)
+CProblemsBar::CProblemsBar() : CPanelBar(CMainFrame::PANEL_PROBLEMS, SECTION, _T("Problems"), DEFAULT_HEIGHT, DEFAULT_WIDTH,
+	MIN_HEIGHT, MIN_WIDTH)
 {
 }
 
@@ -2042,27 +2038,15 @@ CProblemsBar::~CProblemsBar()
 
 bool CProblemsBar::Create(CFrameWnd *pFrame, CMcpConnection *pTools)
 {
-	m_bRight = theApp.GetProfileInt(SECTION, _T("On the right"), 0) != 0;
-	m_iHeight = std::max(SY(MIN_HEIGHT), static_cast<int>(theApp.GetProfileInt(SECTION, _T("Height"), SY(DEFAULT_HEIGHT))));
-	m_iWidth = std::max(SX(MIN_WIDTH), static_cast<int>(theApp.GetProfileInt(SECTION, _T("Width"), SX(DEFAULT_WIDTH))));
-	m_dwStyle = m_bRight ? CBRS_ALIGN_RIGHT : CBRS_ALIGN_BOTTOM;
-	const CString Class = AfxRegisterWndClass(0, ::LoadCursor(NULL, IDC_ARROW), NULL, NULL);
-	if (!CWnd::Create(Class, _T("Problems"), WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, CRect(0, 0, 0, 0), pFrame,
-		AFX_IDW_CONTROLBAR_FIRST + 50))
+	if (!CreateBar(pFrame, AFX_IDW_CONTROLBAR_FIRST + 50) || !m_wndPanel.Create(this, pTools))
 		return false;
-	return m_wndPanel.Create(this, pTools);
+	SetPanel(&m_wndPanel);
+	return true;
 }
 
-void CProblemsBar::Opened(bool Open)
+void CProblemsBar::PanelOpened(bool Open)
 {
-	if (!Open && ::GetFocus() == m_wndPanel.GetSafeHwnd()) {
-		CFrameWnd *pFrame = GetParentFrame();
-		CView *pView = pFrame != NULL ? pFrame->GetActiveView() : NULL;
-		if (pView != NULL)
-			pView->SetFocus();
-	}
 	m_wndPanel.Opened(Open);
-	theApp.WriteProfileInt(SECTION, _T("Open"), Open ? 1 : 0);
 }
 
 void CProblemsBar::SongChanged()
@@ -2080,182 +2064,13 @@ bool CProblemsBar::WasOpen()
 	return theApp.GetProfileInt(SECTION, _T("Open"), 0) != 0;
 }
 
-void CProblemsBar::DockOnRight(bool Right)
-{
-	if (Right == m_bRight)
-		return;
-	m_bRight = Right;
-	m_dwStyle = (m_dwStyle & ~CBRS_ALIGN_ANY) | (Right ? CBRS_ALIGN_RIGHT : CBRS_ALIGN_BOTTOM);
-	theApp.WriteProfileInt(SECTION, _T("On the right"), Right ? 1 : 0);
-	CFrameWnd *pFrame = GetParentFrame();
-	if (pFrame != NULL)
-		pFrame->RecalcLayout();
-	Invalidate();
-}
-
-int CProblemsBar::Divider() const
-{
-	return std::max(4, m_bRight ? SX(DIVIDER) : SY(DIVIDER));
-}
-
-int CProblemsBar::LeastHeight(int Width) const
+int CProblemsBar::PanelLeast(int Width) const
 {
 	// Its header and two lines
-	return std::max(SY(MIN_HEIGHT), Divider() + SY(HEADER_HEIGHT) + 2 * SY(LINE_HEIGHT));
+	return SY(HEADER_HEIGHT) + 2 * SY(LINE_HEIGHT);
 }
 
-int CProblemsBar::RowWeight() const
+int CProblemsBar::News() const
 {
-	return SX(DEFAULT_WIDTH);	// beside the others in the row, as wide as along the right
-}
-
-void CProblemsBar::SetBottomHeight(int Height)
-{
-	m_iHeight = std::max(SY(MIN_HEIGHT), Height);
-}
-
-int CProblemsBar::MaxSize() const
-{
-	if (m_bRight)
-		return std::max(SX(MIN_WIDTH), m_iRoom - SX(MIN_VIEW_WIDTH));
-	// As tall as the note views and the other panels along the bottom leave it (CMainFrame::PlaceBottomPanel)
-	const CMainFrame *pMain = dynamic_cast<const CMainFrame*>(GetParentFrame());
-	if (pMain != NULL)
-		return std::max(SY(MIN_HEIGHT), pMain->BottomPanelMost(this));
-	return std::max(SY(MIN_HEIGHT), m_iRoom / 2);	// the pattern editor (and the piano roll) keep half
-}
-
-LRESULT CProblemsBar::OnSizeParent(WPARAM wParam, LPARAM lParam)
-{
-	AFX_SIZEPARENTPARAMS *pLayout = reinterpret_cast<AFX_SIZEPARENTPARAMS*>(lParam);
-	m_iRoom = m_bRight ? pLayout->rect.right - pLayout->rect.left : pLayout->rect.bottom - pLayout->rect.top;
-	// Along the bottom the main window places it, in a row with the other panels there
-	CMainFrame *pMain = dynamic_cast<CMainFrame*>(GetParentFrame());
-	if (!m_bRight && pMain != NULL && pMain->PlaceBottomPanel(this, pLayout)) {
-		RecalcDelayShow(pLayout);	// a show the layout was to make, made
-		return 0;
-	}
-	return CControlBar::OnSizeParent(wParam, lParam);
-}
-
-CSize CProblemsBar::CalcFixedLayout(BOOL bStretch, BOOL bHorz)
-{
-	const int Shown = std::max(0, std::min(Size(), MaxSize()));
-	return m_bRight ? CSize(Shown, 32767) : CSize(32767, Shown);
-}
-
-void CProblemsBar::OnUpdateCmdUI(CFrameWnd *pTarget, BOOL bDisableIfNoHndler)
-{
-}
-
-BOOL CProblemsBar::PreTranslateMessage(MSG *pMsg)
-{
-	// Not as a dialog (as control bars are), so FamiTracker's shortcuts and the panel's keys work
-	return CWnd::PreTranslateMessage(pMsg);
-}
-
-void CProblemsBar::OnSize(UINT nType, int cx, int cy)
-{
-	CControlBar::OnSize(nType, cx, cy);
-	if (m_wndPanel.GetSafeHwnd() == NULL)
-		return;
-	if (m_bRight)
-		m_wndPanel.MoveWindow(Divider(), 0, std::max(0, cx - Divider()), cy);
-	else
-		m_wndPanel.MoveWindow(0, Divider(), cx, std::max(0, cy - Divider()));
-}
-
-void CProblemsBar::OnPaint()
-{
-	CPaintDC dc(this);
-	CRect Rect;
-	GetClientRect(&Rect);
-	const int Line = Divider();
-	const COLORREF Face = ::GetSysColor(COLOR_3DFACE), Light = ::GetSysColor(COLOR_3DHILIGHT), Shadow = ::GetSysColor(COLOR_3DSHADOW);
-	if (m_bRight) {
-		dc.FillSolidRect(Rect.left, Rect.top, Line, Rect.Height(), Face);
-		dc.FillSolidRect(Rect.left, Rect.top, 1, Rect.Height(), Light);
-		dc.FillSolidRect(Rect.left + Line - 1, Rect.top, 1, Rect.Height(), Shadow);
-		const int Y = Rect.top + Rect.Height() / 2 - SY(12);
-		for (int i = 0; i < 4; ++i)
-			dc.FillSolidRect(Rect.left + Line / 2 - 1, Y + i * SY(7), 2, SY(3), Shadow);
-	}
-	else {
-		dc.FillSolidRect(Rect.left, Rect.top, Rect.Width(), Line, Face);
-		dc.FillSolidRect(Rect.left, Rect.top, Rect.Width(), 1, Light);
-		dc.FillSolidRect(Rect.left, Rect.top + Line - 1, Rect.Width(), 1, Shadow);
-		const int X = Rect.left + Rect.Width() / 2 - SX(12);
-		for (int i = 0; i < 4; ++i)
-			dc.FillSolidRect(X + i * SX(7), Rect.top + Line / 2 - 1, SX(3), 2, Shadow);
-	}
-}
-
-BOOL CProblemsBar::OnEraseBkgnd(CDC *pDC)
-{
-	return TRUE;
-}
-
-void CProblemsBar::OnLButtonDown(UINT nFlags, CPoint point)
-{
-	if ((m_bRight ? point.x : point.y) >= Divider())
-		return;
-	CPoint Screen = point;
-	ClientToScreen(&Screen);
-	m_iDragFrom = static_cast<int>(m_bRight ? Screen.x : Screen.y);
-	CRect Shown;
-	GetWindowRect(&Shown);
-	m_iDragSize = m_bRight ? Size() : Shown.Height();	// along the bottom as it shows: its row's height, shorter while room is short
-	m_iDragMax = MaxSize();
-	SetCapture();
-}
-
-void CProblemsBar::OnMouseMove(UINT nFlags, CPoint point)
-{
-	if (m_iDragFrom < 0)
-		return;
-	CPoint Screen = point;
-	ClientToScreen(&Screen);
-	const int Moved = static_cast<int>(m_bRight ? Screen.x : Screen.y) - m_iDragFrom;
-	const int Least = m_bRight ? SX(MIN_WIDTH) : SY(MIN_HEIGHT);
-	const int New = std::max(Least, std::min(m_iDragMax, m_iDragSize - Moved));
-	if (New != Size()) {
-		Size() = New;
-		CFrameWnd *pFrame = GetParentFrame();
-		CMainFrame *pMain = dynamic_cast<CMainFrame*>(pFrame);
-		if (!m_bRight && pMain != NULL)
-			pMain->BottomPanelDragged(this, New);	// the panels beside it in the row too
-		else if (pFrame != NULL)
-			pFrame->RecalcLayout();
-	}
-}
-
-void CProblemsBar::OnLButtonUp(UINT nFlags, CPoint point)
-{
-	if (m_iDragFrom >= 0) {
-		m_iDragFrom = -1;
-		ReleaseCapture();
-		theApp.WriteProfileInt(SECTION, m_bRight ? _T("Width") : _T("Height"), Size());
-	}
-}
-
-void CProblemsBar::OnCaptureChanged(CWnd *pWnd)
-{
-	m_iDragFrom = -1;
-	CControlBar::OnCaptureChanged(pWnd);
-}
-
-BOOL CProblemsBar::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
-{
-	if (pWnd == this && nHitTest == HTCLIENT) {
-		::SetCursor(::LoadCursor(NULL, m_bRight ? IDC_SIZEWE : IDC_SIZENS));
-		return TRUE;
-	}
-	return CControlBar::OnSetCursor(pWnd, nHitTest, message);
-}
-
-void CProblemsBar::OnDestroy()
-{
-	theApp.WriteProfileInt(SECTION, _T("Height"), m_iHeight);
-	theApp.WriteProfileInt(SECTION, _T("Width"), m_iWidth);
-	CControlBar::OnDestroy();
+	return m_wndPanel.ProblemCount();	// on its tab, while another one shows
 }

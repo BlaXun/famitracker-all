@@ -1619,6 +1619,18 @@
     <ClInclude Include="Source\NoteViews.h">
       <Filter>Recorder</Filter>
     </ClInclude>
+    <ClCompile Include="Source\PanelTabs.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\PanelTabs.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClCompile Include="Source\PanelBar.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
+    <ClInclude Include="Source\PanelBar.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
     <ClCompile Include="Source\Profile.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
