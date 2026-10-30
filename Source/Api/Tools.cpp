@@ -13652,8 +13652,10 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // What review_arrangement and check_song find in an arrangement besides their other checks, from a local model's first
 // stage, which was clean on all of those and missed these: a melody in one-bar pieces, a thin or doubled bass, a sound
 // its channel can't play, faders doing the mix's work, a section that repeats another note for note, a lively stage that
-// loops in under 55 s. Each carries the call that fixes it, which a model can send as it is (and the calls after it)
-enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_KINDS };
+// loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main part (IntroFinding). Each carries the call
+// that fixes it where one does (the intro's may be advice alone: Fix null)
+enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO,
+	ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -13708,6 +13710,12 @@ std::string FixText(const Json &Fix, bool Whole)
 			Text += " (" + pDoes->String() + ")";
 	}
 	return Text + ".";
+}
+
+// " Fix: ..." after a finding's text, or nothing for a finding that's advice alone (its Fix null)
+std::string FixLine(const Json &Fix)
+{
+	return Fix.IsObject() && Fix.Get("tool") != 0 ? " " + FixText(Fix, true) : std::string();
 }
 
 // The bar lines a melody stops at, as written: of the lines inside its playing (a note of its own starting in the bars on
@@ -14392,7 +14400,210 @@ void LoopFinding(Session &S, int Style, const TrackUse &Use, std::vector<Arrange
 	Out.push_back(F);
 }
 
-// Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats and the loop
+// An intro that doesn't lead into the main part (GitHub issue #1): a local model asked for a catchy, upbeat song wrote a
+// slow, sparse intro, then the whole band came in at once in A; asked to fix it, it made the intro quieter still, and the
+// jump bigger. The intro is a section named Intro at the start, else the bars before the loop (up to INTRO_MOST_BARS);
+// its main part the bars after it, as many as the intro has (4-8), within the section starting there. Two jumps:
+// - the pulse (not on a calm track, which may start from stillness): the main part's notes start on INTRO_PULSE_RATIO
+//   times as many rows a bar as the intro's or more, and its beat (the drums' hits and the bass's notes a bar,
+//   INTRO_BEAT_LEAST at the least) comes in from under INTRO_BEAT_SHARE of it in the intro, with nothing of it in the
+//   intro's last bar (no fill, no bass leading in);
+// - the loudness: the intro more than INTRO_QUIET_DB under the main part as heard (the soundtrack's target is 6-10 under,
+//   as measure_mix says; more reads as silence in a game).
+// Measured on the 43 songs the user likes (52 tracks, 50 with an intro; never committed): none has either. 44 of them
+// bring the beat in during the intro's last bar (one, its pulse at 1.5 notes a bar against 8.5 in A, its beat at 0.75 hits
+// a bar against 8.5); the others' main parts start notes on at most 1.8 times as many rows a bar as their intros. As heard,
+// a liked intro plays at most 10.4 dB under its main part (the tutorial's; 8.7 the next), so the line is 12, over the 10
+// the targets give: the estimate isn't the render's
+const double INTRO_PULSE_RATIO = 3.0, INTRO_BEAT_SHARE = 0.25, INTRO_BEAT_LEAST = 2.0, INTRO_QUIET_DB = 12.0;
+const int INTRO_MOST_BARS = 16;
+
+// What an intro and its main part play, for IntroFinding (and what_next's intro step)
+struct IntroShape {
+	bool Found;
+	int FromBar, ToBar;				// the intro
+	int MainFrom, MainTo;			// the bars after it it's measured against
+	double IntroPulse, MainPulse;	// rows a bar where a note starts (any channel)
+	double IntroBeat, MainBeat;		// the drums' hits and the bass's notes a bar
+	bool LeadIn;					// the drums or the bass play in the intro's last bar
+	double IntroDb, MainDb;			// as heard, NO_LOUDNESS when silent
+	int Bass;						// the main part's bass, -1 for none
+	std::vector<int> Drums;			// the drum channels with hits in the main part
+	IntroShape() : Found(false), FromBar(1), ToBar(1), MainFrom(1), MainTo(1), IntroPulse(0.0), MainPulse(0.0), IntroBeat(0.0),
+		MainBeat(0.0), LeadIn(false), IntroDb(NO_LOUDNESS), MainDb(NO_LOUDNESS), Bass(-1) {}
+};
+
+std::string SectionBase(const std::string &Name);
+
+IntroShape IntroShapeOf(Session &S, Hearing &Ears, int Melody)
+{
+	IntroShape Out;
+	const int Total = S.Time.TotalRows(), Bars = S.Time.BarCount();
+	int IntroTo = 0;
+	for (size_t i = 0; i < S.Song.Sections.size() && IntroTo == 0; ++i)
+		if (Lowercase(SectionBase(S.Song.Sections[i].Name)) == "intro" && S.Song.Sections[i].First == 0)
+			IntroTo = SectionLastBar(S, S.Song.Sections[i]);
+	const SongFlow F = Flow(S);
+	if (IntroTo == 0 && !F.Halts()) {
+		const int Loop = F.LoopRow(S.Time.PatternLength);
+		if (Loop > 0)
+			IntroTo = S.Time.BarOf(Loop) - 1;
+	}
+	if (IntroTo < 1 || IntroTo > INTRO_MOST_BARS || IntroTo + 2 > Bars)
+		return Out;
+	const int Length = std::max(4, std::min(8, IntroTo));
+	int MainTo = std::min(Bars, IntroTo + Length);
+	for (size_t i = 0; i < S.Song.Sections.size(); ++i)
+		if (SectionFirstBar(S, S.Song.Sections[i]) == IntroTo + 1)
+			MainTo = std::min(MainTo, SectionLastBar(S, S.Song.Sections[i]));
+	const int IntroFirst = 0, IntroEnd = std::min(Total, S.Time.BarEnd(IntroTo));
+	const int MainFirst = IntroEnd, MainEnd = std::min(Total, S.Time.BarEnd(MainTo));
+	if (MainEnd <= MainFirst)
+		return Out;
+	Out.FromBar = 1;
+	Out.ToBar = IntroTo;
+	Out.MainFrom = IntroTo + 1;
+	Out.MainTo = MainTo;
+	Out.Bass = MainBass(S, Melody, Out.MainFrom, Out.MainTo, RowFramesOf(S));
+	std::vector<int> Beat;
+	if (Out.Bass >= 0)
+		Beat.push_back(Out.Bass);
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (!IsMelodic(S.Channel(c)) && HasNotesIn(S, c, MainFirst, MainEnd)) {
+			Out.Drums.push_back(c);
+			Beat.push_back(c);
+		}
+	// Rows a bar where a note starts: on any channel (the pulse), on the beat's channels (the beat)
+	auto Starts = [&](const std::vector<int> &Channels, int First, int End) {
+		std::set<int> Rows;
+		for (size_t c = 0; c < Channels.size(); ++c) {
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channels[c]), First, End);
+			for (size_t i = 0; i < Notes.size(); ++i)
+				if (Notes[i].Volume > 0 && Notes[i].Row >= First)
+					Rows.insert(Notes[i].Row);
+		}
+		return static_cast<int>(Rows.size());
+	};
+	std::vector<int> All;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		All.push_back(c);
+	const double IntroBars = IntroTo, MainBars = MainTo - IntroTo;
+	Out.IntroPulse = Starts(All, IntroFirst, IntroEnd) / IntroBars;
+	Out.MainPulse = Starts(All, MainFirst, MainEnd) / MainBars;
+	Out.IntroBeat = Starts(Beat, IntroFirst, IntroEnd) / IntroBars;
+	Out.MainBeat = Starts(Beat, MainFirst, MainEnd) / MainBars;
+	Out.LeadIn = Starts(Beat, S.Time.BarStart(IntroTo), IntroEnd) > 0;
+	std::vector<int> Heard;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).Kind != KIND_DPCM)
+			Heard.push_back(c);
+	Out.IntroDb = Ears.Loudness(Heard, std::vector<std::pair<int, int> >(1, std::make_pair(IntroFirst, IntroEnd)));
+	Out.MainDb = Ears.Loudness(Heard, std::vector<std::pair<int, int> >(1, std::make_pair(MainFirst, MainEnd)));
+	Out.Found = Starts(All, IntroFirst, IntroEnd) > 0;	// a silent count-in is another matter (measure_mix says so)
+	return Out;
+}
+
+// Whether the intro's pulse jumps into its main part
+bool IntroPulseJumps(const IntroShape &I)
+{
+	return I.MainPulse >= INTRO_PULSE_RATIO * std::max(0.25, I.IntroPulse) && I.MainBeat >= INTRO_BEAT_LEAST &&
+		I.IntroBeat <= INTRO_BEAT_SHARE * I.MainBeat && !I.LeadIn;
+}
+
+// Whether the intro plays too far under its main part (both heard)
+bool IntroTooQuiet(const IntroShape &I)
+{
+	return I.IntroDb > NO_LOUDNESS && I.MainDb > NO_LOUDNESS && I.MainDb - I.IntroDb > INTRO_QUIET_DB;
+}
+
+// The bar that leads into the main part as the song plays it: the loop's last bar, which goes back to where the loop
+// starts (A, after the intro); -1 when the song halts or the loop doesn't start after the intro
+int BarIntoMain(Session &S, int MainFrom)
+{
+	const SongFlow F = Flow(S);
+	if (F.Halts())
+		return -1;
+	const int PL = S.Time.PatternLength, Loop = F.LoopRow(PL), End = F.EndRow(PL);
+	if (Loop < 0 || S.Time.BarOf(Loop) != MainFrom || End <= Loop)
+		return -1;
+	const int Last = S.Time.BarOf(End - 1);
+	return Last > MainFrom ? Last : -1;
+}
+
+void IntroFinding(Session &S, Hearing &Ears, int Melody, int From, int Style, std::vector<ArrangeFinding> &Out)
+{
+	if (From > 1)
+		return;
+	const IntroShape I = IntroShapeOf(S, Ears, Melody);
+	if (!I.Found)
+		return;
+	const bool Pulse = Style != STYLE_CALM && IntroPulseJumps(I), Quiet = IntroTooQuiet(I);
+	if (!Pulse && !Quiet)
+		return;
+	ArrangeFinding F;
+	F.Kind = ARRANGE_INTRO;
+	F.FromBar = I.FromBar;
+	F.ToBar = I.MainFrom;
+	F.Weight = Pulse && Quiet ? 1.5 : 1.0;
+	const std::string Intro = "The intro (" + RangeText(I.FromBar, I.ToBar) + ")";
+	std::vector<std::string> Jumps;
+	if (Pulse)
+		Jumps.push_back(Format("its notes start on %.1f rows a bar against %.1f in bar %d on, and the beat (drums and bass) comes in at "
+			"once there (%.1f hits a bar, from %.1f)", I.IntroPulse, I.MainPulse, I.MainFrom, I.MainBeat, I.IntroBeat));
+	if (Quiet)
+		Jumps.push_back(Format("it plays %.1f dB under bar %d on as heard (6-10 under is the target; more reads as silence in a game)",
+			I.MainDb - I.IntroDb, I.MainFrom));
+	F.Text = Intro + " doesn't lead into the main part: " + Jumps[0] + (Jumps.size() > 1 ? "; and " + Jumps[1] : std::string()) +
+		". A jump like that sounds like two songs. Keep the main part's pulse in the intro (the chords and the bass in A's rhythm, "
+		"fewer parts rather than longer notes), bring the bass or the beat in during the intro's last bar or play a fill into "
+		"A, and make the intro 6-10 dB quieter than A, not slower; making it quieter still only makes the jump bigger.";
+	F.Summary = Pulse ? Format("the intro's pulse jumps at bar %d: the band comes in at once", I.MainFrom) :
+		Format("the intro plays %.0f dB under the main part", I.MainDb - I.IntroDb);
+	F.Details.Set("intro_from_bar", I.FromBar);
+	F.Details.Set("intro_to_bar", I.ToBar);
+	F.Details.Set("main_from_bar", I.MainFrom);
+	F.Details.Set("main_to_bar", I.MainTo);
+	F.Details.Set("intro_starts_a_bar", Json::NumberText(FormatNumber(std::floor(I.IntroPulse * 10 + 0.5) / 10)));
+	F.Details.Set("main_starts_a_bar", Json::NumberText(FormatNumber(std::floor(I.MainPulse * 10 + 0.5) / 10)));
+	F.Details.Set("intro_beat_a_bar", Json::NumberText(FormatNumber(std::floor(I.IntroBeat * 10 + 0.5) / 10)));
+	F.Details.Set("main_beat_a_bar", Json::NumberText(FormatNumber(std::floor(I.MainBeat * 10 + 0.5) / 10)));
+	F.Details.Set("under_db", I.IntroDb > NO_LOUDNESS && I.MainDb > NO_LOUDNESS ?
+		Json::NumberText(FormatNumber(std::floor((I.MainDb - I.IntroDb) * 10 + 0.5) / 10)) : Json());
+	F.Details.Set("pulse_jumps", Pulse);
+	F.Details.Set("too_quiet", Quiet);
+	// The fix for the pulse: what leads into A as the loop plays it (its last bar, going back to A) in the intro's last bar:
+	// the drums (a fill into A), or without drums the backing (the bass and the chords that lead there)
+	const int Lead = Pulse ? BarIntoMain(S, I.MainFrom) : -1;
+	std::vector<int> Channels;
+	if (Lead > 0) {
+		const int First = S.Time.BarStart(Lead), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(Lead));
+		for (size_t d = 0; d < I.Drums.size(); ++d)
+			if (HasNotesIn(S, I.Drums[d], First, End))
+				Channels.push_back(I.Drums[d]);
+		for (int c = 0; c < S.ChannelCount() && Channels.empty(); ++c)
+			if (c != Melody && IsMelodic(S.Channel(c)) && HasNotesIn(S, c, First, End) && c == I.Bass)
+				Channels.push_back(c);
+	}
+	if (!Channels.empty()) {
+		Json Copy = Json::MakeObject();
+		Copy.Set("from_bar", Lead);
+		Copy.Set("at_bar", I.ToBar);
+		Json List = Json::MakeArray();
+		for (size_t c = 0; c < Channels.size(); ++c)
+			List.Push(S.Channel(Channels[c]).FullName());
+		Copy.Set("channels", List);
+		const bool Drums = !IsMelodic(S.Channel(Channels[0]));
+		F.Fix = ToolCall("copy_bars", Copy, Format("plays %s of bar %d, which leads back into A as the loop goes round, in the intro's "
+			"last bar (%d), so %s", Drums ? "the drums" : "the bass", Lead, I.ToBar, Drums ? "a fill brings the beat in before A" :
+			"the bass comes in before A"));
+	}
+	else
+		F.Fix = Json();	// advice: the intro's notes are the composer's to change
+	Out.push_back(F);
+}
+
+// Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats, the loop and
+// the intro
 std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const TrackUse &Use,
 	const Key &K)
 {
@@ -14406,6 +14617,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	FadersFinding(S, Ears, Melody, From, To, Calm, Out);
 	RepeatFindings(S, Melody, From, To, Out);
 	LoopFinding(S, Style, Use, Out);
+	IntroFinding(S, Ears, Melody, From, Style, Out);
 	return Out;
 }
 
@@ -14430,7 +14642,6 @@ struct SongLift {
 // 2.0 told it to build
 const double LIFT_LEAST = 1.5;
 
-std::string SectionBase(const std::string &Name);
 bool IsFreeSectionBase(const std::string &Base);
 
 SongLift LiftOf(Session &S, Hearing &Ears, int First, int End)
@@ -14864,7 +15075,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 
 	// The intro (the bars before the loop starts, or a section named Intro at the start), as the stems measure it: more
 	// than 10 dB under the rest it reads as silence in a game (6-10 dB under is the soundtrack's target)
+	// (a tip unless the arrangement's intro finding says it, with the pulse: ArrangeFindings below)
 	Hearing Ears(S);
+	std::string QuietIntro;
 	{
 		int IntroEnd = Flow(S).LoopRow(S.Time.PatternLength);
 		for (size_t i = 0; IntroEnd <= 0 && i < S.Song.Sections.size(); ++i)
@@ -14878,9 +15091,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 			const double Intro = Ears.Loudness(All, std::vector<std::pair<int, int> >(1, std::make_pair(First, IntroEnd)));
 			const double Rest = Ears.Loudness(All, std::vector<std::pair<int, int> >(1, std::make_pair(IntroEnd, End)));
 			if (Intro > NO_LOUDNESS && Rest > NO_LOUDNESS && Rest - Intro > 10.0)
-				Tip(0.5, Format("The intro (%s) plays about %d dB under the rest: more than 10 dB under reads as silence in a game "
+				QuietIntro = Format("The intro (%s) plays about %d dB under the rest: more than 10 dB under reads as silence in a game "
 					"(6-10 dB under is the target), so bring a part in sooner or play it louder.", RangeText(S.Time.BarOf(First),
-					S.Time.BarOf(IntroEnd - 1)).c_str(), static_cast<int>(std::floor(Rest - Intro + 0.5))));
+					S.Time.BarOf(IntroEnd - 1)).c_str(), static_cast<int>(std::floor(Rest - Intro + 0.5)));
 		}
 	}
 
@@ -14901,12 +15114,15 @@ std::string ReviewTool(Session &S, const Json &Args)
 
 	// What drafts miss (ArrangeFindings), each a tip with its call; the older tips they say better are left out
 	const std::vector<ArrangeFinding> Arranged = ArrangeFindings(S, Ears, Melody, From, To, Chosen.Style, Use, K);
-	bool PiecesFound = false, ThinFound = false, LoopFound = false;
+	bool PiecesFound = false, ThinFound = false, LoopFound = false, IntroFound = false;
 	for (size_t i = 0; i < Arranged.size(); ++i) {
 		PiecesFound = PiecesFound || Arranged[i].Kind == ARRANGE_PHRASES;
 		ThinFound = ThinFound || (Arranged[i].Kind == ARRANGE_BASS && Arranged[i].Channel == Bass);
 		LoopFound = LoopFound || Arranged[i].Kind == ARRANGE_LOOP;
+		IntroFound = IntroFound || Arranged[i].Kind == ARRANGE_INTRO;
 	}
+	if (!QuietIntro.empty() && !IntroFound)
+		Tip(0.5, QuietIntro);
 
 	// Harmony: the chords the parts play (with the melody when nothing else does)
 	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
@@ -15444,7 +15660,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			"a B part (16 to 32 bars or more).");
 
 	for (size_t i = 0; i < Arranged.size(); ++i)
-		TipCall(Arranged[i].Weight, Arranged[i].Text + " " + FixText(Arranged[i].Fix, true), Arranged[i].Summary, Arranged[i].Fix);
+		TipCall(Arranged[i].Weight, Arranged[i].Text + FixLine(Arranged[i].Fix), Arranged[i].Summary, Arranged[i].Fix);
 	// Most first: the tips that take the most off the score (in the order found where they take as much)
 	std::stable_sort(Tips.begin(), Tips.end(), [](const ReviewTip &a, const ReviewTip &b) { return a.Weight > b.Weight; });
 	const int Score = std::max(1, std::min(10, static_cast<int>(std::floor(10.0 - Missing + 0.5))));
@@ -23950,14 +24166,15 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // key (a song that changes key) doesn't hide notes that vanish or click.
 // HELD: on a calm track, the melody's sound holding a high, steady level from attack to release (HeldLeads). Then the
 // arrangement's findings (ArrangeFindings, in arrange_kind's order): the melody in one-bar pieces, a thin or doubled
-// bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a stage's short loop
+// bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a stage's short loop, an intro
+// that jumps into the main part
 // WARBLE (from feat-listen): FDS notes held past where a fast, deep modulator comes in, heard as a fluttering echo
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
-	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_WARBLE, FOUND_KINDS };
+	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop", "warble" };
+	"sound", "faders", "repeat", "short_loop", "intro", "warble" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "high" };
+	"medium", "low", "low", "low", "medium", "high" };
 
 // A note a finding is about
 struct CheckNote {
@@ -24451,7 +24668,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			++ArrangedAll;
 			const int Row = S.Time.BarStart(A.FromBar);
 			CheckFinding &F = Report(FOUND_PHRASES + A.Kind, A.Channel, Row, std::max(1, std::min(End, S.Time.BarEnd(A.ToBar)) - Row),
-				A.Text + " " + FixText(A.Fix, true), A.Summary);
+				A.Text + FixLine(A.Fix), A.Summary);
 			F.Details = A.Details;
 			F.Fix = A.Fix;
 		}
@@ -24464,7 +24681,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
-		Warbling };
+		Arranged[ARRANGE_INTRO], Warbling };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -27935,8 +28152,9 @@ void WhatNext::Depth()
 		Put.Set("at_bar", 1);
 		Put.Set("bars", Short);
 		Put.Set("name", "Intro");
-		Step("intro", "insert_bars", Put, Format("An intro that plays once opens the song quietly: %s at the start, then filled with the %s.",
-			Plural(Short, "bar", "bars").c_str(), Calm() ? "chords alone" : "chords and bass"));
+		Step("intro", "insert_bars", Put, Format("An intro that plays once opens the song quietly: %s at the start, then filled with the %s "
+			"in A's rhythm%s, so it leads into A: quieter than A (fewer parts), not slower.", Plural(Short, "bar", "bars").c_str(),
+			Calm() ? "chords alone" : "chords and bass", Calm() ? "" : " and the beat coming in during its last bar"));
 	}
 	// The intro and the break filled with the chords and the bass of the A part: its first bars for the intro, its last for a
 	// break, which then leads back in as A's end does
@@ -27963,6 +28181,37 @@ void WhatNext::Depth()
 		Step(i == 0 ? "intro" : "break", "copy_bars", Copy, Format("%s is empty: %s of %s (bars %d-%d) there, without the melody and the "
 			"drums.", P.Name.c_str(), Channels.size() == 1 ? "the chords" : "the chords and bass", Source.Name.c_str(), From,
 			From + Length - 1));
+	}
+	// The intro leads into A (GitHub issue #1, check_song's intro finding): its chords and bass keep A's pulse (copied from
+	// A's first bars above), and the beat comes in during its last bar: A's last bar of drums (where its phrase ends, with
+	// its fill) there. Not on a calm track, which has no drums to bring in
+	if (Intro && !m_Form[0].Empty && !Calm()) {
+		const FormPart &P = m_Form[0], &Source = m_Form[static_cast<size_t>(A)];
+		const int LastFirst = S.Time.BarStart(P.LastBar), LastEnd = std::min(S.Time.BarEnd(P.LastBar), Total);
+		const int SourceFirst = S.Time.BarStart(Source.LastBar), SourceEnd = std::min(S.Time.BarEnd(Source.LastBar), Total);
+		Json List = Json::MakeArray();
+		bool Waiting = false;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (IsMelodic(S.Channel(c)) || !NoteStartsIn(S, c, SourceFirst, SourceEnd))
+				continue;
+			List.Push(ChannelName(c));
+			Waiting = Waiting || !NoteStartsIn(S, c, LastFirst, LastEnd);
+		}
+		bool Beat = false;	// drums anywhere in the intro already: the composer's own
+		for (int c = 0; c < S.ChannelCount() && !Beat; ++c)
+			Beat = !IsMelodic(S.Channel(c)) && NoteStartsIn(S, c, S.Time.BarStart(P.FirstBar), LastEnd);
+		if (Waiting && !Beat && List.Size() > 0 && P.LastBar < Source.FirstBar) {
+			Json Copy = Json::MakeObject();
+			Copy.Set("from_bar", Source.LastBar);
+			Copy.Set("at_bar", P.LastBar);
+			Copy.Set("channels", List);
+			m_Unmet.insert("intro");
+			m_Met.erase("intro");
+			Step("intro", "copy_bars", Copy, Format("%s keeps %s's pulse, but the drums would come in all at once in %s: the drums of %s's "
+				"last bar (bar %d, where its phrase ends) in %s's last bar (bar %d) bring the beat in before it. Keep the intro quieter "
+				"than %s (6-10 dB, fewer parts), not slower.", P.Name.c_str(), Source.Name.c_str(), Source.Name.c_str(),
+				Source.Name.c_str(), Source.LastBar, P.Name.c_str(), P.LastBar, Source.Name.c_str()));
+		}
 	}
 	// The loop: from after the intro to the song's end
 	const SongFlow F = Flow(S);
@@ -28900,6 +29149,14 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		if (Tool == "insert_bars")
 			return Format("Add %s of %s at bar %d", Part.c_str(), Plural(Bars, "bar", "bars").c_str(), At);
 		const Json *pChannels = A.Get("channels");
+		// The beat (or the bass) coming in during the intro's last bar, one bar copied there: what_next's own, and check_song's
+		// intro finding
+		bool Beat = false;
+		for (size_t c = 0; pChannels != 0 && pChannels->IsArray() && c < pChannels->Size(); ++c)
+			Beat = Beat || (pChannels->At(c).IsString() && (pChannels->At(c).String().find("Noise") != std::string::npos ||
+				pChannels->At(c).String().find("DPCM") != std::string::npos));
+		if (Id == "intro" && A.Get("to_bar") == 0)	// a bar of the main part's into the intro's last
+			return Format("Bring the %s in during the intro's last bar (bar %d)", Beat ? "beat" : "bass", At);
 		return Format("Fill the %s with %s", Id.c_str(), pChannels != 0 && pChannels->IsArray() && pChannels->Size() > 1 ?
 			"the chords and the bass" : "the chords");
 	}

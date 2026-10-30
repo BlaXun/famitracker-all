@@ -808,6 +808,25 @@ JSON as `fix`.
   section (or its first bars) after its end, as many times as it takes,
   then `set_loop` to the copy's end. Battles, chases and calm tracks often
   loop sooner by design, so other styles leave it alone.
+- **An intro that jumps into the main part** (`intro`; GitHub issue #1): the
+  intro (a section named Intro at the start, else the bars before the loop,
+  up to 16) against the bars after it. Its pulse jumps when the main part's
+  notes start on three times as many rows a bar or more and its beat (the
+  drums' hits and the bass's notes, 2 a bar or more) comes in from under a
+  quarter of that, with nothing of it in the intro's last bar: a slow,
+  sparse intro, then the whole band at once. Not on a calm track, which may
+  start from stillness. Its loudness jumps when it plays more than 12 dB
+  under the main part as heard (6-10 under is the target). Fix, for the
+  pulse: `copy_bars` of the drums (without drums, the bass) of the loop's
+  last bar, which leads back into A, into the intro's last bar: a fill brings
+  the beat in before A. The loudness is advice alone, no call: keep the main
+  part's pulse in the intro (fewer parts rather than longer notes) and make
+  it 6-10 dB quieter, not slower; quieter still only makes the jump bigger.
+  None of the 43 songs the user likes has it (44 of their 50 intros bring
+  the beat in during their last bar; the others' main parts start notes on
+  at most 1.8 times as many rows; the quietest intro plays 10.4 dB under).
+  `what_next`'s intro builds intros that way: A's chords and bass in its
+  rhythm, then, with drums, A's last bar of them in the intro's last bar.
 
 `review_arrangement` weighs them into its score (a melody in pieces most)
 and lists them among its tips, most first. Its breath check counts a rest
@@ -911,7 +930,7 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy`, `key` and `held`, notes that vanish counted by the note, then the
 arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
-`short_loop`, see [What drafts miss](#what-drafts-miss)), `style`
+`short_loop` and `intro`, see [What drafts miss](#what-drafts-miss)), `style`
 (`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
@@ -942,9 +961,13 @@ and `findings`, heard worst first as in the text. Each finding has:
   `overdrives`) for a sound; `faders`, `melody_fader`, `drums` and
   `nearest` for the faders; `section`, `repeats`, `melody_alike` and
   `parts_alike` for a repeat; `loop_seconds`, `loop_from_bar` and
-  `loop_to_bar` for a short loop;
+  `loop_to_bar` for a short loop; `intro_from_bar`, `intro_to_bar`,
+  `main_from_bar`, `main_to_bar`, `intro_starts_a_bar`, `main_starts_a_bar`,
+  `intro_beat_a_bar`, `main_beat_a_bar`, `under_db`, `pulse_jumps` and
+  `too_quiet` for an intro;
 - `fix`, for a click that can be nudged, a clash `polish` can clear and
-  every finding of the arrangement: the call that does it, `tool` (`polish`
+  every finding of the arrangement (but an intro's loudness alone, which is
+  advice): the call that does it, `tool` (`polish`
   for a click: the touch `clicks` on the note's channel and bar; for a
   clash: the touch `clashes` on its two channels and bars), `arguments` and `does`, in
   words, and `then`, the calls to make after it, each the same way (a
@@ -1050,7 +1073,7 @@ doesn't change.
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. Each echo note plays about 8 dB under its original as both sounds play (each chip's level and both instruments' envelopes counted; the mixer's faders stay the mixer's, so the volume column doesn't make up for one), and it copies only the effects its channel plays (an FDS modulator's `Hxx`-`Jxx` isn't put on a pulse). An echo note a semitone from a note another part sounds with it, or a semitone and octaves (a minor ninth, an F-4 over a pad's E-2: what `check_song` finds a clash, by the same rule), is left out or cut short; a major seventh (over the bass, or under the melody) is a chord's color and stays. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong. A depth by word swings the notes as far as it swings a 2A03 pulse's, so on the FDS, the N163 and the VRC7, whose steps are finer or coarser, the effect's depth is another (the reply says the cents). `modulator` `off` on the FDS turns its modulator off where it plays (`H00` on each note, the `Hxx` that bring it in taken out) and brings the vibrato in where the modulator came in |
 | `change_mood` | Several changes for a mood at once: key or mode (a dominant's ninth kept natural, as `transpose` keeps it), parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key (a slide that takes a note outside it too; not a borrowed chord's or a secondary dominant's, which it hears as `write_notes`' warnings do, while under a quarter of the notes fall outside the key), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop), each with the call that fixes it (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
+| `check_song` | Notes outside the key (a slide that takes a note outside it too; not a borrowed chord's or a secondary dominant's, which it hears as `write_notes`' warnings do, while under a quarter of the notes fall outside the key), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop, an intro whose pulse or loudness jumps into the main part), each with the call that fixes it (the intro's loudness as advice) (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds (the music's, never a sound effect's) |

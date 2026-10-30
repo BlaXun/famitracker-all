@@ -1929,6 +1929,32 @@ bottom unless scrolled up (`Stick`), and adds a note with `LOG_USER`, then
 (New, Open, OpenText) and `FilesBeside` leaves the log out of the tests that
 count the files next to the song. `TestAgentLog` covers it.
 
+Intros that lead in (from `feat-tool-issues`, GitHub issue #1): a local model
+asked for a catchy, upbeat song wrote a slow, sparse intro and then started the
+whole band at once in A; asked to fix it, it made the intro quieter, so the jump
+grew. `IntroFinding` (beside `LoopFinding` in `Tools.cpp`, `ARRANGE_INTRO`,
+check_song's kind `intro` before `warble` in `CHECK_KIND`, severity medium;
+`PROBLEM_INTRO` in `ProblemList.h`, after `PROBLEM_LOOP`) measures the intro
+(`IntroShapeOf`: a section named Intro at the start, else the bars before the
+loop, up to `INTRO_MOST_BARS`) against the 4-8 bars after it: the rows a bar
+where any note starts (the pulse), the drums' hits and the main part's bass's
+notes a bar (the beat), whether the beat plays in the intro's last bar, and
+both as heard (`Hearing::Loudness`). The pulse jumps (`IntroPulseJumps`, not
+on a calm track) at `INTRO_PULSE_RATIO` with the beat coming in from under
+`INTRO_BEAT_SHARE` and no lead-in; the loudness at `INTRO_QUIET_DB` under.
+Its fix copies the loop's last bar's drums (else the bass) into the intro's
+last bar (`BarIntoMain`); the loudness alone is advice, its `Fix` null
+(`FixLine` writes no "Fix:"), and the review's older intro tip stays out when
+it's there. The constants were calibrated with a local harness (not
+committed) running check_song on the user's 43 liked songs
+(`/home/claude/songs/regress/keep`, never committed; `SongFiles.h` from
+`feat-busy-check` reads them): none gets it (comment before the constants).
+`what_next`'s intro (`WhatNext::Depth`) says it builds the intro in A's
+rhythm, and after the chords and bass are copied in, with drums and not calm,
+copies A's last bar of drums into the intro's last bar (`StepWhat`: "Bring the
+beat in"). `TestIntroFindings` and `TestWhatNextLoop` (no `intro` finding
+after a walk; the fill there with drums) cover it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

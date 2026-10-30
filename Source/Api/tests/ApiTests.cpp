@@ -15446,7 +15446,8 @@ void TestReviewFixes()
 		"50% left");
 	CHECK_HAS(Run(Song, "review_arrangement", REVIEW).Text, "Stereo: VRC6 Pulse 1 in the middle; VRC6 Pulse 2 panned 50% left.");
 
-	// An intro (bars 1-4) of the chords alone at 2 plays about 20 dB under the rest: tipped; at 8, not
+	// An intro (bars 1-4) of the chords alone at 2 plays about 20 dB under the rest: tipped, by the arrangement's intro finding
+	// since feat-tool-issues (more than 12 dB under; its pulse doesn't jump, only the melody comes in); at 8, not
 	for (int Pass = 0; Pass < 2; ++Pass) {
 		FakeSong Intro(3);
 		Intro.Info.DirectChanges = true;
@@ -15461,8 +15462,11 @@ void TestReviewFixes()
 		Intro.Info.Sections.push_back(Section("A", 1, 2));
 		const std::string Text = Run(Intro, "review_arrangement", REVIEW).Text;
 		if (Pass == 0)
-			CHECK_HAS(Text, "The intro (bars 1-4) plays about 20 dB under the rest: more than 10 dB under reads as silence in a game "
-				"(6-10 dB under is the target), so bring a part in sooner or play it louder.");
+		{
+			CHECK_HAS(Text, "The intro (bars 1-4) doesn't lead into the main part: it plays ");
+			CHECK_HAS(Text, " dB under bar 5 on as heard (6-10 under is the target; more reads as silence in a game).");
+			CHECK_LACKS(Text, "plays about 20 dB under the rest");
+		}
 		else
 			CHECK_LACKS(Text, "The intro");
 	}
@@ -18581,6 +18585,108 @@ void TestDraftFindings()
 	CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text), "short_loop") == 0);
 }
 
+// An intro that doesn't lead into the main part (GitHub issue #1): a slow, sparse intro (a held chord a bar), then the whole
+// band at once in A (eighths on the lead, the bass in quarters, hi-hats in eighths); made quieter, the jump only grows. The
+// finding says so with the call that brings the beat in during the intro's last bar (the drums of the loop's last bar,
+// which leads back into A), and that call takes the pulse's jump away; the loudness's is advice (no call)
+void IntroSong(FakeSong &Song, int IntroVolume)
+{
+	Song.Info.DirectChanges = true;
+	Song.Info.Sections.clear();
+	Song.Info.Sections.push_back(Section("Intro", 0, 0));
+	Song.Info.Sections.push_back(Section("A", 1, 3));
+	Song.AddInstrumentInfo(6, "Hi-hat", "2A03", false);
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 12, 6, 3, 1, 0 };
+	const char *const CHORD[4] = { "C-3", "A-2", "F-2", "G-2" }, *const ROOTS[4] = { "C-2", "A-1", "F-1", "G-1" };
+	const char *const TUNE[8] = { "E-4", "G-4", "A-4", "G-4", "E-4", "D-4", "C-4", "D-4" };
+	for (int Bar = 1; Bar <= 16; ++Bar) {
+		const int Row = (Bar - 1) * 16, k = (Bar - 1) % 4;
+		// The chords: a held note a bar all the way (the intro's alone)
+		Song.Put(5, Row, CHORD[k], Bar == 1 || Bar == 5 ? 2 : NO_INSTRUMENT, Bar == 1 ? IntroVolume : Bar == 5 ? 10 : -1);
+		if (Bar <= 4)
+			continue;
+		for (int e = 0; e < 8; ++e) {
+			Song.Put(0, Row + e * 2, TUNE[(e + Bar) % 8], Bar == 5 && e == 0 ? 0 : NO_INSTRUMENT, Bar == 5 && e == 0 ? 12 : -1);
+			Song.Put(3, Row + e * 2, "1-#", Bar == 5 && e == 0 ? 6 : NO_INSTRUMENT, Bar == 5 && e == 0 ? 12 : -1);
+		}
+		for (int b = 0; b < 4; ++b)
+			Song.Put(2, Row + b * 4, ROOTS[k], Bar == 5 && b == 0 ? 1 : NO_INSTRUMENT);
+	}
+	Song.Rows[1][4 * 64 - 1].Effect[0] = EFF_JUMP;	// back to frame 1, bar 5: the intro plays once
+	Song.Rows[1][4 * 64 - 1].Param[0] = 1;
+}
+
+void TestIntroFindings()
+{
+	{
+		FakeSong Song(4);
+		IntroSong(Song, 10);
+		const Json Out = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "intro"), 1);
+		const Json *pIntro = FindingOf(Out, "intro");
+		CHECK_EQ(TextOf(pIntro, "severity"), std::string("medium"));
+		CHECK_EQ(IntegerOf(pIntro, "bar"), 1);
+		CHECK_EQ(IntegerOf(pIntro, "intro_to_bar"), 4);
+		CHECK_EQ(IntegerOf(pIntro, "main_from_bar"), 5);
+		CHECK(pIntro != 0 && pIntro->Get("pulse_jumps") != 0 && pIntro->Get("pulse_jumps")->Bool());
+		CHECK(pIntro != 0 && pIntro->Get("too_quiet") != 0 && !pIntro->Get("too_quiet")->Bool());
+		CHECK_HAS(TextOf(pIntro, "message"), "The intro (bars 1-4) doesn't lead into the main part: its notes start on 1.0 rows a bar "
+			"against 8.0 in bar 5 on");
+		CHECK_HAS(TextOf(pIntro, "message"), "make the intro 6-10 dB quieter than A, not slower");
+		CHECK_HAS(TextOf(pIntro, "message"), "Fix: copy_bars {\"from_bar\":16,\"at_bar\":4,\"channels\":[\"2A03 Noise\"]}");
+		CHECK_HAS(Run(Song, "check_song", "{\"format\": \"short\"}").Text, "The intro's pulse jumps at bar 5: the band comes in at once");
+		// The review weighs it with its call
+		const std::string Review = Run(Song, "review_arrangement", "{}").Text;
+		CHECK_HAS(Review, "doesn't lead into the main part");
+		CHECK_HAS(Review, "Fix: copy_bars {\"from_bar\":16,\"at_bar\":4,\"channels\":[\"2A03 Noise\"]}");
+		// A calm track may start from stillness: no pulse to keep
+		CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\", \"style\": \"calm\"}").Text), "intro") == 0);
+		// The call, as a model sends it: the beat comes in during the intro's last bar, and the finding goes
+		std::string Reply;
+		CHECK(pIntro != 0 && RunFix(Song, *pIntro, &Reply));
+		auto Hits = [&](int First, int End) {
+			int Count = 0;
+			for (int r = First; r < End; ++r)
+				Count += Song.Rows[3][static_cast<size_t>(r)].Note > 0 && Song.Rows[3][static_cast<size_t>(r)].Note < NOTE_RELEASE ? 1 : 0;
+			return Count;
+		};
+		CHECK(Hits(3 * 16, 4 * 16) == 8 && Hits(0, 3 * 16) == 0);
+		CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text), "intro") == 0);
+	}
+	{
+		// Made quieter (the model's fix): the jump grows, and the loudness is said too, as advice
+		FakeSong Song(4);
+		IntroSong(Song, 1);
+		const Json Out = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		const Json *pIntro = FindingOf(Out, "intro");
+		CHECK(pIntro != 0 && pIntro->Get("too_quiet") != 0 && pIntro->Get("too_quiet")->Bool());
+		CHECK(pIntro != 0 && pIntro->Get("under_db") != 0 && pIntro->Get("under_db")->Number() > 12.0);
+		CHECK_HAS(TextOf(pIntro, "message"), "; and it plays ");
+		std::string Reply;
+		CHECK(pIntro != 0 && RunFix(Song, *pIntro, &Reply));
+		// The beat leads in now; the intro is still far too quiet: advice alone, no call
+		const Json After = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		const Json *pQuiet = FindingOf(After, "intro");
+		CHECK(pQuiet != 0 && pQuiet->Get("fix") == 0 && !pQuiet->Get("pulse_jumps")->Bool());
+		CHECK_HAS(TextOf(pQuiet, "summary"), "dB under the main part");
+		CHECK_LACKS(TextOf(pQuiet, "message"), "Fix:");
+		const std::string Review = Run(Song, "review_arrangement", "{}").Text;
+		CHECK_LACKS(Review, "dB under the rest: more than 10 dB under reads as silence");	// the finding says it
+		CHECK_HAS(Review, "doesn't lead into the main part");
+	}
+	{
+		// The problems panel reads it as a kind of its own
+		FakeSong Song(4);
+		IntroSong(Song, 10);
+		ProblemList List;
+		std::string Error;
+		CHECK(List.Read(Run(Song, "check_song", "{\"format\": \"json\"}").Text, Error));
+		CHECK_EQ(List.Count(PROBLEM_INTRO), 1);
+		CHECK_EQ(std::string(ProblemKindId(PROBLEM_INTRO)), std::string("intro"));
+		CHECK_EQ(ProblemSeverity(PROBLEM_INTRO), 2);
+	}
+}
+
 // Each finding's call, run as a model sends it, takes the finding away (and only it)
 void TestDraftFixes()
 {
@@ -20019,9 +20125,14 @@ void TestWhatNextLoop()
 		const std::string Style = *K.Style ? std::string("\"style\": \"") + K.Style + "\"" : std::string();
 		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + (Style.empty() ? std::string() : ", " + Style) +
 			"}").Text);
-		const char *const CLEAN[] = { "vanishing", "click", "clash", "range" };
+		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro" };
 		for (const char *Kind : CLEAN)
 			Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(K.Asked) + " " + Kind).c_str(), __LINE__);
+		// The intro leads into A (GitHub issue #1): with drums, A's last bar of them comes in during its last bar
+		bool Fill = false;
+		for (size_t i = 0; i < Made.size(); ++i)
+			Fill = Fill || (Made[i].compare(0, 10, "copy_bars ") == 0 && Contains(Made[i], "\"channels\":[\"2A03 Noise\""));
+		Check(Fill == K.Drums, K.Asked, __LINE__);
 		const std::string Review = Run(Song, "review_arrangement", "{" + Style + "}").Text;
 		Check(ReviewScore(Review) >= 8, Review.c_str(), __LINE__);
 		// Done now, and the same after a restart (a new connection: it reads the song, not the calls before)
@@ -26889,6 +27000,7 @@ int main()
 	TestGrowTaught();
 	TestDraftFindings();
 	TestDraftFixes();
+	TestIntroFindings();
 	TestFindingsQuiet();
 	TestShortReplies();
 	TestMixFadersReset();

@@ -1526,6 +1526,7 @@ struct CProblemsPanelWnd::Impl {
 			{ _T("melody in pieces"), _T("melodies in pieces") }, { _T("bass to fix"), _T("bass parts to fix") },
 			{ _T("sound unsuited"), _T("sounds unsuited") }, { _T("fader doing the mix"), _T("faders doing the mix") },
 			{ _T("repeat that copies"), _T("repeats that copy") }, { _T("short loop"), _T("short loops") },
+			{ _T("intro that jumps"), _T("intros that jump") },
 			{ _T("detail to hear"), _T("details to hear") }, { _T("clash maybe meant"), _T("clashes maybe meant") }
 		};
 		CString Text;
