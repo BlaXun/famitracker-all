@@ -732,6 +732,7 @@
 #define IDC_GAME_LOUDNESS_OTHER         1901
 #define IDC_GAME_LOUDNESS_UNIT          1902
 #define IDC_GAME_LOUDNESS_HINT          1903
+#define IDC_GAME_OPEN_FOLDER            2600
 
 // Edit > Sound effect from your voice (VoiceEffectDlg.cpp)
 #define IDD_VOICE_EFFECT                332

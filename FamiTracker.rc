@@ -2072,6 +2072,7 @@ BEGIN
     LTEXT           "Tracks at the same loudness sound equally loud in the game; tracks brought up to their loudest peak don't.",IDC_GAME_LOUDNESS_HINT,7,90,306,16
     EDITTEXT        IDC_GAME_RESULT,7,110,306,128,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | NOT WS_TABSTOP
     PUSHBUTTON      "Copy",IDC_GAME_COPY,7,247,50,14
+    PUSHBUTTON      "Open folder",IDC_GAME_OPEN_FOLDER,62,247,60,14,WS_DISABLED
     DEFPUSHBUTTON   "Export",IDC_GAME_EXPORT,208,247,50,14
     PUSHBUTTON      "Close",IDCANCEL,263,247,50,14
 END
