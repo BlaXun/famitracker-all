@@ -228,7 +228,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo "## Toolchain"; gcc --version | head -1; cmake --version | head -1; lsb_release -ds || true
+            echo "## Toolchain"; gcc --version | head -1; gcc -Q --help=target 2>/dev/null | grep -E "^ +-m(arch|fma)[ =]" || true; cmake --version | head -1; lsb_release -ds || true
             for d in build/transcribe build/api build/nsf build/tests; do
               [ -d "$d" ] || continue
               echo; echo "## $d"

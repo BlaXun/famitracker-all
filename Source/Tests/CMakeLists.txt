@@ -21,6 +21,9 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+# Floating point as MSVC does it: no fused multiply-adds (newer GCCs on x86-64-v3 contract a*b+c,
+# which broke near ties between costs, so Linux and Windows chose different voicings and keys)
+add_compile_options(-ffp-contract=off)
 
 # The sources include "stdafx.h" from their own folder first, so they are
 # compiled from copies next to the stand-ins
