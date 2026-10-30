@@ -508,7 +508,8 @@ const RawEntry ENTRIES[] = {
 	{ "volume-column", "Volume column", "volume, vol, volumes, note volume", GLOSSARY_TRACKER,
 		"The volume column, the digit after a note's instrument, sets how loud the channel plays from there on, from F (15, "
 		"full) down to 1, and 0 for silence. It scales the instrument's own volume and lasts until another one is written. The "
-		"triangle ignores it, except 0.",
+		"triangle ignores it, except 0. In the piano roll, Alt+Up and Alt+Down make the selected notes louder and softer "
+		"(Shift with them: 4 steps).",
 		"dynamics, accent, volume-sequence, mix", "", "" },
 	{ "effect-column", "Effect columns", "effect, effects, effect column, FX", GLOSSARY_TRACKER,
 		"After the volume, each channel has up to four effect columns: a letter or digit and two more digits, like 447, that "

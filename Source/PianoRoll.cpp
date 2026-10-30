@@ -183,7 +183,7 @@ struct RollNote {
 };
 
 // Effects the Effects menu puts on notes, and the notes' volume (the volume column), which it sets too
-enum effect_action_t { FX_LASTING, FX_KEY_CHORD, FX_SLIDE_IN, FX_BEND, FX_CLEAR, FX_PAN, FX_VOLUME };
+enum effect_action_t { FX_LASTING, FX_KEY_CHORD, FX_SLIDE_IN, FX_BEND, FX_CLEAR, FX_PAN, FX_VOLUME, FX_VOLUME_STEP };
 enum effect_group_t { GROUP_VOLUME, GROUP_VIBRATO, GROUP_TREMOLO, GROUP_CHORD, GROUP_SLIDE, GROUP_GLIDE, GROUP_BEND, GROUP_FADE, GROUP_PAN,
 	EFFECT_GROUPS, GROUP_NONE = EFFECT_GROUPS };
 const TCHAR *const GROUP_NAMES[EFFECT_GROUPS] = {
@@ -199,11 +199,25 @@ struct EffectChoice {
 	const TCHAR *Name;
 };
 const EffectChoice EFFECT_CHOICES[] = {
+	// Louder and softer: each note a step from its own volume (Alt+Up and Alt+Down); then the volumes themselves
+	{ GROUP_VOLUME, FX_VOLUME_STEP, 0, 1, 0, _T("Louder") },
+	{ GROUP_VOLUME, FX_VOLUME_STEP, 0, -1, 0, _T("Softer") },
 	{ GROUP_VOLUME, FX_VOLUME, 0, 15, 0, _T("Loudest (15)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 14, 0, _T("14") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 13, 0, _T("13") },
 	{ GROUP_VOLUME, FX_VOLUME, 0, 12, 0, _T("Loud (12)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 11, 0, _T("11") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 10, 0, _T("10") },
 	{ GROUP_VOLUME, FX_VOLUME, 0, 9, 0, _T("Medium (9)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 8, 0, _T("8") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 7, 0, _T("7") },
 	{ GROUP_VOLUME, FX_VOLUME, 0, 6, 0, _T("Soft (6)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 5, 0, _T("5") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 4, 0, _T("4") },
 	{ GROUP_VOLUME, FX_VOLUME, 0, 3, 0, _T("Very soft (3)") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 2, 0, _T("2") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 1, 0, _T("1") },
+	{ GROUP_VOLUME, FX_VOLUME, 0, 0, 0, _T("Silent (0)") },
 	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x52, 0, _T("Gentle") },
 	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x54, 0, _T("Medium") },
 	{ GROUP_VIBRATO, FX_LASTING, EF_VIBRATO, 0x67, 0, _T("Strong") },
@@ -642,7 +656,7 @@ struct CPianoRollWnd::Impl {
 
 	// What the mouse or a key is doing to the notes
 	enum drag_t { DRAG_NONE, DRAG_KEYS, DRAG_RULER, DRAG_DRAW, DRAG_MOVE, DRAG_RESIZE, DRAG_ERASE, DRAG_SELECT, DRAG_PAINT, DRAG_RANGE };
-	enum edit_t { EDIT_NONE, EDIT_ADD, EDIT_REMOVE, EDIT_RESIZE, EDIT_MOVE, EDIT_PAINT, EDIT_PASTE, EDIT_INSTRUMENT, EDIT_EFFECT };
+	enum edit_t { EDIT_NONE, EDIT_ADD, EDIT_REMOVE, EDIT_RESIZE, EDIT_MOVE, EDIT_PAINT, EDIT_PASTE, EDIT_INSTRUMENT, EDIT_EFFECT, EDIT_VOLUME };
 	drag_t Drag;
 	CPoint DragFrom;
 	bool DragMoved;		// further than DRAG_DISTANCE
@@ -670,6 +684,9 @@ struct CPianoRollWnd::Impl {
 	int PasteRow;
 	int GiveInstrument;
 	int ChosenEffect;	// into EFFECT_CHOICES
+	int VolumeSteps;	// louder (negative: softer) for EDIT_VOLUME
+	std::vector<int> ClickedFrom;	// the selection a click on one of its notes narrowed to that note, for a double-click there...
+	DWORD ClickedTime;	// ...and when
 	mutable bool EffectFits;	// the effects fitted in the effect columns
 	CRect Band;			// selecting with Ctrl+drag
 	int RangeFrom, RangeTo;	// selecting whole rows along the ruler (the Select tool)
@@ -748,7 +765,7 @@ struct CPianoRollWnd::Impl {
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
 		MoveRows(0), MoveSteps(0), MoveSemitones(0), MovePitch(0), MoveCopy(false), StrokeLast(-1), PasteRow(0),
-		GiveInstrument(-1), ChosenEffect(0), EffectFits(true), RangeFrom(0), RangeTo(0), PatternSelecting(false), RangeKept(false), HasCopied(false), PlacingClip(-1),
+		GiveInstrument(-1), ChosenEffect(0), VolumeSteps(0), ClickedTime(0), EffectFits(true), RangeFrom(0), RangeTo(0), PatternSelecting(false), RangeKept(false), HasCopied(false), PlacingClip(-1),
 		PlaceRow(-1), PanelDrop(false), ChordVoices(0), AgainTrack(static_cast<unsigned int>(-1)), AgainRow(-1), AgainVoices(0),
 		AgainArpeggio(false), HeaderRows(1), MoreWidth(60), GrooveHintLines(3), GrooveBars(8), KeysAway(false), IgnoredClick(false),
 		IgnoredTime(0), BackSize(0, 0)
@@ -1642,6 +1659,10 @@ struct CPianoRollWnd::Impl {
 			if (!Selection.empty())
 				EffectFits = PutEffect(Notes_);
 			break;
+		case EDIT_VOLUME:
+			if (!Selection.empty())
+				Notes_.ChangeVolume(&Selection[0], static_cast<int>(Selection.size()), VolumeSteps);
+			break;
 		case EDIT_NONE:
 			break;
 		}
@@ -1719,6 +1740,9 @@ struct CPianoRollWnd::Impl {
 		case FX_VOLUME:
 			Notes_.SetVolume(&Selection[0], Count, Choice.Value);
 			return true;
+		case FX_VOLUME_STEP:
+			Notes_.ChangeVolume(&Selection[0], Count, Choice.Value);
+			return true;
 		}
 		return true;
 	}
@@ -1747,6 +1771,55 @@ struct CPianoRollWnd::Impl {
 			!IsDPCM(Which);
 	}
 
+	// The volume all the selected notes play at, -1 if they differ (or none are selected)
+	int SelectedVolume() const
+	{
+		if (Selection.empty() || Channel >= static_cast<int>(Notes.size()))
+			return -1;
+		int Volume = -1;
+		const std::vector<RollNote> &List = Notes[static_cast<size_t>(Channel)];
+		for (size_t i = 0; i < List.size(); ++i) {
+			if (!Contains(Selection, List[i].Start))
+				continue;
+			if (Volume >= 0 && List[i].Volume != Volume)
+				return -1;
+			Volume = List[i].Volume;
+		}
+		return Volume;
+	}
+
+	// The selected notes Steps louder (negative: softer), each from its own volume, as one undoable action
+	// (Alt+Up and Alt+Down, Shift: 4 steps; Effects > Volume > Louder and Softer)
+	void StepVolume(int Steps)
+	{
+		if (Selection.empty()) {
+			Say(_T("Select notes first: click one, or drag around some with the Select tool (or Ctrl). Then Alt+Up makes them louder, Alt+Down softer."));
+			return;
+		}
+		if (!HasVolume(Channel)) {
+			Say(IsDPCM(Channel) ? _T("Samples play at the loudness they were recorded at: their notes have no volume to change.") :
+				_T("The triangle has no volume: its notes always play equally loud. Another channel can play the quieter part."));
+			return;
+		}
+		BeginEdit(EDIT_VOLUME);
+		VolumeSteps = Steps;
+		Recompute();
+		int First = 0, Last = 0, Low = MAX_VOLUME - 1, High = 0, Count = 0;
+		const bool Changed = After.Compare(Before, First, Last);
+		for (size_t i = 0; i < Selection.size(); ++i) {
+			const int Index = After.FindNote(Selection[i]);
+			if (Index < 0)
+				continue;
+			const int Volume = After.GetNote(Index).Volume;
+			Low = std::min(Low, Volume);
+			High = std::max(High, Volume);
+			++Count;
+		}
+		if (!Commit(Selection.front()) || Count == 0)
+			return;
+		Say(CString(VolumeStepText(Steps, Count, Low, High, Changed).c_str()));
+	}
+
 	// The Effects menu, at Point (screen coordinates), for the selected notes
 	void EffectsMenu(CPoint Point)
 	{
@@ -1766,18 +1839,25 @@ struct CPianoRollWnd::Impl {
 			Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, Text);
 		}
 		Menu.AppendMenu(MF_SEPARATOR);
+		const int SameVolume = SelectedVolume();
 		for (int Group = 0; Group < EFFECT_GROUPS; ++Group) {
 			CMenu Choices;
 			Choices.CreatePopupMenu();
+			int LastAction = -1;
 			for (int i = 0; i < EFFECT_CHOICE_COUNT; ++i) {
 				const EffectChoice &Choice = EFFECT_CHOICES[i];
 				if (Choice.Group != Group)
 					continue;
 				const bool Off = Choice.Action != FX_KEY_CHORD && Choice.Action != FX_PAN && Choice.Value == 0;
-				if (Off)
+				if (Off || (LastAction == FX_VOLUME_STEP && Choice.Action != FX_VOLUME_STEP))
 					Choices.AppendMenu(MF_SEPARATOR);
+				LastAction = Choice.Action;
 				CString Item = Choice.Name;
 				UINT Flags = MF_STRING;
+				if (Choice.Action == FX_VOLUME && Choice.Value == SameVolume)
+					Flags |= MF_CHECKED;		// what they all play at now
+				if (Choice.Action == FX_VOLUME_STEP)
+					Item += Choice.Value > 0 ? _T("\tAlt+Up") : _T("\tAlt+Down");
 				if (Choice.Action == FX_KEY_CHORD && !KeyApplies()) {
 					Item += _T(" (no key yet: draw some notes, or choose one with Key)");
 					Flags |= MF_GRAYED;
@@ -1808,6 +1888,10 @@ struct CPianoRollWnd::Impl {
 		if (Selection.empty() || Index < 0 || Index >= EFFECT_CHOICE_COUNT)
 			return;
 		const EffectChoice &Choice = EFFECT_CHOICES[Index];
+		if (Choice.Action == FX_VOLUME_STEP) {
+			StepVolume(Choice.Value);
+			return;
+		}
 		BeginEdit(EDIT_EFFECT);
 		ChosenEffect = Index;
 		EffectFits = true;
@@ -1824,6 +1908,9 @@ struct CPianoRollWnd::Impl {
 			Text.Format(_T("The %s had that already."), static_cast<LPCTSTR>(Notes_));
 		else if (Choice.Group == GROUP_NONE)
 			Text.Format(_T("Took the effects off %s. Ctrl+Z puts them back."), static_cast<LPCTSTR>(Notes_));
+		else if (Choice.Action == FX_VOLUME)
+			Text.Format(_T("Volume %d of 15%s on %s. Ctrl+Z undoes it; Alt+Up and Alt+Down make them louder and softer a step at a time."),
+				Choice.Value, Choice.Value == 0 ? _T(" (silent)") : _T(""), static_cast<LPCTSTR>(Notes_));
 		else
 			Text.Format(_T("%s: %s%s%s%s on %s. Ctrl+Z undoes it."), GROUP_NAMES[Choice.Group], Choice.Name,
 				Code.IsEmpty() ? _T("") : _T(" ("), static_cast<LPCTSTR>(Code), Code.IsEmpty() ? _T("") : _T(")"), static_cast<LPCTSTR>(Notes_));
@@ -2262,8 +2349,14 @@ struct CPianoRollWnd::Impl {
 				Previewing = false;
 				if (DragShift && GrabWasSelected)
 					Selection.erase(std::find(Selection.begin(), Selection.end(), GrabStart));
-				else if (!DragShift)
+				else if (!DragShift) {
+					ClickedFrom.clear();
+					if (GrabWasSelected && Selection.size() > 1) {
+						ClickedFrom = Selection;	// a double-click there (the Effects menu) is for all of them
+						ClickedTime = static_cast<DWORD>(::GetMessageTime());
+					}
 					Selection.assign(1, GrabStart);
+				}
 				GoTo(Channel, GrabStart);
 				PickInstrument(GrabStart);
 			}
@@ -2347,6 +2440,11 @@ struct CPianoRollWnd::Impl {
 			GoTo(HitChannel, Notes[static_cast<size_t>(HitChannel)][static_cast<size_t>(HitIndex)].Start);
 		else if (Hit && (Flags & (MK_CONTROL | MK_SHIFT)) == 0 && !OnEnd(Point, Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)])) {
 			const int Start = Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)].Start;
+			// The first click narrowed a selection to this note: the menu is for the whole selection again
+			const bool Just = static_cast<DWORD>(::GetMessageTime()) - ClickedTime <= ::GetDoubleClickTime();
+			if (Just && Selection.size() == 1 && Selection.front() == Start && Contains(ClickedFrom, Start))
+				Selection = ClickedFrom;
+			ClickedFrom.clear();
 			if (!Contains(Selection, Start))
 				Selection.assign(1, Start);
 			pWnd->Invalidate(FALSE);
@@ -2543,7 +2641,14 @@ struct CPianoRollWnd::Impl {
 			break;
 		case VK_UP:
 		case VK_DOWN:
-			if (!Selection.empty() && !Ctrl && !Alt) {
+			if (Alt && !Ctrl) {
+				// Louder or softer: the selected notes, else the one under the mouse (as E takes it)
+				if (Selection.empty())
+					SelectUnderMouse();
+				StepVolume((Key == VK_UP ? 1 : -1) * (Shift ? 4 : 1));
+				Done = true;
+			}
+			else if (!Selection.empty() && !Ctrl && !Alt) {
 				Transpose(Key == VK_UP ? 1 : -1, Shift);
 				Done = true;
 			}
@@ -2578,12 +2683,8 @@ struct CPianoRollWnd::Impl {
 				// The Effects menu where the mouse is, for the selected notes or the one under it
 				CPoint Mouse;
 				::GetCursorPos(&Mouse);
-				CPoint Inside = Mouse;
-				pWnd->ScreenToClient(&Inside);
-				Layout();
-				int HitChannel = -1, HitIndex = -1;
-				if (Selection.empty() && HitNote(Inside, HitChannel, HitIndex) && HitChannel == Channel)
-					Selection.assign(1, Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)].Start);
+				if (Selection.empty())
+					SelectUnderMouse();
 				pWnd->Invalidate(FALSE);
 				pWnd->UpdateWindow();
 				EffectsMenu(Mouse);
@@ -2605,6 +2706,20 @@ struct CPianoRollWnd::Impl {
 		if (Done)
 			pWnd->Invalidate(FALSE);
 		return Done;
+	}
+
+	// The bright channel's note under the mouse, if any, selected
+	void SelectUnderMouse()
+	{
+		CPoint Inside;
+		::GetCursorPos(&Inside);
+		pWnd->ScreenToClient(&Inside);
+		Layout();
+		int HitChannel = -1, HitIndex = -1;
+		if (HitNote(Inside, HitChannel, HitIndex) && HitChannel == Channel) {
+			Selection.assign(1, Notes[static_cast<size_t>(Channel)][static_cast<size_t>(HitIndex)].Start);
+			CancelPatternSelection();
+		}
 	}
 
 	void SetTool(int NewTool)

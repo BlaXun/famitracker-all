@@ -237,6 +237,21 @@ void TestHints()
 	CHECK(Has(RollHint(S), "paint a melody"));
 }
 
+void TestVolumeStepText()
+{
+	CHECK(VolumeStepText(1, 1, 10, 10, true) == "Louder: volume 10 of 15 (1 note). Ctrl+Z undoes it, Shift+Alt+Up goes 4 steps.");
+	CHECK(VolumeStepText(-1, 3, 4, 11, true) ==
+		"Softer: volumes 4 to 11 of 15 (3 notes, each a step softer). Ctrl+Z undoes it, Shift+Alt+Down goes 4 steps.");
+	CHECK(VolumeStepText(-4, 2, 0, 0, true) == "Softer: volume 0 of 15, silent (2 notes, each 4 steps softer). Ctrl+Z undoes it.");
+	CHECK(VolumeStepText(1, 2, 15, 15, false) == "The notes are as loud as they go already: volume 15 of 15.");
+	CHECK(VolumeStepText(-1, 1, 0, 0, false) == "The note is as soft as it goes already: volume 0 of 15, silent.");
+	roll_hint_t S;
+	S.Selected = 2;
+	CHECK(Has(RollHint(S), "Alt+Up / Alt+Down: louder / softer"));
+	S.TypesNotes = true;
+	CHECK(Has(RollHint(S), "Alt+Up / Alt+Down: louder / softer"));
+}
+
 void TestMenuClick()
 {
 	roll_menu_click_t Click;
@@ -317,6 +332,7 @@ int main()
 	TestOverflow();
 	TestHints();
 	TestMenuClick();
+	TestVolumeStepText();
 	TestStrongNotesRow();
 	TestFaintHints();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);

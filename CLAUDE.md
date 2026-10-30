@@ -903,6 +903,28 @@ View > Piano roll's check mark, `NoteViews` and `GetPianoRollWnd` use
 the bar hidden in some layouts under Wine (the pattern editor hidden, the
 drum grid closed).
 
+Note volumes in the piano roll (from `feat-roll-volume`): Alt+Up and
+Alt+Down make the selected notes (none: the one under the mouse, as E takes
+it) a step louder or softer, Shift with them 4 steps, each note from its own
+volume kept within 0-15 (`CChannelNotes::ChangeVolume` and `SteppedVolume`
+in `NoteEdit.cpp`, writing the notes after them their old volume as
+`SetVolume` does; `TestChangeVolume`), one undoable action per press
+(`StepVolume`, `EDIT_VOLUME`); the status line says the volumes now
+(`VolumeStepText` in `PianoRollUi.cpp`, `TestVolumeStepText`), and the
+triangle's and the samples' notes are left alone with a word why. Ctrl+Up/Down
+stay the instrument list's, Up/Down the transpose, and Alt and the arrows are
+no note keys, so they work with the pattern editor hidden too (the pattern
+editor's own Alt+Up/Down, `ID_CMD_STEP_UP`, no longer reach it from the
+piano roll). Effects >
+Volume has Louder and Softer (`FX_VOLUME_STEP`) over every volume 15-0
+(`Soft (6)` keeps its name for the exercises' texts), the one all the
+selected notes play at checked (`SelectedVolume`). The menu was for one
+note only: a double-click's first click on a selected note narrowed the
+selection to it (`MouseUp`, `DRAG_MOVE` without a move), so `DoubleClick`
+puts back the selection that click narrowed (`ClickedFrom`, within the
+double-click time). The `loud-soft` exercise and the glossary's
+`volume-column` name the keys.
+
 Melodies in steps (from `feat-step-notes`): `write_notes` takes `notes`
 as text, a token a step of a grid (`D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -`:
 a pitch starts a note, `-` holds it a step more, across `|` too, `.` rests),
