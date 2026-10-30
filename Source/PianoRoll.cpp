@@ -629,6 +629,8 @@ struct CPianoRollWnd::Impl {
 	int HoverChannel, HoverNote;
 	int PreviewChannel, PreviewPitch;	// a note being played, -1: none
 	DWORD PreviewUntil;					// when a note played by the keys stops, 0: when told
+	bool Panning;						// the middle button holds the view (StartPan)...
+	CPoint PanAt;						// ...where the mouse was last
 
 	// Editing
 	int Tool;			// tool_t
@@ -743,7 +745,7 @@ struct CPianoRollWnd::Impl {
 		HarmonyTrack(static_cast<unsigned int>(-1)), HarmonyStale(true), HarmonyDue(0), HoverChord(-1), MouseRow(-1), GameMusicShown(false),
 		Zoom(DEFAULT_ZOOM), ScrollX(0), ScrollY(0), Channel(0), Placed(false), Shown(false), Focused(false),
 		CursorFrame(-1), CursorRow(-1), CursorChannel(-1), Playing(false), PlayRow(-1),
-		HoverChannel(-1), HoverNote(-1), PreviewChannel(-1), PreviewPitch(-1), PreviewUntil(0),
+		HoverChannel(-1), HoverNote(-1), PreviewChannel(-1), PreviewPitch(-1), PreviewUntil(0), Panning(false),
 		Tool(TOOL_DRAW), GridChoice(GRID_BEAT), Snap(false), LinkedClips(false), MessageTime(0), MessageMs(MESSAGE_MS),
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
@@ -1533,12 +1535,12 @@ struct CPianoRollWnd::Impl {
 		if (NowPlaying != Playing || Played != PlayRow) {
 			Playing = NowPlaying;
 			PlayRow = Played;
-			if (Played >= 0 && pView->GetFollowMode() && Drag == DRAG_NONE)
+			if (Played >= 0 && pView->GetFollowMode() && Drag == DRAG_NONE && !Panning)
 				FollowRow(Played, true);
 			Changed = true;
 		}
 		else if (Moved) {
-			if (!Playing && Drag == DRAG_NONE)
+			if (!Playing && Drag == DRAG_NONE && !Panning)
 				FollowRow(Frame * static_cast<int>(Length) + Row, false);
 			Changed = true;
 		}
@@ -1981,6 +1983,41 @@ struct CPianoRollWnd::Impl {
 		Previewing = false;
 		Band.SetRectEmpty();
 		StopPreview();
+		if (::GetCapture() == pWnd->GetSafeHwnd())
+			::ReleaseCapture();
+	}
+
+	// Panning: the middle button grabs the view and it follows the mouse, along the rows and the pitches, as far as
+	// the scroll bars go (the view slips at their ends, so it never runs ahead of the hand)
+	bool StartPan(CPoint Point)
+	{
+		if (Drag != DRAG_NONE || Panning)
+			return false;
+		Layout();
+		Panning = true;
+		PanAt = Point;
+		HoverChannel = HoverNote = -1;
+		return true;
+	}
+
+	// Moves the view with the mouse; true when it moved
+	bool Pan(CPoint Point)
+	{
+		if (!Panning)
+			return false;
+		const int OldX = ScrollX, OldY = ScrollY;
+		ScrollX -= Point.x - PanAt.x;
+		ScrollY -= Point.y - PanAt.y;
+		PanAt = Point;
+		UpdateScrollBars();
+		return ScrollX != OldX || ScrollY != OldY;
+	}
+
+	void EndPan()
+	{
+		if (!Panning)
+			return;
+		Panning = false;
 		if (::GetCapture() == pWnd->GetSafeHwnd())
 			::ReleaseCapture();
 	}
@@ -4629,6 +4666,9 @@ BEGIN_MESSAGE_MAP(CPianoRollWnd, CWnd)
 	ON_WM_LBUTTONUP()
 	ON_WM_RBUTTONDOWN()
 	ON_WM_RBUTTONUP()
+	ON_WM_MBUTTONDOWN()
+	ON_WM_MBUTTONDBLCLK()
+	ON_WM_MBUTTONUP()
 	ON_WM_MOUSEMOVE()
 	ON_WM_CAPTURECHANGED()
 	ON_WM_SETCURSOR()
@@ -4924,6 +4964,8 @@ BOOL CPianoRollWnd::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 
 void CPianoRollWnd::OnLButtonDown(UINT nFlags, CPoint point)
 {
+	if (m_pImpl->Panning)
+		return;		// the middle button holds the view
 	m_pImpl->Faint = Impl::FaintClick();	// (MouseDown notes it again when this click lands on another channel's note)
 	// A click that only closed a menu does nothing more here (see ClickClosedMenu)
 	m_pImpl->IgnoredClick = ClickClosedMenu();
@@ -4940,6 +4982,8 @@ void CPianoRollWnd::OnLButtonDown(UINT nFlags, CPoint point)
 
 void CPianoRollWnd::OnLButtonDblClk(UINT nFlags, CPoint point)
 {
+	if (m_pImpl->Panning)
+		return;
 	if (ClickClosedMenu())
 		return;
 	// The second click of a double-click whose first only closed a menu is a click
@@ -4966,6 +5010,8 @@ void CPianoRollWnd::OnLButtonUp(UINT nFlags, CPoint point)
 
 void CPianoRollWnd::OnRButtonDown(UINT nFlags, CPoint point)
 {
+	if (m_pImpl->Panning)
+		return;
 	m_pImpl->Faint = Impl::FaintClick();
 	if (ClickClosedMenu())
 		return;		// it only closed a menu: nothing is erased
@@ -4985,16 +5031,50 @@ void CPianoRollWnd::OnRButtonUp(UINT nFlags, CPoint point)
 	Invalidate(FALSE);
 }
 
+void CPianoRollWnd::OnMButtonDown(UINT nFlags, CPoint point)
+{
+	// The middle button grabs the view (Impl::StartPan), not after a click that only closed a menu
+	if (ClickClosedMenu())
+		return;
+	SetFocus();
+	if (!m_pImpl->StartPan(point))
+		return;		// a drag of the left or right button goes on
+	SetCapture();
+	::SetCursor(::LoadCursor(NULL, IDC_SIZEALL));
+	Invalidate(FALSE);
+}
+
+void CPianoRollWnd::OnMButtonDblClk(UINT nFlags, CPoint point)
+{
+	OnMButtonDown(nFlags, point);	// a quick second press grabs again
+}
+
+void CPianoRollWnd::OnMButtonUp(UINT nFlags, CPoint point)
+{
+	m_pImpl->EndPan();
+}
+
 void CPianoRollWnd::OnCaptureChanged(CWnd *pWnd)
 {
 	// Another window took the mouse (a menu, a dialog): what the mouse was doing stops
-	if (pWnd != this)
+	if (pWnd != this) {
 		m_pImpl->CancelDrag();
+		m_pImpl->Panning = false;
+	}
 	CWnd::OnCaptureChanged(pWnd);
 }
 
 void CPianoRollWnd::OnMouseMove(UINT nFlags, CPoint point)
 {
+	if (m_pImpl->Panning) {
+		if (!(nFlags & MK_MBUTTON)) {
+			m_pImpl->EndPan();		// the button went up where no message told us
+			return;
+		}
+		if (m_pImpl->Pan(point))
+			Invalidate(FALSE);
+		return;
+	}
 	m_pImpl->MouseMove(point);
 }
 
@@ -5008,6 +5088,10 @@ BOOL CPianoRollWnd::OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message)
 	ScreenToClient(&Point);
 	d.Layout();
 	LPCTSTR Shape = IDC_ARROW;
+	if (d.Panning) {
+		::SetCursor(::LoadCursor(NULL, IDC_SIZEALL));
+		return TRUE;
+	}
 	switch (d.Drag) {
 	case Impl::DRAG_MOVE: Shape = d.DragMoved ? IDC_SIZEALL : IDC_ARROW; break;
 	case Impl::DRAG_RESIZE: Shape = IDC_SIZEWE; break;
