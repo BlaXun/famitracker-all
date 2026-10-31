@@ -76,6 +76,7 @@
 #include "AskPanel.h"
 #include "AgentLogPanel.h"
 #include "MixerPanel.h"
+#include "PanelBar.h"
 #include <vector>
 
 #ifdef _DEBUG
@@ -195,6 +196,7 @@ CMainFrame::CMainFrame() :
 	m_pAgentLogBar(NULL),
 	m_pMixerBar(NULL),
 	m_pDrumGridBar(NULL),
+	m_PanelTabs(PANEL_COUNT),
 	m_bBottomPlanned(false),
 	m_iBottomRoom(0),
 	m_iBottomKeep(0),
@@ -211,6 +213,7 @@ CMainFrame::CMainFrame() :
 {
 	_dpiX = DEFAULT_DPI;
 	_dpiY = DEFAULT_DPI;
+	m_iTabShown[0] = m_iTabShown[1] = NO_PANEL;
 }
 
 CMainFrame::~CMainFrame()
@@ -1796,6 +1799,7 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 				ShowMixer(true);
 			if (CDrumGridBar::WasOpen())
 				ShowDrumGrid(true);
+			RestorePanelTabs();		// each one opened became its place's tab shown: the ones shown last time again
 			{
 				const note_views_t Views = StartingNoteViews(theApp.GetSettings()->Views.bPatternEditor, CPianoRollBar::WasOpen());
 				if (Views != NoteViews())
@@ -1939,12 +1943,12 @@ void CMainFrame::OnUpdateInstrumentListen(CCmdUI *pCmdUI)
 void CMainFrame::OnEditDrumGrid()
 {
 	// View > Drum grid, also in the Edit menu
-	ShowDrumGrid(m_pDrumGridBar == NULL || !m_pDrumGridBar->IsVisible());
+	TogglePanel(PANEL_DRUM_GRID);
 }
 
 void CMainFrame::OnUpdateEditDrumGrid(CCmdUI *pCmdUI)
 {
-	pCmdUI->SetCheck(m_pDrumGridBar != NULL && m_pDrumGridBar->IsVisible() ? 1 : 0);
+	pCmdUI->SetCheck(m_PanelTabs.IsOpen(PANEL_DRUM_GRID) ? 1 : 0);
 }
 
 // Profiles (Profile.h)
@@ -2198,13 +2202,13 @@ bool CMainFrame::GetTutorialRect(LPCTSTR pPart, LPCTSTR pName, UINT Command, CRe
 	else if (Part == _T("piano-roll"))
 		pWnd = m_pPianoRoll;
 	else if (Part == _T("drum-grid"))
-		pWnd = m_pDrumGridBar;
+		pWnd = m_pDrumGridBar != NULL ? static_cast<CPanelBar*>(m_pDrumGridBar)->ShownWnd() : NULL;
 	else if (Part == _T("mixer"))
 		pWnd = m_pMixerBar;
 	else if (Part == _T("what-next"))
-		pWnd = m_pWhatNextBar;
+		pWnd = m_pWhatNextBar != NULL ? static_cast<CPanelBar*>(m_pWhatNextBar)->ShownWnd() : NULL;
 	else if (Part == _T("problems"))
-		pWnd = m_pProblemsBar;
+		pWnd = m_pProblemsBar != NULL ? static_cast<CPanelBar*>(m_pProblemsBar)->ShownWnd() : NULL;
 	else if (Part == _T("song-info")) {
 		// The title, author and copyright boxes together
 		static const UINT BOXES[] = { IDC_SONG_NAME, IDC_SONG_ARTIST, IDC_SONG_COPYRIGHT };
@@ -2260,14 +2264,14 @@ void CMainFrame::ShowTutorialPart(LPCTSTR pPart)
 		ShowPianoRoll(true);
 	else if ((Part == _T("pattern") || Part == _T("channel")) && !m_bPatternShown)
 		ShowPatternEditor(true);	// a channel's column is in the pattern editor
-	else if (Part == _T("drum-grid") && (m_pDrumGridBar == NULL || !m_pDrumGridBar->IsVisible()))
-		ShowDrumGrid(true);
+	else if (Part == _T("drum-grid") && !m_PanelTabs.Shows(PANEL_DRUM_GRID))
+		ShowPanel(PANEL_DRUM_GRID, true);	// opened, or its tab shown
 	else if (Part == _T("mixer") && (m_pMixerBar == NULL || !m_pMixerBar->IsVisible()))
 		ShowMixer(true);
-	else if (Part == _T("what-next") && (m_pWhatNextBar == NULL || !m_pWhatNextBar->IsVisible()))
-		ShowWhatNext(true);
-	else if (Part == _T("problems") && (m_pProblemsBar == NULL || !m_pProblemsBar->IsVisible()))
-		ShowProblemsPanel(true);
+	else if (Part == _T("what-next") && !m_PanelTabs.Shows(PANEL_WHAT_NEXT))
+		ShowPanel(PANEL_WHAT_NEXT, true);
+	else if (Part == _T("problems") && !m_PanelTabs.Shows(PANEL_PROBLEMS))
+		ShowPanel(PANEL_PROBLEMS, true);
 }
 
 void CMainFrame::OnViewProfile()
@@ -2773,10 +2777,11 @@ void CMainFrame::ShowNoteViews(const note_views_t &Wanted)
 // the pattern editor and the clips panel beside the pattern editor. While the
 // piano roll fills the pattern editor's place, the clips panel goes beside the
 // piano roll. Those along the bottom are placed by PlaceBottomPanel: the
-// mixer along the edge, the others side by side in one row above it, all of
-// them shorter while the note views would get less than about a third of the
-// window (with all four open, the piano roll had one lane left on a window
-// 1000 pixels high).
+// mixer along the edge, the tab shown of the panels there above it (the
+// others' bars are hidden: ApplyPanels), both shorter while the note views
+// would get less than about a third of the window (with the panels side by
+// side, as they were before tabs, the piano roll had one lane left on a
+// window 1000 pixels high).
 void CMainFrame::ArrangeBars()
 {
 	const bool Fill = !m_bPatternShown;
@@ -2794,26 +2799,19 @@ void CMainFrame::ArrangeBars()
 std::vector<CMainFrame::bottom_panel_t> CMainFrame::BottomPanels() const
 {
 	// Those that show (or are about to: CControlBar::IsVisible counts a show the layout is to make), in ArrangeBars'
-	// order, as their WM_SIZEPARENT comes
+	// order, as their WM_SIZEPARENT comes: the mixer, and the tab shown of the panels along the bottom
 	std::vector<bottom_panel_t> Panels;
-	const auto Add = [&Panels](CControlBar *pBar, int Band, int Height, int Weight) {
+	const auto Add = [&Panels](CControlBar *pBar, int Band, int Height) {
 		if (pBar != NULL && pBar->GetSafeHwnd() != NULL && pBar->IsVisible()) {
-			const bottom_panel_t Panel = { pBar, Band, Height, Weight };
+			const bottom_panel_t Panel = { pBar, Band, Height, 1 };
 			Panels.push_back(Panel);
 		}
 	};
 	if (m_pMixerBar != NULL)
-		Add(m_pMixerBar, 0, m_pMixerBar->BottomHeight(), 1);
-	if (m_pProblemsBar != NULL && !m_pProblemsBar->IsOnRight())
-		Add(m_pProblemsBar, 1, m_pProblemsBar->BottomHeight(), m_pProblemsBar->RowWeight());
-	if (m_pWhatNextBar != NULL && !m_pWhatNextBar->IsOnRight())
-		Add(m_pWhatNextBar, 1, m_pWhatNextBar->BottomHeight(), m_pWhatNextBar->RowWeight());
-	if (m_pAskBar != NULL && !m_pAskBar->IsOnRight())
-		Add(m_pAskBar, 1, m_pAskBar->BottomHeight(), m_pAskBar->RowWeight());
-	if (m_pAgentLogBar != NULL && !m_pAgentLogBar->IsOnRight())
-		Add(m_pAgentLogBar, 1, m_pAgentLogBar->BottomHeight(), m_pAgentLogBar->RowWeight());
-	if (m_pDrumGridBar != NULL && !m_pDrumGridBar->IsOnRight())
-		Add(m_pDrumGridBar, 1, m_pDrumGridBar->BottomHeight(), m_pDrumGridBar->RowWeight());
+		Add(m_pMixerBar, 0, m_pMixerBar->BottomHeight());
+	CPanelBar *pTab = PanelBar(m_PanelTabs.Selected(PANEL_BOTTOM));
+	if (pTab != NULL && pTab->Place() == PANEL_BOTTOM)
+		Add(pTab, 1, pTab->BottomHeight());
 	return Panels;
 }
 
@@ -2821,16 +2819,9 @@ int CMainFrame::BottomPanelLeast(const CControlBar *pBar, int Width) const
 {
 	if (pBar != NULL && pBar == m_pMixerBar)
 		return m_pMixerBar->LeastHeight();
-	if (pBar != NULL && pBar == m_pProblemsBar)
-		return m_pProblemsBar->LeastHeight(Width);
-	if (pBar != NULL && pBar == m_pWhatNextBar)
-		return m_pWhatNextBar->LeastHeight(Width);
-	if (pBar != NULL && pBar == m_pAskBar)
-		return m_pAskBar->LeastHeight(Width);
-	if (pBar != NULL && pBar == m_pAgentLogBar)
-		return m_pAgentLogBar->LeastHeight(Width);
-	if (pBar != NULL && pBar == m_pDrumGridBar)
-		return m_pDrumGridBar->LeastHeight(Width);
+	for (int i = 0; pBar != NULL && i < PANEL_COUNT; ++i)
+		if (PanelBar(i) == pBar)
+			return PanelBar(i)->LeastHeight(Width);
 	return 0;
 }
 
@@ -2918,29 +2909,158 @@ int CMainFrame::BottomPanelMost(const CControlBar *pBar) const
 	return 0;
 }
 
-void CMainFrame::BottomPanelDragged(const CControlBar *pBar, int Height)
+void CMainFrame::PanelDragged(CPanelBar *pBar, int Size)
 {
-	// The panels beside it in its row take the height too, so the row follows the line
-	const std::vector<bottom_panel_t> Panels = BottomPanels();
-	int Band = -1;
-	for (size_t i = 0; i < Panels.size(); ++i)
-		if (Panels[i].pBar == pBar)
-			Band = Panels[i].Band;
-	for (size_t i = 0; i < Panels.size(); ++i) {
-		if (Panels[i].Band != Band || Panels[i].pBar == pBar)
+	// The other tabs of its place take the size too, so the place keeps it whichever tab shows
+	for (int i = 0; pBar != NULL && i < PANEL_COUNT; ++i) {
+		CPanelBar *pOther = PanelBar(i);
+		if (pOther == NULL || pOther == pBar || pOther->Place() != pBar->Place())
 			continue;
-		if (Panels[i].pBar == m_pProblemsBar)
-			m_pProblemsBar->SetBottomHeight(Height);
-		else if (Panels[i].pBar == m_pWhatNextBar)
-			m_pWhatNextBar->SetBottomHeight(Height);
-		else if (Panels[i].pBar == m_pAskBar)
-			m_pAskBar->SetBottomHeight(Height);
-		else if (Panels[i].pBar == m_pAgentLogBar)
-			m_pAgentLogBar->SetBottomHeight(Height);
-		else if (Panels[i].pBar == m_pDrumGridBar)
-			m_pDrumGridBar->SetBottomHeight(Height);
+		if (pBar->Place() == PANEL_RIGHT)
+			pOther->SetRightWidth(Size);
+		else
+			pOther->SetBottomHeight(Size);
 	}
 	RecalcLayout();
+}
+
+CPanelBar *CMainFrame::PanelBar(int Panel) const
+{
+	switch (Panel) {
+	case PANEL_PROBLEMS: return m_pProblemsBar;
+	case PANEL_WHAT_NEXT: return m_pWhatNextBar;
+	case PANEL_ASK: return m_pAskBar;
+	case PANEL_AGENT_LOG: return m_pAgentLogBar;
+	case PANEL_DRUM_GRID: return m_pDrumGridBar;
+	}
+	return NULL;
+}
+
+void CMainFrame::ShowPanel(int Panel, bool Show)
+{
+	// Each one made the first time it's opened, then PanelShown
+	switch (Panel) {
+	case PANEL_PROBLEMS: ShowProblemsPanel(Show); break;
+	case PANEL_WHAT_NEXT: ShowWhatNext(Show); break;
+	case PANEL_ASK: ShowAsk(Show); break;
+	case PANEL_AGENT_LOG: ShowAgentLog(Show); break;
+	case PANEL_DRUM_GRID: ShowDrumGrid(Show); break;
+	}
+}
+
+void CMainFrame::PanelShown(int Panel, bool Show)
+{
+	CPanelBar *pBar = PanelBar(Panel);
+	if (pBar == NULL)
+		return;
+	m_PanelTabs.SetPlace(Panel, pBar->Place());
+	if (Show)
+		m_PanelTabs.Open(Panel);		// the tab shown of its place
+	else
+		m_PanelTabs.Close(Panel);
+	if (pBar->IsOpen() != Show)
+		pBar->Opened(Show);
+	ApplyPanels();
+}
+
+void CMainFrame::TogglePanel(int Panel)
+{
+	// Its View menu item: a panel open in a tab not shown has its tab shown; else opened or closed
+	ShowPanel(Panel, !m_PanelTabs.IsOpen(Panel) || !m_PanelTabs.Shows(Panel));
+}
+
+void CMainFrame::SelectPanelTab(int Panel)
+{
+	if (!m_PanelTabs.IsOpen(Panel) || m_PanelTabs.Shows(Panel))
+		return;
+	m_PanelTabs.Select(Panel);
+	ApplyPanels();
+}
+
+void CMainFrame::MovePanel(int Panel, panel_place_t Place)
+{
+	CPanelBar *pBar = PanelBar(Panel);
+	if (pBar == NULL || Place == pBar->Place())
+		return;
+	pBar->SetPlace(Place);
+	m_PanelTabs.Move(Panel, Place);
+	ApplyPanels();
+	static LPCTSTR const SAID[] = {
+		_T("%s is a tab along the bottom now. A right-click on a tab puts it on the right or in its own window."),
+		_T("%s is a tab on the right now. A right-click on a tab puts it at the bottom or in its own window."),
+		_T("%s is in its own window now: move it anywhere, a second screen too. A right-click on its title puts it back in the tabs."),
+	};
+	CString Text;
+	Text.Format(SAID[Place], pBar->Title());
+	SetMessageText(Text);
+}
+
+std::vector<CPanelBar*> CMainFrame::PanelTabs(panel_place_t Place) const
+{
+	std::vector<CPanelBar*> Bars;
+	const std::vector<int> Tabs = m_PanelTabs.Tabs(Place);
+	for (size_t i = 0; i < Tabs.size(); ++i)
+		if (PanelBar(Tabs[i]) != NULL)
+			Bars.push_back(PanelBar(Tabs[i]));
+	return Bars;
+}
+
+int CMainFrame::SelectedPanel(panel_place_t Place) const
+{
+	return m_PanelTabs.Selected(Place);
+}
+
+void CMainFrame::ApplyPanels()
+{
+	// A place keeps its size whichever of its tabs shows: the tab shown now takes the one shown before's
+	const panel_place_t DOCKED[] = { PANEL_BOTTOM, PANEL_RIGHT };
+	for (int d = 0; d < 2; ++d) {
+		const int Now = m_PanelTabs.Selected(DOCKED[d]);
+		CPanelBar *pBefore = PanelBar(m_iTabShown[d]), *pNow = PanelBar(Now);
+		if (pBefore != NULL && pNow != NULL && pBefore != pNow) {
+			if (DOCKED[d] == PANEL_RIGHT)
+				pNow->SetRightWidth(pBefore->RightWidth());
+			else
+				pNow->SetBottomHeight(pBefore->BottomHeight());
+		}
+		if (Now != NO_PANEL)
+			m_iTabShown[d] = Now;		// (kept while the place is empty: the next one there takes its size)
+	}
+	// Those going away first, so a panel's keys go back before another one shows
+	for (int pass = 0; pass < 2; ++pass)
+		for (int i = 0; i < PANEL_COUNT; ++i) {
+			CPanelBar *pBar = PanelBar(i);
+			if (pBar == NULL)
+				continue;
+			const bool Shows = m_PanelTabs.Shows(i);
+			if (Shows != (pass == 1))
+				continue;
+			const bool Window = m_PanelTabs.Place(i) == PANEL_WINDOW;
+			pBar->Appear(Shows && !Window, Shows && Window);
+		}
+	for (int i = 0; i < PANEL_COUNT; ++i)
+		if (PanelBar(i) != NULL)
+			PanelBar(i)->TabsChanged();
+	ArrangeBars();
+	theApp.WriteProfileInt(_T("Panel tabs"), _T("Bottom"), m_PanelTabs.Selected(PANEL_BOTTOM));
+	theApp.WriteProfileInt(_T("Panel tabs"), _T("Right"), m_PanelTabs.Selected(PANEL_RIGHT));
+}
+
+void CMainFrame::RestorePanelTabs()
+{
+	const int Bottom = static_cast<int>(theApp.GetProfileInt(_T("Panel tabs"), _T("Bottom"), static_cast<UINT>(NO_PANEL)));
+	const int Right = static_cast<int>(theApp.GetProfileInt(_T("Panel tabs"), _T("Right"), static_cast<UINT>(NO_PANEL)));
+	bool Changed = false;
+	if (m_PanelTabs.IsOpen(Bottom) && m_PanelTabs.Place(Bottom) == PANEL_BOTTOM && !m_PanelTabs.Shows(Bottom)) {
+		m_PanelTabs.Select(Bottom);
+		Changed = true;
+	}
+	if (m_PanelTabs.IsOpen(Right) && m_PanelTabs.Place(Right) == PANEL_RIGHT && !m_PanelTabs.Shows(Right)) {
+		m_PanelTabs.Select(Right);
+		Changed = true;
+	}
+	if (Changed)
+		ApplyPanels();
 }
 
 CPianoRollWnd *CMainFrame::FocusedPianoRoll() const
@@ -2951,8 +3071,8 @@ CPianoRollWnd *CMainFrame::FocusedPianoRoll() const
 
 void CMainFrame::ShowDrumGrid(bool Show)
 {
-	// The noise channel's drums a bar at a time, along the bottom of the main window or its right (see
-	// DrumGridPanel.h), made the first time
+	// The noise channel's drums a bar at a time, in a tab along the bottom of the main window or its right, or a
+	// window of its own (see DrumGridPanel.h), made the first time
 	if (Show && m_pDrumGridBar == NULL) {
 		m_pDrumGridBar = new CDrumGridBar();
 		if (!m_pDrumGridBar->Create(this)) {
@@ -2962,10 +3082,7 @@ void CMainFrame::ShowDrumGrid(bool Show)
 		}
 		ArrangeBars();
 	}
-	if (m_pDrumGridBar == NULL)
-		return;
-	ShowControlBar(m_pDrumGridBar, Show ? TRUE : FALSE, FALSE);
-	m_pDrumGridBar->Opened(Show);
+	PanelShown(PANEL_DRUM_GRID, Show);
 }
 
 CPianoRollWnd *CMainFrame::GetPianoRollWnd() const
@@ -3005,17 +3122,18 @@ void CMainFrame::ShowClipsPanel(bool Show, bool Focus)
 
 void CMainFrame::OnViewProblems()
 {
-	ShowProblemsPanel(m_pProblemsBar == NULL || !m_pProblemsBar->IsVisible());
+	TogglePanel(PANEL_PROBLEMS);
 }
 
 void CMainFrame::OnUpdateViewProblems(CCmdUI *pCmdUI)
 {
-	pCmdUI->SetCheck(m_pProblemsBar != NULL && m_pProblemsBar->IsVisible() ? 1 : 0);
+	pCmdUI->SetCheck(m_PanelTabs.IsOpen(PANEL_PROBLEMS) ? 1 : 0);
 }
 
 void CMainFrame::ShowProblemsPanel(bool Show)
 {
-	// What check_song finds, along the bottom of the main window or its right (see ProblemsPanel.h), made the first time
+	// What check_song finds, in a tab along the bottom of the main window or its right, or a window of its own (see
+	// ProblemsPanel.h), made the first time
 	if (Show && m_pProblemsBar == NULL) {
 		m_pProblemsBar = new CProblemsBar();
 		if (!m_pProblemsBar->Create(this, m_pMcpConnection)) {
@@ -3026,26 +3144,22 @@ void CMainFrame::ShowProblemsPanel(bool Show)
 		// Laid out before the piano roll and the clips panel, so it's along the window's edge, outside them
 		ArrangeBars();
 	}
-	if (m_pProblemsBar == NULL)
-		return;
-	ShowControlBar(m_pProblemsBar, Show ? TRUE : FALSE, FALSE);
-	m_pProblemsBar->Opened(Show);
+	PanelShown(PANEL_PROBLEMS, Show);
 }
 
 void CMainFrame::OnViewWhatNext()
 {
-	ShowWhatNext(m_pWhatNextBar == NULL || !m_pWhatNextBar->IsVisible());
+	TogglePanel(PANEL_WHAT_NEXT);
 }
 
 void CMainFrame::OnUpdateViewWhatNext(CCmdUI *pCmdUI)
 {
-	pCmdUI->SetCheck(m_pWhatNextBar != NULL && m_pWhatNextBar->IsVisible() ? 1 : 0);
+	pCmdUI->SetCheck(m_PanelTabs.IsOpen(PANEL_WHAT_NEXT) ? 1 : 0);
 }
 
 void CMainFrame::ShowWhatNext(bool Show)
 {
-	// The song's next step from what_next, along the bottom of the main window or its right (see WhatNextPanel.h),
-	// made the first time
+	// The song's next step from what_next, in a tab or a window of its own (see WhatNextPanel.h), made the first time
 	if (Show && m_pWhatNextBar == NULL) {
 		m_pWhatNextBar = new CWhatNextBar();
 		if (!m_pWhatNextBar->Create(this, m_pMcpConnection)) {
@@ -3053,29 +3167,25 @@ void CMainFrame::ShowWhatNext(bool Show)
 			m_pWhatNextBar = NULL;
 			return;
 		}
-		// Laid out before the piano roll and the clips panel, so it's along the window's edge, outside them
 		ArrangeBars();
 	}
-	if (m_pWhatNextBar == NULL)
-		return;
-	ShowControlBar(m_pWhatNextBar, Show ? TRUE : FALSE, FALSE);
-	m_pWhatNextBar->Opened(Show);
+	PanelShown(PANEL_WHAT_NEXT, Show);
 }
 
 void CMainFrame::OnViewAsk()
 {
-	ShowAsk(m_pAskBar == NULL || !m_pAskBar->IsVisible());
+	TogglePanel(PANEL_ASK);
 }
 
 void CMainFrame::OnUpdateViewAsk(CCmdUI *pCmdUI)
 {
-	pCmdUI->SetCheck(m_pAskBar != NULL && m_pAskBar->IsVisible() ? 1 : 0);
+	pCmdUI->SetCheck(m_PanelTabs.IsOpen(PANEL_ASK) ? 1 : 0);
 }
 
 void CMainFrame::ShowAsk(bool Show)
 {
-	// The user's own model asked from FamiTracker, along the bottom of the main window or its right (see AskPanel.h),
-	// made the first time; the keys go to its question box as it opens
+	// The user's own model asked from FamiTracker, in a tab or a window of its own (see AskPanel.h), made the first
+	// time; the keys go to its question box as it opens
 	if (Show && m_pAskBar == NULL) {
 		m_pAskBar = new CAskBar();
 		if (!m_pAskBar->Create(this, m_pMcpConnection)) {
@@ -3085,27 +3195,24 @@ void CMainFrame::ShowAsk(bool Show)
 		}
 		ArrangeBars();
 	}
-	if (m_pAskBar == NULL)
-		return;
-	ShowControlBar(m_pAskBar, Show ? TRUE : FALSE, FALSE);
-	m_pAskBar->Opened(Show);
-	if (Show)
+	PanelShown(PANEL_ASK, Show);
+	if (Show && m_pAskBar != NULL && m_PanelTabs.Shows(PANEL_ASK))
 		m_pAskBar->Focus();
 }
 
 void CMainFrame::OnViewAgentLog()
 {
-	ShowAgentLog(m_pAgentLogBar == NULL || !m_pAgentLogBar->IsVisible());
+	TogglePanel(PANEL_AGENT_LOG);
 }
 
 void CMainFrame::OnUpdateViewAgentLog(CCmdUI *pCmdUI)
 {
-	pCmdUI->SetCheck(m_pAgentLogBar != NULL && m_pAgentLogBar->IsVisible() ? 1 : 0);
+	pCmdUI->SetCheck(m_PanelTabs.IsOpen(PANEL_AGENT_LOG) ? 1 : 0);
 }
 
 void CMainFrame::ShowAgentLog(bool Show)
 {
-	// What the agents did and why, with a box for notes to them, along the bottom of the main window or its right (see
+	// What the agents did and why, with a box for notes to them, in a tab or a window of its own (see
 	// AgentLogPanel.h), made the first time
 	if (Show && m_pAgentLogBar == NULL) {
 		m_pAgentLogBar = new CAgentLogBar();
@@ -3116,10 +3223,7 @@ void CMainFrame::ShowAgentLog(bool Show)
 		}
 		ArrangeBars();
 	}
-	if (m_pAgentLogBar == NULL)
-		return;
-	ShowControlBar(m_pAgentLogBar, Show ? TRUE : FALSE, FALSE);
-	m_pAgentLogBar->Opened(Show);
+	PanelShown(PANEL_AGENT_LOG, Show);
 }
 
 void CMainFrame::OnViewMixer()

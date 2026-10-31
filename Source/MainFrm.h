@@ -29,6 +29,7 @@
 #include "ControlPanelDlg.h"
 #include "CustomControls.h"
 #include "NoteViews.h"
+#include "PanelTabs.h"
 #include <vector>
 
 enum frame_edit_pos_t { 
@@ -52,6 +53,7 @@ class CAskBar;
 class CAgentLogBar;
 class CMixerBar;
 class CDrumGridBar;
+class CPanelBar;
 struct note_views_t;
 struct AFX_SIZEPARENTPARAMS;
 class CAction;
@@ -133,14 +135,22 @@ public:
 	void	ShowAsk(bool Show);				// View > Ask, along the bottom or the right (AskPanel.h)
 	void	ShowAgentLog(bool Show);		// View > Agent log, along the bottom or the right (AgentLogPanel.h)
 	void	ShowMixer(bool Show);			// along the bottom (MixerPanel.h)
+	// The panels in tabs or their own windows (PanelTabs.h, PanelBar.h): Problems, What next, Ask, Agent log and the
+	// drum grid, in the tabs' order
+	enum { PANEL_PROBLEMS, PANEL_WHAT_NEXT, PANEL_ASK, PANEL_AGENT_LOG, PANEL_DRUM_GRID, PANEL_COUNT };
+	void	ShowPanel(int Panel, bool Show);		// opened (the selected tab of its place) or closed
+	void	SelectPanelTab(int Panel);				// its tab picked
+	void	MovePanel(int Panel, panel_place_t Place);	// a tab at the bottom, a tab on the right, its own window
+	std::vector<CPanelBar*> PanelTabs(panel_place_t Place) const;	// the open panels of a docked place, in order
+	int		SelectedPanel(panel_place_t Place) const;	// the tab shown there, NO_PANEL for none
+	void	PanelDragged(CPanelBar *pBar, int Size);	// its line was dragged: the other tabs of its place take the size
 	// The panels along the bottom, placed by the main window as their WM_SIZEPARENT comes (ArrangeBars): the mixer along
-	// its edge, the problems panel, What next and the drum grid side by side in one row above it, each band as tall as
-	// it was made while the note views keep about a third of the window, else shorter (NoteViews.h's FitPanelBands).
-	// False for a panel that isn't along the bottom and showing (it lays itself out)
+	// its edge, the selected tab of the bottom's panels above it, each band as tall as it was made while the note views
+	// keep about a third of the window, else shorter (NoteViews.h's FitPanelBands). False for a panel that isn't along
+	// the bottom and showing (it lays itself out)
 	bool	PlaceBottomPanel(CControlBar *pBar, AFX_SIZEPARENTPARAMS *pLayout);
 	virtual void RecalcLayout(BOOL bNotify = TRUE);		// (which panels are along the bottom, as the layout starts)
 	int		BottomPanelMost(const CControlBar *pBar) const;		// how tall dragging its line may make it
-	void	BottomPanelDragged(const CControlBar *pBar, int Height);	// its line was dragged: its row takes the height
 	CMcpConnection *GetMcpConnection() const { return m_pMcpConnection; }	// the tools, for the piano roll's chords
 	CSoundPreview *GetSoundPreview();	// what plays a sound for the sound browser and Instrument > Listen (SoundPreview.h)
 	void	ApplyProfile();		// the menus and the song settings as the profile has them (Profile.h)
@@ -205,6 +215,11 @@ private:
 	note_views_t NoteViews() const;
 	void	ShowNoteViews(const note_views_t &Views);
 	void	ArrangeBars();
+	CPanelBar *PanelBar(int Panel) const;	// NULL until it's first opened
+	void	PanelShown(int Panel, bool Show);	// (ShowPanel, once the bar is made)
+	void	TogglePanel(int Panel);			// its View menu item: opened, its tab shown, or closed
+	void	ApplyPanels();					// the bars and windows shown as m_PanelTabs has them
+	void	RestorePanelTabs();				// the tabs shown last time, once the panels opened
 	CPianoRollWnd *FocusedPianoRoll() const;	// the piano roll, when it has the keys
 	int RollChannelBefore() const;			// Ctrl+Z and Ctrl+Y in the piano roll keep its channel...
 	void RollChannelAfter(int Channel);		// ...putting the cursor back on it
@@ -258,12 +273,14 @@ private:  // control bar embedded members
 
 	CPianoRollBar		*m_pPianoRoll;			// View > Piano roll, under the pattern editor; created when first shown
 	CClipsBar			*m_pClipsBar;			// View > Clips panel, beside the pattern editor; created when first shown
-	CProblemsBar		*m_pProblemsBar;		// View > Problems, along the bottom or the right; created when first shown
-	CWhatNextBar		*m_pWhatNextBar;		// View > What next, along the bottom or the right; created when first shown
-	CAskBar				*m_pAskBar;				// View > Ask, along the bottom or the right; created when first shown
-	CAgentLogBar		*m_pAgentLogBar;		// View > Agent log, along the bottom or the right; created when first shown
+	CProblemsBar		*m_pProblemsBar;		// View > Problems, in a tab or its own window (PanelBar.h); created when first shown
+	CWhatNextBar		*m_pWhatNextBar;		// View > What next, the same; created when first shown
+	CAskBar				*m_pAskBar;				// View > Ask, the same; created when first shown
+	CAgentLogBar		*m_pAgentLogBar;		// View > Agent log, the same; created when first shown
 	CMixerBar			*m_pMixerBar;			// View > Mixer, along the bottom; created when first shown
-	CDrumGridBar		*m_pDrumGridBar;		// View > Drum grid, along the bottom or the right; created when first shown
+	CDrumGridBar		*m_pDrumGridBar;		// View > Drum grid, the same; created when first shown
+	panel_tabs_t		m_PanelTabs;			// which of those five are open, where, and the tabs shown
+	int					m_iTabShown[2];			// the tab shown at the bottom and on the right, at the last ApplyPanels
 	// The panels along the bottom (PlaceBottomPanel), in ArrangeBars' order, and the layout under way: the bands'
 	// heights as they asked and as they got them, the room under the top bars and the note views' share of it, the
 	// band being placed and its panels' widths

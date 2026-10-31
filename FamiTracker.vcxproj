@@ -691,6 +691,10 @@
     <ClInclude Include="Source\DrumGridPanel.h" />
     <ClCompile Include="Source\NoteViews.cpp" />
     <ClInclude Include="Source\NoteViews.h" />
+    <ClCompile Include="Source\PanelTabs.cpp" />
+    <ClInclude Include="Source\PanelTabs.h" />
+    <ClCompile Include="Source\PanelBar.cpp" />
+    <ClInclude Include="Source\PanelBar.h" />
     <ClCompile Include="Source\Profile.cpp" />
     <ClInclude Include="Source\Profile.h" />
     <ClCompile Include="Source\Tutorial.cpp" />

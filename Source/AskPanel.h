@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "PanelBar.h"
+
 // View > Ask: a question box for the user's own model (Api/Assistant.h), any
 // server that speaks OpenAI's chat API on their home network (llama.cpp's
 // llama-server, llama-swap, Ollama, LM Studio). The answers stream in, the
@@ -80,59 +82,26 @@ private:
 	CAskPanelWnd &operator=(const CAskPanelWnd &);
 };
 
-// The panel docked along the bottom of the main window, or along its right. The line along its top (or left) edge is
-// dragged to make it taller (or wider). Where it is, its size and whether it was open are remembered.
-class CAskBar : public CControlBar
+// The panel in a tab along the bottom of the main window (under the note
+// views) or along its right, or in a window of its own (PanelBar.h). Where
+// it is, its sizes and whether it was open are remembered.
+class CAskBar : public CPanelBar
 {
 public:
 	CAskBar();
 	virtual ~CAskBar();
 
 	bool Create(CFrameWnd *pFrame, CMcpConnection *pTools);	// hidden at first
-	void Opened(bool Open);					// shown or hidden by the main frame
 	void SongChanged();
 	void Focus();							// the keyboard goes to the question box
 	static bool WasOpen();					// it was open when FamiTracker closed (closed the first time)
-	bool IsOnRight() const { return m_bRight; }
-	// Along the bottom (CMainFrame::PlaceBottomPanel): the height it was made, the least it's usable at, its share of
-	// the row it's in beside the other panels there, and the height the row takes when another one's line is dragged
-	int BottomHeight() const { return m_iHeight; }
-	int LeastHeight(int Width) const;
-	int RowWeight() const;
-	void SetBottomHeight(int Height);
-	void DockOnRight(bool Right);
-
-	virtual CSize CalcFixedLayout(BOOL bStretch, BOOL bHorz);
-	virtual void OnUpdateCmdUI(CFrameWnd *pTarget, BOOL bDisableIfNoHndler);
-	virtual BOOL PreTranslateMessage(MSG *pMsg);
 
 protected:
-	afx_msg void OnSize(UINT nType, int cx, int cy);
-	afx_msg void OnPaint();
-	afx_msg BOOL OnEraseBkgnd(CDC *pDC);
-	afx_msg void OnLButtonDown(UINT nFlags, CPoint point);
-	afx_msg void OnLButtonUp(UINT nFlags, CPoint point);
-	afx_msg void OnMouseMove(UINT nFlags, CPoint point);
-	afx_msg BOOL OnSetCursor(CWnd *pWnd, UINT nHitTest, UINT message);
-	afx_msg void OnCaptureChanged(CWnd *pWnd);
-	afx_msg void OnDestroy();
-	afx_msg LRESULT OnSizeParent(WPARAM wParam, LPARAM lParam);
-
-	DECLARE_MESSAGE_MAP()
+	virtual int PanelLeast(int Width) const;
+	virtual void PanelOpened(bool Open);
 
 private:
-	int Divider() const;
-	int MaxSize() const;
-	int &Size() { return m_bRight ? m_iWidth : m_iHeight; }
-	int Size() const { return m_bRight ? m_iWidth : m_iHeight; }
-
 	CAskPanelWnd m_wndPanel;
-	bool m_bRight;
-	int m_iHeight, m_iWidth;
-	int m_iRoom;
-	int m_iDragFrom;
-	int m_iDragSize;
-	int m_iDragMax;
 
 	CAskBar(const CAskBar &);
 	CAskBar &operator=(const CAskBar &);

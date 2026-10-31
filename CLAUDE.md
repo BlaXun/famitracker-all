@@ -166,8 +166,8 @@ leaves clicking with `Pxx` (`SmoothChanges`), `check_song` lists them,
 within four frames between held notes of their line, which a user heard as
 missing notes, and `design_instrument` and `reference_sound` say when the
 sound they add is that short (`VanishRemark`).
-View > Problems (`Source/ProblemsPanel.cpp`, docked along the bottom or the
-right) shows those checks in FamiTracker: it runs `check_song` with
+View > Problems (`Source/ProblemsPanel.cpp`, a panel in a tab at the bottom
+or on the right, or in its own window: see the panels' tabs below) shows those checks in FamiTracker: it runs `check_song` with
 `format` `json` (each finding as data: `CheckFinding` and `CheckJson` in
 `Tools.cpp`) through `CMcpConnection::RunTool`, which runs a tool for
 FamiTracker's own windows with direct changes whatever the Claude Code
@@ -334,23 +334,24 @@ when it has the keys (`EditCommand`). The accelerators work whichever window
 has the keys. The program setting `Views.bPatternEditor` remembers the
 pattern editor; the piano roll and the drum grid keep their own registry
 sections, as the other panels do. `CMainFrame::ArrangeBars` lays the docked
-panels out in one order (mixer, problems, drum grid, then the piano roll and
-the clips panel, swapped while the piano roll fills), and each panel's
-creation calls it. Those along the bottom the main window places itself, from
-each one's `WM_SIZEPARENT` (`CMainFrame::PlaceBottomPanel`, since
-`feat-newcomer-fixes`): the mixer along the edge, the problems panel, What
-next and the drum grid side by side in one row above it (`ShareRow`, a
-dragged line sets the whole row's height: `BottomPanelDragged`). The room
-goes first to the note views as far as enough lanes to play in, then to the
-row's and the mixer's least (`BottomPanelLeast`, at the panel's width: the
-drum grid's buttons take more lines when narrow, `HeightFor`), then to the
-note views as far as a third of the window (`NoteViewsKeep`), then to the
-bands as tall as they were made (`FitPanelBands` in `NoteViews.cpp`; with all
-four open the piano roll had one lane left on a window 1000 pixels high). The
+panels out in one order (mixer, problems, What next, Ask, agent log, drum
+grid, then the piano roll and the clips panel, swapped while the piano roll
+fills), and each panel's creation calls it. Those along the bottom the main
+window places itself, from each one's `WM_SIZEPARENT`
+(`CMainFrame::PlaceBottomPanel`, since `feat-newcomer-fixes`): the mixer
+along the edge, and above it the tab shown of the panels at the bottom (one
+band since `feat-panel-tabs`; before, the panels sat side by side in one
+row, `ShareRow`, which still splits a band's width). The room goes first to
+the note views as far as enough lanes to play in, then to the band's and the
+mixer's least (`BottomPanelLeast`, at the panel's width: the drum grid's
+buttons take more lines when narrow, `HeightFor`), then to the note views as
+far as a third of the window (`NoteViewsKeep`), then to the bands as tall as
+they were made (`FitPanelBands` in `NoteViews.cpp`; with four panels side by
+side the piano roll had one lane left on a window 1000 pixels high). The
 panels are listed as `CMainFrame::RecalcLayout` starts, since each one's show
 is made during the layout (`RecalcDelayShow`), which forgets it was to be
-made. The drum grid is a panel, `CDrumGridBar`, docked along
-the bottom or the right like the problems panel: it shows the bar the
+made. The drum grid is a panel, `CDrumGridBar`, in a tab or its own window
+like the problems panel: it shows the bar the
 cursor is in (`FollowCursor` in `DrumGrid.cpp`; its < and > keep a bar until
 the cursor moves), flows its buttons into lines (`FlowDrumControls`), writes
 with `WriteChannelRows` leaving the cursor where it is, and a song change in
@@ -1476,9 +1477,8 @@ undoable now, as `CMcpMeterAction` is. `TestSongShapes`,
 `TestWhatNextLoop` follows the shape-first loop.
 
 What next panel and hearing the problems (from `feat-guide-panels`): View >
-What next (`ID_VIEW_WHATNEXT`, `Source/WhatNextPanel.cpp`, a bar docked
-along the bottom or the right as the problems panel is, after it in
-`ArrangeBars`) runs `what_next` with `format` `json` through
+What next (`ID_VIEW_WHATNEXT`, `Source/WhatNextPanel.cpp`, a panel in a tab
+or its own window as the problems panel is, after it in `ArrangeBars`) runs `what_next` with `format` `json` through
 `CMcpConnection::RunTool` a moment after `SongChanged` (not while the song
 or its own `CBarsPlayer` plays, a dialog is open, or the user typed within a
 second or twice the last ask's time; it polls `SongSettingsSignature`,
@@ -1671,8 +1671,8 @@ where they went (`ChannelSwitchText`) and over a button what its parts do
 `TestChannelButtons` covers the portable part.
 
 Asking your own model (from `feat-ask-panel`): View > Ask (`ID_VIEW_ASK`,
-`Source/AskPanel.cpp`, a bar in `PlaceBottomPanel`'s row or on the right,
-after What next in `ArrangeBars`) asks the user's own model, any
+`Source/AskPanel.cpp`, a panel in a tab or its own window, after What next in
+`ArrangeBars`) asks the user's own model, any
 OpenAI-compatible chat server (llama-server, llama-swap, Ollama, LM
 Studio). The portable part is `Source/Api/Assistant.cpp` (the settings and
 the address, `AssistantFunctions` from `ToolSet::List()`'s schemas, the
@@ -1944,8 +1944,8 @@ error line for a failed call from a client or of a tool that isn't
 read-only (FamiTracker's panels ask check_song and what_next again and
 again); `AfterLog` ends a client's replies (not JSON, not
 read_user_notes') with a line while notes wait unread. View > Agent log
-(`ID_VIEW_AGENTLOG`, `Source/AgentLogPanel.cpp`, a bar in
-`PlaceBottomPanel`'s row or on the right, after Ask in `ArrangeBars`, its
+(`ID_VIEW_AGENTLOG`, `Source/AgentLogPanel.cpp`, a panel in a tab or its own
+window, after Ask in `ArrangeBars`, its
 registry section "Agent log panel" with the categories hidden as bits,
 "Hidden") reads the log through `CMcpConnection::SongLog` (NULL while a tool
 runs) on a 300 ms timer by its `Version`, draws the list off screen
@@ -2020,6 +2020,44 @@ Open folder, all through `CMcpConnection::RunTool` with `FromDialog`. The
 three are in `CoreTools` (43 now) and `AssistantToolKinds` (list reads, the
 others change), and `AfterCall` keeps them aside and logs them.
 `TestBackups` covers them.
+
+Panels in tabs or their own window (from `feat-panel-tabs`): the five
+panels (View > Problems, What next, Ask, Agent log, Drum grid) each lie in a
+tab at the bottom, a tab on the right or a window of their own.
+`Source/PanelTabs.cpp` (portable, `paneltabs_tests` in `Source/Tests`) keeps
+which are open, where, and the tab each docked place shows (`panel_tabs_t`:
+`Open` makes a panel its place's tab shown, `Close` and `Move` show the tab
+after it, else the one before), reads the stored place (`StoredPanelPlace`:
+"Place" 0, 1 or 2, else the old "On the right") and sizes the tab strip
+(`TabWidths`, `TabAt`). `Source/PanelBar.cpp` is the bar all five derive from
+(`CPanelBar`, with `PanelLeast` and `PanelOpened` for each panel's own
+part): the line to drag, then a strip with a tab for each open panel of its
+place (`CMainFrame::PanelTabs`; the tab shown in bold joins the panel, a
+click shows another, a right-click gives Show, the three places and Close)
+and a panel's mark (`News`: the problems' count, `ProblemCount`; a dot for
+agent log lines added since it last showed, `HasNews`), looked at every
+500 ms. Only the tab shown has its bar shown, so a place takes one panel's
+room; a place keeps its size whichever tab shows (`ApplyPanels` gives the tab
+shown the one before's, `PanelDragged` all of the place's). Own window is
+`CPanelWindow`, a `WS_EX_TOOLWINDOW` popup owned by the main window (above it,
+minimized with it, disabled with it by a modal dialog through MFC's
+`BeginModalState`), shown with `SW_SHOWNOACTIVATE` so the note keys stay put
+(`Appear`): the panel window itself moves into it with `SetParent` and back
+(its own `OnDestroy` gives it back to the bar, since closing FamiTracker
+destroys the owned windows first), its place in "Window left", "Window top",
+"Window width" and "Window height" of the panel's registry section, moved
+onto the main window's screen when that monitor is gone; its system menu (a
+right-click on its title) has Tab at the bottom and Tab on the right, and its
+close button closes the panel. The panels' own right-click menus have the
+three places (`AddPlaceItems`, `PickPlace`; the bar is found with
+`CPanelBar::Of`, not `GetParent`, which is the window then). `CMainFrame`
+keeps `m_PanelTabs` (`ShowPanel`, `PanelShown`, `TogglePanel`,
+`SelectPanelTab`, `MovePanel`, `ApplyPanels`); a View item checks a panel
+open in any place, and picking it for a panel open in a tab not shown shows
+that tab rather than closing it; the tabs shown are kept in the "Panel tabs"
+section ("Bottom", "Right", by `PANEL_*`) and shown again once the panels
+reopen (`RestorePanelTabs`). The mixer stays along the bottom edge and the
+clips panel beside the note views, outside the tabs.
 
 ## What this repository is
 
@@ -2171,7 +2209,9 @@ The application has no test suite of its own. What exists:
   drums off a bar, putting them on and off, the ready-made beats, the bar
   the panel follows and its buttons in lines. `NoteViewsTests.cpp` covers
   View > Pattern editor and View > Piano roll from every layout: there's
-  always one view to place notes in.
+  always one view to place notes in. `PanelTabsTests.cpp` covers the
+  panels' tabs: opening, closing and moving between the places, the tab
+  shown after each, the stored place and the tab strip's widths.
   `TutorialScriptTests.cpp` reads tutorials, every wait and command name and
   the errors, and the built-in tutorials, which must stay ASCII.
   `ApuTests.cpp` plays every chip's channels by register writes (each
