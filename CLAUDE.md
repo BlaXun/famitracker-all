@@ -2360,6 +2360,32 @@ finish_song to its listen. A pair of words counts twice in `KIND_WORDS`
 tie is tense, bittersweet, melancholic, festive, mysterious, atmospheric,
 floating, playful, cozy, adventure.
 
+Kinds are guidance, not presets (from `feat-cozy-kind`, its fifth commit):
+every kind has pools (`NextKind::Leads`, `ChordStyles`, `BassStyles`,
+`Grooves`, `Tempos`, `KeyPool`; `|` between entries, the kind's own value
+first, calm's, lively's, action's and the general recipe's old values
+among them), and `NextPicksOf` picks one of each by the track's name and the
+song's seed (`SeededHash` in `Source/Api/SongSeed.cpp`, a salt per pool so
+the picks don't move together). A song without a seed (0: every song made
+before seeds, and `FakeSong` unless `GivesSeeds`) gets each pool's first,
+the kind's own, so it keeps the steps it was made with. The seed is made
+once, when a song is created (`CFamiTrackerDoc::OnNewDocument` and so
+`new_song`, `MakeSongSeed` from the performance counter, the tick count,
+the clock and the document's address; `NewSongSeed`) or by the first
+`what_next` on an empty song without one (`SongHost::MakeSongSeed`, which
+doesn't mark the song changed), and saved in a `BF SEED` block. It also picks
+`song_shape`'s variant when none is given (`VariantOfName` with a seed) and
+`grow_melody`'s first variant. `what_next` and `song_shape` take `seed` (2
+and on roll other picks, `RolledSeed`; 1 is the song's own), asked again with
+it (`AgainArgs`); each step from a pool says so and invites another
+(`WhatNext::PoolNote`: "one of the 3 leads a cozy song draws from, picked for
+this song; another fits if the song wants it, and what_next with seed 2 gives
+another choice"), and an argument given always wins. The review's climax tip
+puts its harmony in the section named the climax where there is one
+(`WhatNext::Climax`). `TestKindPools` (picks by name and seed, the block,
+two new songs alike, a song saved and opened again, rolls, walks of every
+kind on three seeded songs) covers it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
@@ -2733,6 +2759,12 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   1 with that value; anything else is ignored and the song opens as VRC6 +
   N163 (4 channels), as builds without it open it. `Source/Nsf/FtmFile.cpp`
   skips it quietly.
+- **`BF SEED` block** (this branch; version 1, written after `BF VRC6PLUS`
+  only when the song has a seed): one `int32`, the song's seed (not 0),
+  made once when the song is created (`Source/Api/SongSeed.h`).
+  `SongSeedMark::Read` takes exactly those 4 bytes of version 1; anything
+  else is no seed (the kinds' own picks). `Source/Nsf/FtmFile.cpp` skips
+  it quietly, and `SongFiles.h` reads it into `SongInfo::Seed`.
 - **Block versions:** each block has its own version. To add data:
   1. Append it in `WriteBlock_*` and bump that block's version.
   2. In `ReadBlock_*`, read it only when `GetBlockVersion()` is new enough.

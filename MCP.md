@@ -572,6 +572,14 @@ which: "Kind: mysterious (from the words hidden, cave). Pass kind
 `song_shape` say the same when their `about` picks a kind, and `what_next`
 without `about` or a kind takes one from the track's name ("The Caves",
 "Flying the airship", "Waiting for the Airship", "Hut in a Field"). On a
+A kind is guidance, not a preset: each has a few leads, chord styles, bass
+styles, grooves, tempos and keys to draw from, and `what_next` picks one of
+each for a song by its track's name and the song's seed, a number
+FamiTracker makes once for each new song and saves with it. Two songs of one
+kind sound different, and one song keeps its picks. Each step from a pool
+says so; any other choice that fits is fine, and `what_next` (or
+`song_shape`) with `seed` 2, 3... gives other picks. A song made before
+seeds keeps each kind's own picks. On a
 tie the words' kinds go tense, bittersweet, melancholic, festive,
 mysterious, atmospheric, floating, playful, cozy, adventure (two words that
 belong together, "eerie silence", count twice); a fight's words stay action.

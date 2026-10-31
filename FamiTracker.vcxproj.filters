@@ -1275,6 +1275,9 @@
     <ClCompile Include="Source\Api\Vrc6Plus.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\SongSeed.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Chords.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1411,6 +1414,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Vrc6Plus.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\SongSeed.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Chords.h">

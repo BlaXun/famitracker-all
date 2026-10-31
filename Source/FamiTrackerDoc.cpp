@@ -46,11 +46,13 @@
 #include <vector>
 #include "stdafx.h"
 #include <algorithm>
+#include <ctime>
 #include "Api/Sections.h"
 #include "Api/FramePatterns.h"
 #include "Api/Keys.h"
 #include "Api/ChannelMix.h"
 #include "Api/Vrc6Plus.h"
+#include "Api/SongSeed.h"
 #include "FamiTracker.h"
 #include "FamiTrackerDoc.h"
 #include "ChipSwitch.h"
@@ -209,6 +211,7 @@ CFamiTrackerDoc::CFamiTrackerDoc() :
 	m_iRegisteredChannels(0), 
 	m_iNamcoChannels(DEFAULT_NAMCO_CHANS),
 	m_bVrc6Plus(false),
+	m_iSongSeed(0),
 	m_bDisplayComment(false),
 	m_pClipLibrary(new CClipLibrary()),
 	m_pSections(new ftapi::SectionStore()),
@@ -320,6 +323,8 @@ BOOL CFamiTrackerDoc::OnNewDocument()
 	// The game music profile's template: the VRC6 chip, a tempo and instruments (Profile.h)
 	if (ProfileSongTemplate())
 		ApplySongTemplate(this);
+	// A seed of its own, so two new songs alike in name and steps still get other choices from the tools
+	MakeSongSeed();
 
 	return TRUE;
 }
@@ -473,6 +478,7 @@ void CFamiTrackerDoc::DeleteContents()
 	m_iEngineSpeed		 = 0;
 	m_iExpansionChip	 = SNDCHIP_NONE;
 	m_bVrc6Plus			 = false;
+	m_iSongSeed			 = 0;
 	UpdateChannelNames();
 	m_iVibratoStyle		 = VIBRATO_OLD;
 	m_bLinearPitch		 = DEFAULT_LINEAR_PITCH;
@@ -821,6 +827,9 @@ bool CFamiTrackerDoc::WriteBlocks(CDocumentFile *pDocFile) const
 		return false;
 	// The VRC6 Plus's mark, only when it is one (a module without it saves as before)
 	if (IsVrc6Plus() && !WriteBlock_Vrc6Plus(pDocFile))
+		return false;
+	// The song's seed, only when it has one (a song without saves as before)
+	if (m_iSongSeed != 0 && !WriteBlock_Seed(pDocFile))
 		return false;
 
 	if (m_iExpansionChip & SNDCHIP_VRC6) {
@@ -1361,6 +1370,15 @@ bool CFamiTrackerDoc::WriteBlock_Vrc6Plus(CDocumentFile *pDocFile) const
 	return pDocFile->FlushBlock();
 }
 
+bool CFamiTrackerDoc::WriteBlock_Seed(CDocumentFile *pDocFile) const
+{
+	// Beginner-friendly: the song's seed (Api/SongSeed.h), a block other versions skip
+	const std::vector<unsigned char> Data = ftapi::SongSeedMark::Write(m_iSongSeed);
+	pDocFile->CreateBlock(ftapi::SongSeedMark::BLOCK_ID, ftapi::SongSeedMark::BLOCK_VERSION);
+	pDocFile->WriteBlock(reinterpret_cast<const char*>(&Data[0]), static_cast<unsigned int>(Data.size()));
+	return pDocFile->FlushBlock();
+}
+
 bool CFamiTrackerDoc::WriteBlock_Keys(CDocumentFile *pDocFile) const
 {
 	// Beginner-friendly: the keys chosen for the tracks (Api/Keys.h), a block other versions skip
@@ -1728,6 +1746,9 @@ BOOL CFamiTrackerDoc::OpenDocumentNew(CDocumentFile &DocumentFile)
 		else if (!strcmp(BlockID, ftapi::Vrc6PlusMark::BLOCK_ID)) {
 			ReadBlock_Vrc6Plus(&DocumentFile);	// and a damaged mark: the song opens as VRC6 + N163
 		}
+		else if (!strcmp(BlockID, ftapi::SongSeedMark::BLOCK_ID)) {
+			ReadBlock_Seed(&DocumentFile);		// and a damaged seed: none, the kinds' own picks
+		}
 		else if (!strcmp(BlockID, FILE_BLOCK_SEQUENCES_VRC6)) {
 			ErrorFlag = ReadBlock_SequencesVRC6(&DocumentFile);
 		}
@@ -1983,6 +2004,26 @@ void CFamiTrackerDoc::ReadBlock_Vrc6Plus(CDocumentFile *pDocFile)
 	if (!Data.empty())
 		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
 	m_bVrc6Plus = ftapi::Vrc6PlusMark::Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
+}
+
+void CFamiTrackerDoc::ReadBlock_Seed(CDocumentFile *pDocFile)
+{
+	const int Size = pDocFile->GetBlockSize() - pDocFile->GetBlockPos();
+	std::vector<unsigned char> Data(static_cast<size_t>(std::max(0, Size)));
+	if (!Data.empty())
+		pDocFile->GetBlock(&Data[0], static_cast<int>(Data.size()));
+	m_iSongSeed = ftapi::SongSeedMark::Read(Data.empty() ? NULL : &Data[0], Data.size(), pDocFile->GetBlockVersion());
+}
+
+void CFamiTrackerDoc::MakeSongSeed()
+{
+	// From the clock, the tick count and this document's address: two songs made in the same second differ too
+	LARGE_INTEGER Now;
+	::QueryPerformanceCounter(&Now);
+	const unsigned long long Entropy = static_cast<unsigned long long>(Now.QuadPart) ^ (static_cast<unsigned long long>(
+		::GetTickCount()) << 32) ^ static_cast<unsigned long long>(reinterpret_cast<UINT_PTR>(this)) ^ static_cast<unsigned long long>(
+		time(NULL));
+	m_iSongSeed = ftapi::NewSongSeed(Entropy);
 }
 
 void CFamiTrackerDoc::ReadBlock_Keys(CDocumentFile *pDocFile)

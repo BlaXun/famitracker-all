@@ -145,7 +145,35 @@ struct NextKind {
 	const char *Feel;			// the recipe's line on how it should feel
 	const char *Melody;			// the recipe's line on its tune
 	const char *Depth;			// the recipe's line on its repeats and depth
+	// Pools (a kind is guidance, not a preset): what_next picks one of each by the song (NextPicksOf), so two songs of a
+	// kind differ and a song keeps its picks; '|' between the entries, the first the kind's own (the fields above). Null:
+	// the single value above
+	const char *Leads;			// design_instrument's kinds
+	const char *ChordStyles;
+	const char *BassStyles;
+	const char *Grooves;		// an empty entry: no drums
+	const char *Tempos;			// BPM, each an even one (rows of whole frames)
+	const char *KeyPool;
 };
+
+// What what_next takes from a kind's pools for one song: picked by the track's name and the song's seed, each pool with a
+// salt of its own so the picks don't move together. Count: how many the pool had (1 for a single value)
+struct NextPick {
+	std::string Value;
+	int Count;
+	NextPick() : Count(1) {}
+};
+
+struct NextPicks {
+	NextPick Lead, ChordStyle, BassStyle, Groove, Tempo, Key;
+	double Bpm() const;
+};
+
+NextPicks NextPicksOf(int Kind, const std::string &TrackName, unsigned int Seed);
+// A pool's entries ("a|b|c")
+std::vector<std::string> PoolEntries(const char *Pool);
+// "a, b or c"
+std::string PoolText(const char *Pool, const char *Single);
 
 const NextKind &NextKindInfo(int Kind);
 // A kind as asked ("calm", "Lively", "cosy", "caves"); false when it's none of them

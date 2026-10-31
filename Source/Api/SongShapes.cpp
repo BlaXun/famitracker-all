@@ -20,6 +20,7 @@
 */
 
 #include "SongShapes.h"
+#include "SongSeed.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -1129,6 +1130,13 @@ int VariantOfName(const std::string &TrackName, int Count)
 	return 1 + static_cast<int>(NameHash(TrackName) % static_cast<unsigned int>(Count));
 }
 
+int VariantOfName(const std::string &TrackName, int Count, unsigned int Seed)
+{
+	if (Seed == 0 || Count <= 1)
+		return VariantOfName(TrackName, Count);
+	return 1 + static_cast<int>(SeededHash("shape", TrackName, Seed) % static_cast<unsigned int>(Count));
+}
+
 std::string ShapePartWords()
 {
 	return "climax, break, bridge, outro, intro, b (a contrast, or another one) or a' (another time round of A)";
@@ -1505,7 +1513,9 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 			return false;
 		}
 		Out.VariantFromName = Request.Variant == 0;
-		Out.Variant = Request.Variant > 0 ? Request.Variant : VariantOfName(Request.TrackName, Out.Variants);
+		Out.Seed = Request.Seed;
+		Out.Roll = Request.Roll;
+		Out.Variant = Request.Variant > 0 ? Request.Variant : VariantOfName(Request.TrackName, Out.Variants, Request.Seed);
 		for (size_t v = 0; v < Variants.size(); ++v)
 			if (static_cast<int>(v) + 1 != Out.Variant)
 				Out.Others.push_back("variant " + Num(static_cast<int>(v) + 1) + ": " + Variants[v].PartsText());

@@ -101,8 +101,10 @@ struct ShapeRequest {
 	std::string Parts;		// a whole list of parts as text; takes the place of the rest
 	std::vector<std::string> Add, Drop;
 	int Bars;				// about how long; 0: the variant's own
-	int Variant;			// from 1; 0: from the track's name
-	ShapeRequest() : Bars(0), Variant(0) {}
+	int Variant;			// from 1; 0: from the track's name (and the seed)
+	unsigned int Seed;		// the song's seed (SongSeed.h), rolled by song_shape's seed; 0: the name alone picks the variant
+	int Roll;				// song_shape's seed argument, 1 when none
+	ShapeRequest() : Bars(0), Variant(0), Seed(0), Roll(1) {}
 };
 
 struct ShapeChoice {
@@ -110,11 +112,13 @@ struct ShapeChoice {
 	const SongShape *pBase;	// the shape it's a variation of
 	int Variant, Variants;	// 0 of 0 for a list of parts
 	bool VariantFromName;
+	unsigned int Seed;		// the request's
+	int Roll;
 	std::string FromWords;	// what the words about the place chose, a line ("" without them)
 	std::string Kind;		// what_next's kind the words ask for (ShapeWords::Kind), "" without them
 	std::vector<std::string> Changes;	// what add, drop and bars did, a sentence each
 	std::vector<std::string> Others;	// the other variants as "variant 2: Intro 4, A 8, ..."
-	ShapeChoice() : pBase(0), Variant(0), Variants(0), VariantFromName(false) {}
+	ShapeChoice() : pBase(0), Variant(0), Variants(0), VariantFromName(false), Seed(0), Roll(1) {}
 };
 
 // The form a request asks for; false with Error (in plain words) when it makes no sense
@@ -123,6 +127,8 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 std::vector<SongShape> VariantsOf(const SongShape &Shape);
 // The variant (from 1) a track's name picks among Count
 int VariantOfName(const std::string &TrackName, int Count);
+// The same with the song's seed mixed in (SongSeed.h): 0 is VariantOfName's
+int VariantOfName(const std::string &TrackName, int Count, unsigned int Seed);
 // The words add and drop take, "climax, break, bridge, outro, intro, b (another contrast) or a (another time round of A)"
 std::string ShapePartWords();
 // Reads a list of parts ("Intro 4, A 8, A' 8"); false with Error

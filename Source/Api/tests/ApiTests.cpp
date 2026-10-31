@@ -60,6 +60,8 @@
 #include "../StepNotes.h"
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
+#include "../SongSeed.h"
+#include <cstdint>
 #include "../Wavetables.h"
 #include "../WhatNext.h"
 #include "../NextSteps.h"
@@ -194,6 +196,8 @@ public:
 	};
 
 	SongInfo Info;
+	// Seeds (SongSeed.h) as FamiTracker makes them for new songs, only when a test asks (the rest keep the kinds' own picks)
+	bool GivesSeeds = false;
 	std::vector<std::vector<Cell> > Rows;	// per channel, the selected track's
 	std::vector<StoredTrack> Tracks;
 	int Current;
@@ -1037,6 +1041,15 @@ public:
 
 	// The row highlights, and the pattern length (0 keeps it): the frames stay, each as long as the new length; one
 	// undoable step (CMcpMeterAction)
+	bool MakeSongSeed() override
+	{
+		if (!GivesSeeds || Info.Seed != 0)
+			return false;
+		// (from the track's name, so a test's walks are the same whatever runs before them)
+		Info.Seed = SeededHash("fake song", Info.TrackName, static_cast<unsigned int>(SongSerial)) | 1u;
+		return true;
+	}
+
 	bool SetMeter(int RowsPerBeat, int RowsPerBar, int PatternLength, std::string &) override
 	{
 		Remember();
@@ -1444,6 +1457,8 @@ public:
 			{ "kick", "2A03" }, { "snare", "2A03" }, { "hi-hat", "2A03" }, { "warm pad", "VRC6" }, { "bass", "VRC6" } };
 		for (int i = 0; i < 8; ++i)
 			AddInstrumentInfo(i, SOUNDS[i][0], SOUNDS[i][1], true);
+		if (GivesSeeds)	// (File > New's, as OnNewDocument makes one)
+			Info.Seed = NewSongSeed(static_cast<unsigned long long>(SongSerial) * 104729u);	// (a counter in it: each its own)
 		Rows = Fresh.Rows;
 		Tracks.assign(1, StoredTrack());
 		Tracks[0].Name = Info.TrackName;
@@ -5486,7 +5501,7 @@ void TestNetwork()
 			for (size_t i = 0; i < Words.size(); ++i)
 				Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style" ||
 					Words[i] == "arp_frames" || Words[i] == "delay_beats" || Words[i] == "bass_instrument" || Words[i] == "root_fifth" ||
-					Words[i] == "restrike_beats",
+					Words[i] == "restrike_beats" || Words[i] == "four_on_floor",
 					("a core tool in the recipe: " + Words[i]).c_str(), __LINE__);
 			if (std::string(Kind) == "calm") {
 				CHECK_HAS(Text, "kind breath");
@@ -28218,14 +28233,16 @@ void TestCozyKind()
 			const int At = CallIndex(Made, Tool);
 			return At >= 0 ? Made[static_cast<size_t>(At)] : std::string();
 		};
-		CHECK_HAS(Call("set_tempo"), "\"bpm\":100");
+		// (the picks of cozy's pools for this song: TestKindPools)
+		const NextPicks P = NextPicksOf(NEXT_COZY, Song.Info.TrackName, 0);
+		Check(Contains(Call("set_tempo"), ("\"bpm\":" + P.Tempo.Value).c_str()), Call("set_tempo").c_str(), __LINE__);
 		Check(Contains(Call("set_key"), " major\""), Call("set_key").c_str(), __LINE__);
-		CHECK_HAS(Call("design_instrument"), "\"kind\":\"falling strike\"");
-		CHECK_HAS(Call("add_chords_and_bass"), "\"chord_style\":\"broken\"");
-		CHECK_HAS(Call("add_chords_and_bass"), "\"bass_style\":\"root_fifth\"");
-		CHECK_HAS(Call("add_drums"), "\"groove\":\"lively\"");
-		CHECK_HAS(Call("add_drums"), "\"intensity\":\"light\"");
-		CHECK_LACKS(Call("add_drums"), "\"kit\"");
+		Check(Contains(Call("design_instrument"), ("\"kind\":\"" + P.Lead.Value + "\"").c_str()), P.Lead.Value.c_str(), __LINE__);
+		Check(Contains(Call("add_chords_and_bass"), ("\"chord_style\":\"" + P.ChordStyle.Value + "\"").c_str()), __func__, __LINE__);
+		Check(Contains(Call("add_chords_and_bass"), ("\"bass_style\":\"" + P.BassStyle.Value + "\"").c_str()), __func__, __LINE__);
+		Check(P.Groove.Value.empty() ? CallIndex(Made, "add_drums") < 0 : Contains(Call("add_drums"), ("\"groove\":\"" +
+			P.Groove.Value + "\"").c_str()) && Contains(Call("add_drums"), "\"intensity\":\"light\"") && !Contains(Call("add_drums"),
+			"\"kit\""), P.Groove.Value.c_str(), __LINE__);
 		CHECK_HAS(Call("finish_song"), "\"kind\":\"cozy\"");
 		FakeSong Small(1);
 		NewSong(Small);
@@ -28347,6 +28364,199 @@ void TestLaterKinds()
 			(std::string("\"kind\":\"") + NextKindInfo(k).Name + "\"").c_str()), Asked.c_str(), __LINE__);
 		CHECK(!StyleGuideTopic(NextKindInfo(k).Name).empty());
 	}
+}
+
+// Kinds are guidance, not presets: what_next picks from each kind's pools by the track's name and the song's seed
+// (feat-cozy-kind's fifth commit). The same song gets the same picks; songs of other names or other seeds other ones,
+// each pool on its own; a song without a seed the kind's own (as before seeds); walks stay clean whatever the picks
+// The picks a what_next reply with all true shows: its design, chords, key and tempo calls
+std::string PicksShown(const std::string &Text)
+{
+	std::string Out;
+	size_t At = Text.find("Every step found now");
+	while (At != std::string::npos) {
+		const size_t End = Text.find('\n', At + 1);
+		const std::string Line = Text.substr(At, End == std::string::npos ? std::string::npos : End - At);
+		for (const char *Tool : { "design_instrument", "add_chords_and_bass", "set_key", "set_tempo", "add_drums" })
+			if (Line.find(std::string(". ") + Tool + " ") != std::string::npos)
+				Out += Line.substr(0, Line.find(": ")) + "\n";
+		At = End;
+	}
+	return Out;
+}
+
+void TestKindPools()
+{
+	const char *const NAMES[] = { "Town", "Lantern Row", "Old Mill", "Brook", "Crossing", "Hollow", "Mossy Steps", "Kettle",
+		"Harbor Light", "Pine Gate", "Copper Lane", "Quiet Bend" };
+	const unsigned int SEED = 0x5EED1234u;
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k) {
+		const NextKind &K = NextKindInfo(k);
+		std::set<std::string> Leads, Chords, Basses, Grooves, Tempos, Keys;
+		bool Apart = false;	// two names with the same lead but other chords: the pools don't move together
+		std::map<std::string, std::string> ChordsOfLead;
+		// No seed: the kind's own values, whatever the name
+		const NextPicks Own = NextPicksOf(k, "Anything", 0);
+		Check(Own.Lead.Value == K.LeadKind && Own.ChordStyle.Value == K.ChordStyle && Own.BassStyle.Value == K.BassStyle &&
+			Own.Groove.Value == K.Groove, K.Name, __LINE__);
+		for (const char *Name : NAMES) {
+			const NextPicks P = NextPicksOf(k, Name, SEED), Again = NextPicksOf(k, Name, SEED);
+			CHECK(P.Lead.Value == Again.Lead.Value && P.ChordStyle.Value == Again.ChordStyle.Value && P.Key.Value == Again.Key.Value &&
+				P.Tempo.Value == Again.Tempo.Value && P.Groove.Value == Again.Groove.Value && P.BassStyle.Value == Again.BassStyle.Value);
+			Leads.insert(P.Lead.Value);
+			Chords.insert(P.ChordStyle.Value);
+			Basses.insert(P.BassStyle.Value);
+			Grooves.insert(P.Groove.Value);
+			Tempos.insert(P.Tempo.Value);
+			Keys.insert(P.Key.Value);
+			if (ChordsOfLead.count(P.Lead.Value) != 0 && ChordsOfLead[P.Lead.Value] != P.ChordStyle.Value)
+				Apart = true;
+			ChordsOfLead[P.Lead.Value] = P.ChordStyle.Value;
+			const std::vector<std::string> Pool = PoolEntries(K.Leads);
+			CHECK(std::find(Pool.begin(), Pool.end(), P.Lead.Value) != Pool.end());
+			Check(K.SlowestBpm <= 0.0 || (P.Bpm() >= K.SlowestBpm - 0.05 && P.Bpm() <= K.FastestBpm + 0.05), K.Name, __LINE__);
+		}
+		Check(Leads.size() >= 2 && Chords.size() >= 2 && Basses.size() >= 2 && Apart, K.Name, __LINE__);
+		Check(K.KeyPool == 0 || Keys.size() >= 3, K.Name, __LINE__);
+		Check(PoolEntries(K.Tempos).size() < 2 || Tempos.size() >= 2, K.Name, __LINE__);
+		Check(PoolEntries(K.Grooves).size() < 2 || Grooves.size() >= 2, K.Name, __LINE__);
+		// The same name, another seed: other picks somewhere
+		int Other = 0;
+		for (unsigned int s = 1; s <= 8; ++s) {
+			const NextPicks P = NextPicksOf(k, "Town", SEED + s), Q = NextPicksOf(k, "Town", SEED);
+			Other += P.Lead.Value != Q.Lead.Value || P.ChordStyle.Value != Q.ChordStyle.Value || P.BassStyle.Value != Q.BassStyle.Value ? 1 : 0;
+		}
+		Check(Other >= 3, K.Name, __LINE__);
+	}
+
+	// The seed's block: read back, cut short at every byte, damaged, another version
+	{
+		const std::vector<unsigned char> Data = SongSeedMark::Write(0xCAFE1234u);
+		CHECK(Data.size() == 4u && SongSeedMark::Read(&Data[0], Data.size(), 1) == 0xCAFE1234u);
+		for (size_t n = 0; n < Data.size(); ++n)
+			CHECK(SongSeedMark::Read(n == 0 ? 0 : &Data[0], n, 1) == 0);
+		std::vector<unsigned char> Long = Data;
+		Long.push_back(7);
+		CHECK(SongSeedMark::Read(&Long[0], Long.size(), 1) == 0);
+		CHECK(SongSeedMark::Read(&Data[0], Data.size(), 2) == 0);
+		CHECK(std::string(SongSeedMark::BLOCK_ID) == "BF SEED");
+		CHECK(NewSongSeed(0) != 0 && NewSongSeed(0) != NewSongSeed(0));
+		CHECK(RolledSeed(77, 1) == 77 && RolledSeed(77, 2) != 77 && RolledSeed(77, 2) == RolledSeed(77, 2) && RolledSeed(0, 2) != 0);
+	}
+
+	// Two new songs alike in name and steps get seeds of their own and so other picks; a song keeps its own, saved and
+	// opened again
+	{
+		std::set<std::string> Firsts;
+		std::string Path;
+		std::string FirstCalls;
+		for (int i = 0; i < 6; ++i) {
+			FakeSong Song(1);
+			Song.GivesSeeds = true;
+			Song.Info.DirectChanges = true;
+			CHECK(!Run(Song, "new_song", "{\"name\": \"Lantern Row\"}").IsError);
+			CHECK(Song.Info.Seed != 0);
+			const std::string Asked = "{\"kind\": \"cozy\", \"all\": true}";
+			const std::string Steps = Run(Song, "what_next", Asked).Text;
+			Firsts.insert(PicksShown(Steps));
+			if (i == 0) {
+				// saved and opened again: the same seed, the same steps
+				const unsigned int Seed = Song.Info.Seed;
+				CHECK(!Run(Song, "save_song", "{\"name\": \"Lantern Row\"}").IsError);
+				Path = Song.OpenPath;
+				FirstCalls = PicksShown(Steps);
+				CHECK(!Run(Song, "new_song", "{\"name\": \"Other\"}").IsError);
+				CHECK(Song.Info.Seed != Seed);
+				CHECK(!Run(Song, "open_song", "{\"name\": \"Lantern Row\"}").IsError);
+				CHECK(Song.Info.Seed == Seed);
+				CHECK_EQ(PicksShown(Run(Song, "what_next", Asked).Text), FirstCalls);
+				CHECK(!FirstCalls.empty());
+			}
+		}
+		Check(Firsts.size() >= 3, std::to_string(Firsts.size()).c_str(), __LINE__);
+		// An empty song without a seed gets one from what_next
+		FakeSong Old(1);
+		Old.GivesSeeds = true;
+		NewSong(Old);
+		CHECK(Old.Info.Seed == 0);
+		Run(Old, "what_next", "{}");
+		CHECK(Old.Info.Seed != 0);
+		// A song with notes and no seed keeps the kinds' own picks (made before seeds, it stays as it was made)
+		FakeSong Made(1);
+		Made.GivesSeeds = true;
+		NewSong(Made);
+		Made.Put(0, 0, "C-4", 0);
+		Run(Made, "what_next", "{}");
+		CHECK(Made.Info.Seed == 0);
+	}
+
+	// seed rolls other picks, says how, and is asked again with them; song_shape's variant follows the seed too
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.Seed = 4242;
+		const std::string One = Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text;
+		CHECK_HAS(One, "and what_next with seed 2 gives another choice)");
+		CHECK_LACKS(One, "\"seed\"");
+		std::set<std::string> Rolls;
+		for (int r = 1; r <= 6; ++r) {
+			const std::string Text = Run(Song, "what_next", "{\"kind\": \"cozy\", \"seed\": " + std::to_string(r) + ", \"all\": true}").Text;
+			Rolls.insert(PicksShown(Text));
+			if (r == 3) {
+				CHECK_HAS(Text, "what_next with seed 4 gives another choice)");
+				CHECK_HAS(Text, "\"seed\":3");
+			}
+		}
+		CHECK(Rolls.size() >= 3);
+		std::set<int> Variants;
+		for (int r = 1; r <= 8; ++r) {
+			ShapeRequest R;
+			R.Shape = "town";
+			R.TrackName = "Lantern Row";
+			R.Seed = RolledSeed(4242, r);
+			R.Roll = r;
+			ShapeChoice C;
+			std::string Error;
+			CHECK(MakeSongShape(R, C, Error));
+			Variants.insert(C.Variant);
+		}
+		CHECK(Variants.size() >= 2);
+		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"town\", \"seed\": 2}");
+		Check(!Laid.IsError && Contains(Laid.Text, "song's seed pick it, the same for this song every time; seed 3 gives another "
+			"choice"), Laid.Text.c_str(), __LINE__);
+	}
+
+	// Walks stay clean whatever the picks: each kind on seeded songs of three names, on the full set
+	const char *const WALKS[] = { "Old Mill", "Brook", "Hollow" };
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k)
+		for (const char *Name : WALKS) {
+			FakeSong Song(1);
+			NewSong(Song);
+			Song.GivesSeeds = true;
+			Song.Info.TrackName = Song.Tracks[0].Name = Name;
+			bool Finished = false;
+			const std::string Asked = k == NEXT_GENERAL ? std::string("{}") : std::string("{\"kind\": \"") + NextKindInfo(k).Name +
+				"\"}";
+			FollowWhatNext(Song, Asked, 60, Finished, __LINE__);
+			Check(Finished && Song.Info.Seed != 0, (Asked + " " + Name).c_str(), __LINE__);
+			const std::string Style = std::string(NextKindInfo(k).Style) == "any" ? std::string() : std::string(", \"style\": \"") +
+				NextKindInfo(k).Style + "\"";
+			const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + Style + "}").Text);
+			bool Clean = true;
+			for (const char *Kind : { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone" }) {
+				// (a clash that's a detail, a passing note or a chord's color, may be meant: the finished soundtrack has 239)
+				int Count = 0;
+				for (const Json *pFound : FindingsOf(Found, Kind))
+					Count += std::string(Kind) != "clash" || TextOf(pFound, "severity") != "low" ? 1 : 0;
+				Check(Count == 0, (Asked + " " + Name + " " + Kind).c_str(), __LINE__);
+				Clean = Clean && Count == 0;
+			}
+			if (!Clean)
+				std::printf("%s %s\n%s\n", Asked.c_str(), Name, Run(Song, "check_song", "{" + (Style.empty() ? std::string() :
+					Style.substr(2)) + "}").Text.c_str());
+			const std::string Review = Run(Song, "review_arrangement", "{" + (Style.empty() ? std::string() : Style.substr(2)) + "}").Text;
+			Check(ReviewScore(Review) >= 8, (Asked + " " + Name + ": " + Review).c_str(), __LINE__);
+		}
 }
 
 int main()
@@ -28608,6 +28818,7 @@ int main()
 	TestWhatNextShapeVariations();
 	TestCozyKind();
 	TestLaterKinds();
+	TestKindPools();
 	TestWhatNextSavesForClient();
 	TestListenLowAsAdvice();
 	TestEchoKeepsItsChipsEffects();
