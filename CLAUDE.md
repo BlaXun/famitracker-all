@@ -1955,6 +1955,17 @@ copies A's last bar of drums into the intro's last bar (`StepWhat`: "Bring the
 beat in"). `TestIntroFindings` and `TestWhatNextLoop` (no `intro` finding
 after a walk; the fill there with drums) cover it.
 
+Listening said plainly (from `feat-tool-issues`, GitHub issue #9): a local
+model told the user it can't actually listen to the song. `listen`'s
+description, its replies (the first line says it rendered the real audio and
+heard it as an ear would; every text reply ends with `LISTEN_EAR`: the user's
+own ear has the final word), `what_next`'s listen step (`WhatNext::Listened`),
+`ToolSet::Instructions` and `CoreInstructions` ("You can hear the song: listen
+renders its real audio..."; trimmed elsewhere to stay under the tests' 4,200
+characters) say so, and `play`, `compare_versions` and `check_song` no longer
+say "you can't hear": they play for the user's ears and point to `listen`.
+`TestListenSaysItHears` covers the texts.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

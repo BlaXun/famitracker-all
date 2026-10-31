@@ -497,9 +497,12 @@ Some things to try:
 - "Repeat bars 1-8 at bar 9, but make the repeat different."
 - "Remember that I like bright leads and don't want echo on the melody."
 
-Claude can't hear the song. It checks what it wrote (notes outside the key,
-clashes, range), looks at a picture of the notes, reviews how full the
-arrangement is, and plays it for you, then asks how it sounds.
+Claude hears the song with `listen`: FamiTracker renders its real audio,
+and the tool reports what an ear would notice (warbles, notes out of tune,
+clicks, a covered melody). It also checks what it wrote (notes outside the
+key, clashes, range), looks at a picture of the notes, reviews how full the
+arrangement is, and plays it for you, then asks how it sounds: your own ear
+has the final word.
 
 Four recipes come with the connection as commands in Claude Code (type `/`
 to see them): `/mcp__famitracker__compose_track` composes a track for a
@@ -1671,8 +1674,8 @@ checks the melody against the chords alone.
 ### Listening to the song
 
 `listen` hears the selected track as FamiTracker plays it, which the notes
-alone don't say. FamiTracker renders the mix and each part alone in one
-pass (as `measure_mix` does, changing nothing), and the tool compares what
+alone don't say: FamiTracker renders the song's real audio, the mix and each
+part alone in one pass (as `measure_mix` does, changing nothing), and the tool compares what
 each part sounds like with what its notes say it should:
 
 - **Warbles and deep vibratos:** a held note whose pitch shakes faster than
@@ -1708,8 +1711,13 @@ they'd like it gone, and what would change it. `from_bar` and
 `to_bar` listen to some bars, `parts` to some channels; `format` is `text`,
 `short` (the three heard worst) or `json`. It takes a while, since
 FamiTracker renders the track first: a two-and-a-half-minute track with
-eight parts took about 40 seconds under Wine. Listen with the user too: it
-hears how the song sounds, not whether it's the music they want.
+eight parts took about 40 seconds under Wine. A local model once told the user
+it couldn't actually listen to the song (GitHub issue #9), so the tool's
+description, every reply, `what_next`'s listen step and the small set's
+instructions say it plainly: `listen` renders the real audio and reports what
+an ear would notice, and the user's own ear has the final word (it hears how
+the song sounds, not whether it's the music they want). `play` and
+`compare_versions` say they play for the user's ears and point to `listen`.
 FamiTracker's **View > Problems** has a **Listen** button (F6 in the panel)
 that runs it and lists what it hears with `check_song`'s findings, each
 with Play it; `finish_song` listens too, after its mix.

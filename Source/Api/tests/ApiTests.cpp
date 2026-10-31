@@ -24367,6 +24367,44 @@ void PutHeldLine(FakeSong &Song, int Channel, int Instrument, int Transpose = 0)
 	}
 }
 
+// A local model told the user it can't actually listen to the song (GitHub issue #9): listen's description, its replies,
+// what_next's listen step (TestWhatNextListens) and the instructions say plainly that it renders the song's real audio and
+// reports what an ear would notice, and that the user's own ear has the final word; nothing says "you can't hear"
+void TestListenSaysItHears()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	PutHeldLine(Song, 0, 2);
+	ToolSet Tools(Song);
+	std::string Description;
+	for (size_t i = 0; i < Tools.List().size(); ++i) {
+		const ToolInfo &T = Tools.List()[i];
+		if (T.Name == "listen")
+			Description = T.Description;
+		Check(!Contains(T.Description, "can't hear") && !Contains(T.Description, "can't listen"), T.Name.c_str(), __LINE__);
+	}
+	CHECK_HAS(Description, "it renders the song's real audio");
+	CHECK_HAS(Description, "reports in plain words what an ear would notice");
+	CHECK_HAS(Description, "The user's own ear has the final word");
+	for (const char *Form : { "{}", "{\"format\": \"short\"}" }) {
+		const std::string Text = Run(Song, "listen", Form).Text;
+		CHECK_HAS(Text, "rendered its real audio as FamiTracker plays it");
+		CHECK_HAS(Text, "the user's own ear has the final word");
+	}
+	const std::string Core = ToolSet::CoreInstructions(), Full = ToolSet::Instructions();
+	CHECK_HAS(Core, "You can hear the song: listen renders its real audio and says what an ear would notice. The user's ear has "
+		"the final word");
+	CHECK_HAS(Full, "You can hear the song: listen renders its real audio and reports what an ear would notice");
+	CHECK_HAS(Full, "the user's own ear has the final word");
+	CHECK_LACKS(Core, "can't hear");
+	CHECK_LACKS(Full, "can't hear");
+	CHECK(Core.size() < 4200);
+	// play and compare_versions play for the user's ears and point to listen
+	const std::string Played = Run(Song, "play", "{}").Text;
+	CHECK_HAS(Played, "you hear the song with listen");
+	CHECK_LACKS(Played, "can't hear");
+}
+
 void TestListenTool()
 {
 	FakeSong Song;
@@ -26167,7 +26205,8 @@ void TestWhatNextListens()
 	Song.Info.Modified = false;
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool == "listen" && WriteJson(A.Arguments) == "{}", A.Text.c_str(), __LINE__);
-	CHECK_HAS(A.Text, "before the game's file, listen hears it as FamiTracker plays it");
+	CHECK_HAS(A.Text, "before the game's file, listen renders its real audio as FamiTracker plays it");
+	CHECK_HAS(A.Text, "the user's own ear has the final word");
 	CHECK(!Run(Song, "listen", "{}").IsError);
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool != "listen" && A.Tool != Fix, A.Text.c_str(), __LINE__);
@@ -27001,6 +27040,7 @@ int main()
 	TestDraftFindings();
 	TestDraftFixes();
 	TestIntroFindings();
+	TestListenSaysItHears();
 	TestFindingsQuiet();
 	TestShortReplies();
 	TestMixFadersReset();

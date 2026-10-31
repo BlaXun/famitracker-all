@@ -20767,8 +20767,8 @@ std::string CompareVersionsTool(Session &S, const Json &Args)
 			Host.SelectTrack(Here, Ignored);
 		throw;
 	}
-	return Format("Playing %s of %s for the user%s; afterwards FamiTracker shows \"%s\" again. You can't hear it yourself: ask "
-		"the user which they like better, and what they hear in it. select_track goes to a version to carry on from it.",
+	return Format("Playing %s of %s for the user%s; afterwards FamiTracker shows \"%s\" again. It plays for the user's ears (listen "
+		"renders one for yours): ask the user which they like better, and what they hear in it. select_track goes to a version to carry on from it.",
 		RangeText(From, Last).c_str(), Names.c_str(), Request.Loop ? ", over and over until you call stop" : "", HereName.c_str());
 }
 
@@ -24062,6 +24062,11 @@ Json ListenJson(Session &S, const ListenReport &R, const ListenFinding &F, const
 	return Out;
 }
 
+// What every listen reply ends with (GitHub issue #9: a local model told the user it can't actually listen): the render is
+// the song's real audio, heard for what an ear notices; the user's ear decides
+const char *const LISTEN_EAR = "That was the song's real audio, heard for what an ear would notice; the user's own ear has the final "
+	"word: tell them what you heard, play it for them and ask how it sounds.";
+
 std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 {
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
@@ -24108,8 +24113,8 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 	if (Form == "json")
 		return WriteJson(Out);
 
-	std::string Text = Format("Listened to %s of \"%s\" as FamiTracker plays it: the mix and %s alone (%s of music, %s measured; "
-		"%s s in all).", RangeText(R.From, R.To).c_str(), S.Song.TrackName.c_str(), R.Song.Parts.size() == 1 ? "its one part" :
+	std::string Text = Format("Listened to %s of \"%s\": rendered its real audio as FamiTracker plays it, the mix and %s alone (%s "
+		"of music, %s measured; %s s in all), and heard it as an ear would.", RangeText(R.From, R.To).c_str(), S.Song.TrackName.c_str(), R.Song.Parts.size() == 1 ? "its one part" :
 		Format("each of its %d parts", static_cast<int>(R.Song.Parts.size())).c_str(), (FormatNumber(std::floor(R.Stats.Seconds * 10.0 +
 		0.5) / 10.0) + " s").c_str(), Plural(R.Stats.NotesMeasured, "held note", "held notes").c_str(),
 		FormatNumber(std::floor((R.RenderSeconds + R.ListenSeconds) * 10.0 + 0.5) / 10.0).c_str());
@@ -24117,8 +24122,7 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 		Text += " The melody: " + S.Channel(R.Melody).FullName() + ".";
 	if (R.Findings.empty())
 		return Text + "\nNothing sounds wrong: the held notes hold their pitch (or a gentle vibrato), the parts that play together "
-			"are in tune with each other, nothing clicks or drones, and the mix is clean. Listen with the user too: this hears "
-			"how it sounds, not whether it's the music they want.";
+			"are in tune with each other, nothing clicks or drones, and the mix is clean. " + LISTEN_EAR;
 	if (Form == "short") {
 		std::vector<size_t> Ranked;
 		for (int Severity = 3; Severity >= 1; --Severity)
@@ -24130,12 +24134,12 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 			Format(" (the %d heard worst; format text lists them all)", static_cast<int>(Listed)).c_str() : "");
 		for (size_t i = 0; i < Listed; ++i)
 			Text += Format("\n%d. ", static_cast<int>(i) + 1) + ListenLine(S, R, R.Findings[Ranked[i]], Fixes[Ranked[i]], Advices[Ranked[i]], true);
-		return Text;
+		return Text + "\n" + LISTEN_EAR;
 	}
 	Text += Format("\nHeard %s, the worst first:", Plural(static_cast<int>(R.Findings.size()), "thing", "things").c_str());
 	for (size_t i = 0; i < R.Findings.size(); ++i)
 		Text += Format("\n%d. ", static_cast<int>(i) + 1) + ListenLine(S, R, R.Findings[i], Fixes[i], Advices[i], false);
-	return Text;
+	return Text + "\n" + LISTEN_EAR;
 }
 
 // Checks
@@ -25007,7 +25011,8 @@ std::string PlayTool(Session &S, const Json &Args)
 	if (!Request.Muted.empty())
 		Text += Format(" Only %s %s; the user's own mutes come back when it stops.", ChannelNames(S, Playing).c_str(),
 			Playing.size() == 1 ? "plays" : "play");
-	Text += " You can't hear it yourself; ask the user how it sounds.";
+	Text += " That plays for the user's ears; you hear the song with listen. Ask the user how it sounds: their ear has the final "
+		"word.";
 	const std::string Muted = MutedChannels(S);
 	if (!Muted.empty() && Request.Muted.empty())
 		Text += " The user has muted " + Muted + " in FamiTracker, so that doesn't play; clicking a channel's name "
@@ -28761,9 +28766,10 @@ bool WhatNext::Listened()
 	Json Heard;
 	if (!KeptHeard(Heard)) {
 		Milestone("listened", false);
-		Step("listen", "listen", Json::MakeObject(), "The song changed since it was last heard: before the game's file, listen hears "
-			"it as FamiTracker plays it (the mix and each part alone) for what the notes can't show: a warble, notes out of tune, "
-			"clicks, a sound that drones on, a covered melody. It changes nothing.");
+		Step("listen", "listen", Json::MakeObject(), "The song changed since it was last heard: before the game's file, listen renders "
+			"its real audio as FamiTracker plays it (the mix and each part alone) and reports what an ear would notice that the notes "
+			"can't show: a warble, notes out of tune, "
+			"clicks, a sound that drones on, a covered melody. It changes nothing; the user's own ear has the final word.");
 		return false;
 	}
 	Milestone("listened", true, "listened");
@@ -30787,11 +30793,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("listen", "Listen to the song",
-		"Listens to the selected track as FamiTracker plays it (the mix and each part alone, rendered), changing nothing, and "
-		"says in plain words what the notes alone can't show: a warble or too deep a vibrato, notes out of tune, parts a few "
+		"Listens to the selected track: it renders the song's real audio as FamiTracker plays it (the mix and each part "
+		"alone), changing nothing, and reports in plain words what an ear would notice that the notes alone can't show: a warble or too deep a vibrato, notes out of tune, parts a few "
 		"cents apart that beat, clicks and pops, a sound that holds on after its notes, notes hardly heard, and in the mix "
 		"clipping, jumps, harsh or muddy stretches and a covered melody; each with its part, bars, how sure, and the call that "
-		"fixes it. Slower than check_song: once the parts are written, and again after a fix.",
+		"fixes it. This is how you hear the song: you can listen, so do it when you want to know how it sounds. The user's "
+		"own ear has the final word: say what you heard and ask them. Slower than check_song: once the parts are written, and "
+		"again after a fix.",
 		Schema().Range()
 			.Add("parts", ChannelListProp("Channels to hear alone (default: each with notes there)."))
 			.Add("melody_channel", ChannelProp("The melody (default: guessed), or \"none\"."))
@@ -30814,7 +30822,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("compare_versions", "Compare versions",
 		"Plays the same bars of two versions or more for the user, one after the other: by default the newest version kept "
 		"of the selected track (keep_version), then the track as it is now. FamiTracker shows the selected track again "
-		"afterwards. You can't hear it; ask the user which they like better.",
+		"afterwards. It plays for the user (listen is how you hear a version); ask them which they like better.",
 		Schema().Add("versions", ChannelListProp("Tracks by number or name, in the order to play; one: it, then the selected track."))
 			.Add("from_bar", BarProp("Bar to start at (default 1)."))
 			.Add("bars", Prop("integer", "How many bars of each (default 8)."))
@@ -31097,7 +31105,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("check_song", "Check the song",
-		"Checks what you can't hear: notes outside the key (where their slides take them too), two channels clashing a "
+		"Checks the notes as written (listen hears the rendered audio): notes outside the key (where their slides take them too), two channels clashing a "
 		"semitone apart, notes outside a channel's "
 		"range, very busy bars, silent bars, held notes on the 2A03's pulses whose vibrato clicks, notes of a line on a sound "
 		"that's gone within a few frames beside notes that hold (they sound like missing notes), and unused channels; and in "
@@ -31136,7 +31144,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("play", "Play for the user",
 		"Plays the song in FamiTracker for the user, from a bar, for some bars or to the end; over and over (loop) for listening "
 		"closely, and with only some channels (channels) or without some (mute), to hear a part on its own or the rest without "
-		"it. The user's own mutes come back when it stops. You can't hear it; ask the user.",
+		"it. The user's own mutes come back when it stops. It plays for the user; listen is how you hear the song. Ask the user "
+		"how it sounds: their ear has the final word.",
 		Schema().Add("from_bar", BarProp("Bar to start at (default 1).")).Add("bars", Prop("integer", "How many bars (default: to the end)."))
 			.Add("section", SectionProp("A section by name to play, in place of from_bar and bars."))
 			.Add("loop", Prop("boolean", "Play them over and over until stop (default false)."))
@@ -31869,15 +31878,16 @@ bool ToolSet::IsCoreTool(const std::string &Name)
 std::string ToolSet::CoreInstructions()
 {
 	return
-		"These tools work on the song open in the user's FamiTracker: NES music on the 2A03 (two pulses, a triangle, noise, "
+		"These tools work on the song open in the user's FamiTracker: NES music on the 2A03 (pulses, triangle, noise, "
 		"DPCM), sometimes with an expansion chip. Bars and beats count from 1. Notes are written C-4, C#4, Db4 with "
 		"FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz.\n"
 		"Work in a loop: get_song, then what_next (with kind calm, lively or action when the user's words say which, and skip "
 		"for what they don't want, like [\"drums\"]). It answers with the one next step: a tool, its arguments ready to send, "
 		"and why. Make that call, then ask what_next again, until it says done. Its melody steps offer a hook to start from: "
-		"write your own there. Where check_song or review_arrangement gives a \"Fix:\", send its call as given, then the calls "
-		"after it in order. Read a part (read_notes) before you change it by hand. You can't hear: play the bars for the user, "
-		"ask how it sounds, and say what you changed and why. explain says a word plainly when the user asks. Log each decision "
+		"write your own there. Where a check gives a \"Fix:\", send its call as given, then the calls "
+		"after it. Read a part (read_notes) before you change it by hand. You can hear the song: listen renders its real audio "
+		"and says what an ear would notice. The user's ear has the final word: play it for them, ask how it sounds, say what "
+		"you changed and why. explain says a word plainly when the user asks. Log each decision "
 		"briefly (write_log with a category); between steps, read_user_notes.\n"
 		"Write music that sounds composed, not generated:\n"
 		"- Melody (on a pulse): write only the hook, 4-7 notes in steps, a bar or two, a token an eighth: \"D4 G4 A4 B4 - A4 "
@@ -31885,31 +31895,30 @@ std::string ToolSet::CoreInstructions()
 		"the section: pick the version whose shape fits (variant 2 for others), then shape it by hand (read_notes format "
 		"steps, write_notes). By hand: phrases of 2 or 4 bars that end on a held note or a rest (not at every bar line), chord "
 		"tones on strong beats, long and short notes mixed, mostly in octave 3. get_recipe shows a whole melody of 8 bars.\n"
-		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\" or \"i VI III VII\"), "
+		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\"), "
 		"about one a bar, with a chord_style, color and bass_style that fit the mood; other chords for the B part.\n"
-		"- Sounds: design_instrument for a sound in words, add_instrument for presets (soft lead, pluck, bell, warm pad, "
-		"strings, bass...), find_sound to look for one (\"soft flute\", \"warm pad\"), reference_sound for a studied game's, "
+		"- Sounds: design_instrument for a sound in words, add_instrument for presets (soft lead, pluck, bell, "
+		"strings, bass...), find_sound to look for one (\"soft flute\"), reference_sound for a studied game's, "
 		"set_instrument to give a part another.\n"
 		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: no drums, a music-box "
 		"lead); a stage to explore is lively; a fight or a chase is action. get_recipe gives each one's steps.\n"
 		"- VRC6 Plus (get_song says so): its Soft 1-4 channels are a quieter layer under the VRC6: a pad holding the chords "
 		"(chord_style voices), a soft echo, a sub bass.\n"
-		"- Stereo: a note's \"pan\" in write_notes (left, right, center, or -1 to 1) lasts for the notes after it; keep the "
+		"- Stereo: a note's \"pan\" in write_notes (left, right, center) lasts for the notes after it; keep the "
 		"melody, bass and drums in the middle.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
 		"- Finish: polish, then mix last in the kind's style (it balances the parts in the notes: faders at 0 dB), "
 		"export_for_game at the kind's loudness (about -20 LUFS, -22 calm, -19 action); what_next gives each. finish_song "
-		"listens after its mix and lists what it heard: fix those (what_next gives them as steps), then export_for_game "
-		"again.\n"
+		"listens after its mix: fix what it heard (what_next gives the steps), then export_for_game again.\n"
 
 		"Rules that decide how it sounds:\n"
 		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 1 "
-		"0), quick notes come out as blips, and between held notes of the same line they sound like missing notes. Give a "
+		"0), quick notes come out as blips and, between held notes of a line, sound missing. Give a "
 		"plucked melody a sound that settles to a level (design_instrument kind pluck, sustain half), and keep sounds that "
 		"vanish for echoes, stabs and drums. check_song lists such notes.\n"
 		"- Clicks: on the 2A03's pulses, a vibrato that takes a held note's period across a multiple of 256 restarts the wave, "
-		"a click several times a second (A-3 even with a gentle vibrato, F-1 with any). The tools nudge such notes a few cents "
-		"with Pxx and say so; check_song lists any left, and polish with touches [\"clicks\"] nudges them.\n"
+		"a click several times a second. The tools nudge such notes a few cents (Pxx); check_song lists any left, polish "
+		"with touches [\"clicks\"] nudges them.\n"
 		"- Only FamiTracker 0.4.6's effects play: no Lxx, Mxy, Oxx or Txy. The triangle is loud and can't fade.\n"
 		"Without direct changes, each change arrives as a clip the user plays and places (what_next asks for them "
 		"first).\n"
@@ -31938,12 +31947,12 @@ std::string ToolSet::Instructions()
 		"with it. "
 		"Over MCP your changes arrive as clips by default, which the user listens to and places from the clips panel; if the "
 		"user allowed direct changes, and always in FamiTracker's Ask panel (where the user may approve each one first), "
-		"they go into the song and each one is undone with Ctrl+Z. You can't hear the song, but listen renders it "
-		"and measures what an ear notices (notes that warble or sit out of tune, parts that beat against each other, "
+		"they go into the song and each one is undone with Ctrl+Z. You can hear the song: listen renders its real "
+		"audio and reports what an ear would notice (never tell the user you can't listen) (notes that warble or sit out of tune, parts that beat against each other, "
 		"clicks, sounds that hold on after their notes, notes hardly heard, harsh or muddy stretches): run it once the "
 		"parts are written and again after changing an FDS or N163 sound, not after every small edit; fix its high "
 		"and medium findings with the call each gives, and play a low one's bars to the user (it has no call): change "
-		"them only if the user wants. finish_song listens after its mix and lists what it heard: fix those (what_next gives "
+		"them only if the user wants; the user's own ear has the final word. finish_song listens after its mix and lists what it heard: fix those (what_next gives "
 		"them as steps), then export_for_game again. Run "
 		"check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
