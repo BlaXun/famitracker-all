@@ -14826,6 +14826,8 @@ void ClimaxFindings(Session &S, int Melody, int From, int To, std::vector<Arrang
 	}
 }
 
+std::string SectionBase(const std::string &Name);
+
 void RepeatFindings(Session &S, int Melody, int From, int To, std::vector<ArrangeFinding> &Out)
 {
 	const SectionList &List = S.Song.Sections;
@@ -14894,12 +14896,19 @@ void RepeatFindings(Session &S, int Melody, int From, int To, std::vector<Arrang
 			F.Details.Set("parts_alike", Json::NumberText(FormatNumber(std::floor(Least * 100 + 0.5) / 100)));
 			F.Details.Set("parts_added", Added);
 			F.Details.Set("least_alike", Changed >= 0 ? Json(S.Channel(Changed).FullName()) : Json());
+			// Two repeats of one part varied alike (A' and A'' both embellished as what_next gives it, the same passing notes
+			// in each) repeat each other: the later one is syncopated, since embellishing it again gives what it has
+			bool Repeated = false;
+			for (size_t w = 0; w < x && !Repeated; ++w)
+				Repeated = Lowercase(SectionBase(List[w].Name)) == Lowercase(SectionBase(List[x].Name));
 			Json Vary = Json::MakeObject();
 			Vary.Set("channel", S.Channel(Melody).FullName());
-			Vary.Set("variation", "embellish");
+			Vary.Set("variation", Repeated ? "syncopate" : "embellish");
 			Vary.Set("section", List[y].Name);
-			F.Fix = ToolCall("vary_part", Vary, "embellishes the melody in \"" + List[y].Name + "\" (passing and neighbour notes, at most two "
-				"a bar), so the repeat isn't pasted");
+			F.Fix = ToolCall("vary_part", Vary, Repeated ? "syncopates the melody in \"" + List[y].Name + "\" (notes on the middle of a "
+				"bar, and on every other bar's first beat, half a beat early), so it differs from \"" + List[x].Name + "\", varied "
+				"already" : "embellishes the melody in \"" + List[y].Name + "\" (passing and neighbour notes, at most two a bar), so "
+				"the repeat isn't pasted");
 			Out.push_back(F);
 			Found.insert(y);
 			break;
@@ -15021,8 +15030,6 @@ struct IntroShape {
 	IntroShape() : Found(false), FromBar(1), ToBar(1), MainFrom(1), MainTo(1), IntroPulse(0.0), MainPulse(0.0), IntroBeat(0.0),
 		MainBeat(0.0), LeadIn(false), IntroDb(NO_LOUDNESS), MainDb(NO_LOUDNESS), Bass(-1) {}
 };
-
-std::string SectionBase(const std::string &Name);
 
 IntroShape IntroShapeOf(Session &S, Hearing &Ears, int Melody)
 {
@@ -15304,11 +15311,14 @@ void BusyFindings(Session &S, int Melody, int From, int To, std::vector<ArrangeF
 // sound: Ironworks 40%, Ironworks2 42%, the kept songs at most 21% (13 Mirage Bazaar), most 6-17%. A chord part that
 // sounds in DRONE_WITH of the melody's bars or more (DRONE_BARS of them at least), heard within DRONE_UNDER_DB of the
 // melody where they play together, whose notes rub it so DRONE_RUB of that time or more, drones against the tune.
-// Its fix fits the chords (and the bass under them) to the melody again over those bars, add_chords_and_bass without
-// chords: on Ironworks2 that took the rubs to 15% and the arpeggio under the melody's lowest note. Not on calm tracks
-// (their pads, as the old rule)
+// Its fix (DroneFix) takes out the colors that rub, then lets the chords rest where the melody carries the song
+// (DroneRests). Not on calm tracks (their pads, as the old rule)
 const double DRONE_WITH = 0.75, DRONE_RUB = 0.30, DRONE_UNDER_DB = 6.0;
 const int DRONE_BARS = 16;
+// A part of the song (a section, or DRONE_BLOCK_BARS without sections) whose chords rub the tune more than the kept
+// songs' chord parts ever do (13 Mirage Bazaar's 21%) rests there
+const double DRONE_REST_RUB = 0.21;
+const int DRONE_BLOCK_BARS = 8;
 
 // A chord part against the melody in bars From-To: the melody's bars (where it sounds a quarter of the bar or more), those
 // the chords sound in too (half the bar), the rows both sound on and those where a note of the chord (its root or one its
@@ -15418,7 +15428,9 @@ ChordRub ChordRubOf(Session &S, Hearing &Ears, int Channel, int Melody, int From
 }
 
 // The refit: the chords (and the bass under them) fitted to the melody again over the bars they play together in, as
-// add_chords_and_bass fits them (chord tones the melody plays, colors where it allows, the chords under its lowest note)
+// add_chords_and_bass fits them (chord tones the melody plays, colors where it allows, the chords under its lowest note).
+// No longer chord_drone's fix (feat-drone-rests): on Ironworks2 the user heard the refit as "way too much stuff going on
+// at the same time and all too loud", and liked the chords resting in A, A' and the climax instead (DroneRests)
 Json DroneRefit(Session &S, int Channel, int Melody, const ChordRub &R)
 {
 	const std::string Name = S.Channel(Channel).FullName();
@@ -15456,41 +15468,140 @@ Json DroneRefit(Session &S, int Channel, int Melody, const ChordRub &R)
 	return Fix;
 }
 
+bool IsFreeSectionBase(const std::string &Base);
+
+// Where the chords rest (from feat-drone-rests). The user heard Ironworks2's refit as "way too much stuff going on at the
+// same time and all too loud", and liked the version (Ironworks-liked) whose 2A03 Pulse 1 played its chords only in the
+// intro, B (quieter) and the break: none in A, A' and the climax, where the melody carries the song. So the chords rest
+// in the parts of the song (its sections, else blocks of DRONE_BLOCK_BARS from the first bar they play with the melody)
+// where they play with the melody and rub it more than DRONE_REST_RUB of the time (as the colors touch leaves them,
+// pAbove), keeping the intro, a break or an outro (sections named so, which the melody leaves alone anyway) and the
+// contrasting sections (B, a bridge: any section not named A, a verse, a chorus or as the high point); a song without
+// one keeps the part that rubs least, so the chords still bring their colour somewhere. Each rest is vary_part's rest
+// over its bars (parts next to each other in one call)
+struct DroneRests {
+	std::vector<std::pair<int, int> > Rests;	// bars, From-To
+	std::vector<std::string> RestNames;			// the parts resting ("A", "A'", "bars 5-12")
+	std::vector<std::string> Playing;			// the parts the chords still play in
+	int Rows, RubRows, WithBars, MelodyBars;	// what's left where they still play with the melody
+	DroneRests() : Rows(0), RubRows(0), WithBars(0), MelodyBars(0) {}
+	double Rub() const { return Rows > 0 ? RubRows / static_cast<double>(Rows) : 0.0; }
+};
+
+DroneRests PlanDroneRests(Session &S, Hearing &Ears, int Channel, int Melody, const ChordRub &R,
+	const std::map<int, std::vector<int> > *pAbove)
+{
+	struct Part { int From, To; std::string Name; bool Contrast, Free; ChordRub Rub; bool Notes; };
+	std::vector<Part> Parts;
+	const SectionList &List = S.Song.Sections;
+	const int Total = S.Time.TotalRows();
+	for (size_t i = 0; i < List.size(); ++i) {
+		const std::string Base = Lowercase(SectionBase(List[i].Name));
+		Part P = { SectionFirstBar(S, List[i]), SectionLastBar(S, List[i]), List[i].Name, false, IsFreeSectionBase(Base),
+			ChordRub(), false };
+		P.Contrast = !P.Free && Base != "a" && Base != "verse" && Base != "chorus" && !IsClimaxName(List[i].Name);
+		Parts.push_back(P);
+	}
+	if (Parts.empty())
+		for (int Bar = R.FirstBar; Bar <= R.LastBar; Bar += DRONE_BLOCK_BARS) {
+			Part P = { Bar, std::min(R.LastBar, Bar + DRONE_BLOCK_BARS - 1), RangeText(Bar, std::min(R.LastBar,
+				Bar + DRONE_BLOCK_BARS - 1)), false, false, ChordRub(), false };
+			Parts.push_back(P);
+		}
+	int Kept = -1;
+	bool Contrast = false;
+	for (size_t i = 0; i < Parts.size(); ++i) {
+		Part &P = Parts[i];
+		const int First = S.Time.BarStart(P.From), End = std::min(Total, S.Time.BarEnd(P.To));
+		P.Notes = End > First && !NotesIn(S.Notes(Channel), First, End).empty();
+		P.Rub = ChordRubOf(S, Ears, Channel, Melody, P.From, P.To, pAbove);
+		const bool With = P.Rub.WithBars > 0 && !P.Free;
+		Contrast = Contrast || (P.Contrast && With);
+		if (With && !P.Contrast && (Kept < 0 || P.Rub.Rub() < Parts[static_cast<size_t>(Kept)].Rub.Rub()))
+			Kept = static_cast<int>(i);
+	}
+	DroneRests Out;
+	for (size_t i = 0; i < Parts.size(); ++i) {
+		const Part &P = Parts[i];
+		const bool Rests = P.Notes && !P.Free && !P.Contrast && P.Rub.WithBars > 0 && P.Rub.Rub() > DRONE_REST_RUB &&
+			(Contrast || static_cast<int>(i) != Kept);
+		Out.MelodyBars += P.Rub.MelodyBars;
+		if (Rests) {
+			if (!Out.Rests.empty() && Out.Rests.back().second + 1 == P.From)
+				Out.Rests.back().second = P.To;
+			else
+				Out.Rests.push_back(std::make_pair(P.From, P.To));
+			Out.RestNames.push_back(List.empty() ? P.Name : "\"" + P.Name + "\"");
+			continue;
+		}
+		if (P.Notes)
+			Out.Playing.push_back(List.empty() ? P.Name : "\"" + P.Name + "\"");
+		Out.Rows += P.Rub.Rows;
+		Out.RubRows += P.Rub.RubRows;
+		Out.WithBars += P.Rub.WithBars;
+	}
+	return Out;
+}
+
+std::string WordList(const std::vector<std::string> &Words)
+{
+	std::string Out;
+	for (size_t i = 0; i < Words.size(); ++i)
+		Out += (i == 0 ? "" : i + 1 == Words.size() ? " and " : ", ") + Words[i];
+	return Out;
+}
+
 // The fix: first polish's colors touch over those bars, which takes out only the colors that rub (the notes, the
-// progression and the bass kept). When the colors alone leave the chords rubbing DRONE_RUB of the time or more, the
-// triads' own notes rubbing the tune, the refit follows it in the fix's then; with no color to change, the refit is the
-// fix. On Ironworks2 the colors took the rubs from 42% to 30% (Cm(add9) as Cm7, Dbmaj7 and Abmaj7 as their add9, a G7 as
-// G); the rest is the progression's own: Db against the melody's C, its Ab over the melody's G, G7's B
-// under its C
-Json DroneFix(Session &S, Hearing &Ears, int Channel, int Melody, const ChordRub &R, const Key &K, double &After)
+// progression and the bass kept). When there are no colors to change, or the colors alone leave the chords rubbing
+// DRONE_RUB of the time or more (the triads' own notes rubbing the tune), the chords rest where the melody carries the
+// song (DroneRests), vary_part's rest in the fix's then. On Ironworks2 the colors took the rubs from 42% to 30% (Cm(add9)
+// as Cm7, Dbmaj7 and Abmaj7 as their add9, a G7 as G); the rest is the progression's own: Db against the melody's C, its
+// Ab over the melody's G, G7's B under its C. With nothing to plan, the finding is advice (a null fix). After (the rub
+// left where the chords still play with the melody) and Rests are the reply's
+Json DroneFix(Session &S, Hearing &Ears, int Channel, int Melody, const ChordRub &R, const Key &K, double &AfterColors,
+	DroneRests &Rests)
 {
 	const std::string Name = S.Channel(Channel).FullName();
 	const int First = S.Time.BarStart(R.FirstBar), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(R.LastBar));
 	int Left = 0;
 	const std::vector<ColorSwap> Plan = PlanColors(S, Channel, First, End, Melody, K, false, Left);
-	After = R.Rub();
-	if (Plan.empty())
-		return DroneRefit(S, Channel, Melody, R);
-	const std::map<int, std::vector<int> > Above = PlannedAbove(S, Channel, Plan);
-	After = ChordRubOf(S, Ears, Channel, Melody, R.FirstBar, R.LastBar, &Above).Rub();
-	Json A = Json::MakeObject();
-	Json Touches = Json::MakeArray();
-	Touches.Push("colors");
-	A.Set("touches", Touches);
-	A.Set("channels", Name);
-	A.Set("melody_channel", S.Channel(Melody).FullName());
-	A.Set("from_bar", R.FirstBar);
-	A.Set("to_bar", R.LastBar);
-	Json Fix = ToolCall("polish", A, Format("takes the colors that rub the melody out of %s of %s's chords in %s (%s), keeping their "
-		"notes, the progression and the bass: they then rub it %.0f%% of the time", Plural(static_cast<int>(Plan.size()), "chord",
-		"chords").c_str(), Name.c_str(), RangeText(R.FirstBar, R.LastBar).c_str(), ColorSwapsText(S, Plan, K).c_str(),
-		std::floor(After * 100.0 + 0.5)));
-	if (After >= DRONE_RUB) {
-		const Json Refit = DroneRefit(S, Channel, Melody, R);
-		ThenCall(Fix, ToolCall("add_chords_and_bass", *Refit.Get("arguments"), Refit.Get("does")->String()));
-		const Json *pThen = Refit.Get("then");
-		for (size_t i = 0; pThen != 0 && i < pThen->Size(); ++i)
-			ThenCall(Fix, pThen->At(i));
+	AfterColors = R.Rub();
+	std::map<int, std::vector<int> > Above;
+	if (!Plan.empty()) {
+		Above = PlannedAbove(S, Channel, Plan);
+		AfterColors = ChordRubOf(S, Ears, Channel, Melody, R.FirstBar, R.LastBar, &Above).Rub();
+	}
+	Json Fix;
+	if (!Plan.empty()) {
+		Json A = Json::MakeObject();
+		Json Touches = Json::MakeArray();
+		Touches.Push("colors");
+		A.Set("touches", Touches);
+		A.Set("channels", Name);
+		A.Set("melody_channel", S.Channel(Melody).FullName());
+		A.Set("from_bar", R.FirstBar);
+		A.Set("to_bar", R.LastBar);
+		Fix = ToolCall("polish", A, Format("takes the colors that rub the melody out of %s of %s's chords in %s (%s), keeping "
+			"their notes, the progression and the bass: they then rub it %.0f%% of the time", Plural(static_cast<int>(Plan.size()),
+			"chord", "chords").c_str(), Name.c_str(), RangeText(R.FirstBar, R.LastBar).c_str(), ColorSwapsText(S, Plan, K).c_str(),
+			std::floor(AfterColors * 100.0 + 0.5)));
+		if (AfterColors < DRONE_RUB)
+			return Fix;
+	}
+	Rests = PlanDroneRests(S, Ears, Channel, Melody, R, Plan.empty() ? 0 : &Above);
+	static_cast<void>(&DroneRefit);	// kept for code that may want the refit, no longer part of the fix
+	for (size_t i = 0; i < Rests.Rests.size(); ++i) {
+		Json A = Json::MakeObject();
+		A.Set("channel", Name);
+		A.Set("variation", "rest");
+		A.Set("from_bar", Rests.Rests[i].first);
+		A.Set("to_bar", Rests.Rests[i].second);
+		const Json Call = ToolCall("vary_part", A, Format("lets %s's chords rest in %s, where the melody carries the song", Name.c_str(),
+			RangeText(Rests.Rests[i].first, Rests.Rests[i].second).c_str()));
+		if (Fix.IsNull())
+			Fix = Call;
+		else
+			ThenCall(Fix, Call);
 	}
 	return Fix;
 }
@@ -15522,10 +15633,29 @@ bool DroneFinding(Session &S, Hearing &Ears, int Channel, int Melody, int From, 
 	F.Details.Set("rub_share", Json::NumberText(FormatNumber(std::floor(R.Rub() * 100.0 + 0.5) / 100)));
 	F.Details.Set("under_melody_db", Json::NumberText(FormatNumber(std::floor(std::max(0.0, R.Under) * 10 + 0.5) / 10)));
 	double After = R.Rub();
-	F.Fix = DroneFix(S, Ears, Channel, Melody, R, K, After);
+	DroneRests Rests;
+	F.Fix = DroneFix(S, Ears, Channel, Melody, R, K, After, Rests);
 	if (After < R.Rub() && After >= DRONE_RUB)
-		F.Text += Format(" Taking out the colors that rub leaves %.0f%%, so the chords are fitted to the melody again after it.",
-			std::floor(After * 100.0 + 0.5));
+		F.Text += Format(" Taking out the colors that rub leaves %.0f%%.", std::floor(After * 100.0 + 0.5));
+	if (!Rests.Rests.empty()) {
+		F.Text += Format(" So the chords rest where the melody carries the song, in %s, and still play in %s (as the "
+			"version of Ironworks the user liked keeps them in its intro, B and break), under the melody in %d of its %d bars, rubbing it %.0f%% "
+			"of the time there.", WordList(Rests.RestNames).c_str(), Rests.Playing.empty() ? "no part" :
+			WordList(Rests.Playing).c_str(), Rests.WithBars, Rests.MelodyBars, std::floor(Rests.Rub() * 100.0 + 0.5));
+		Json Bars = Json::MakeArray();
+		for (size_t i = 0; i < Rests.Rests.size(); ++i) {
+			Json Span = Json::MakeArray();
+			Span.Push(Rests.Rests[i].first);
+			Span.Push(Rests.Rests[i].second);
+			Bars.Push(Span);
+		}
+		F.Details.Set("rests", Bars);
+		F.Details.Set("rub_share_left", Json::NumberText(FormatNumber(std::floor(Rests.Rub() * 100.0 + 0.5) / 100)));
+	}
+	else if (F.Fix.IsNull())
+		F.Text += " The chords rub alike all through, so there's no part to rest them in by rule: hear the song with the user "
+			"and let the chords sit out the parts where the melody carries it (vary_part's rest), or write them again under the "
+			"melody's notes.";
 	F.Details.Set("rub_share_after_colors", Json::NumberText(FormatNumber(std::floor(After * 100.0 + 0.5) / 100)));
 	return true;
 }
@@ -17196,14 +17326,15 @@ std::string VaryPartTool(Session &S, const Json &Args)
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
 	const int R = S.Time.RowsPerBeat;
 	const bool AsClip = BoolArg(Args, "as_clip", false);
-	static const char *const KINDS[] = { "embellish", "simplify", "syncopate", "octave_up", "octave_down", "ending", "restrike" };
+	static const char *const KINDS[] = { "embellish", "simplify", "syncopate", "octave_up", "octave_down", "ending", "restrike",
+		"rest" };
 	const std::string Kind = Squeezed(StringArg(Args, "variation"));
 	int Variation = -1;
-	for (int i = 0; i < 7; ++i)
+	for (int i = 0; i < 8; ++i)
 		if (Kind == Squeezed(KINDS[i]))
 			Variation = i;
 	if (Variation < 0)
-		throw Problem("variation: embellish, simplify, syncopate, octave_up, octave_down, ending or restrike.");
+		throw Problem("variation: embellish, simplify, syncopate, octave_up, octave_down, ending, restrike or rest.");
 	const int Rhythm = StyleArg(Args, "rhythm", ChordRhythms(), RHYTHM_TRESILLO);
 	if (Arg(Args, "rhythm") != 0 && Variation != 6)
 		throw Problem("rhythm is restrike's: the rhythm it strikes held notes again on.");
@@ -17452,6 +17583,11 @@ std::string VaryPartTool(Session &S, const Json &Args)
 			Out.insert(Out.end(), Pieces.begin(), Pieces.end());
 		}
 		break;
+	case 7:		// rest: the part sits those bars out, its notes taken out (BuildPart releases a note ringing into them and keeps
+				// the instrument, volume and effects of the note after them), as the user's liked Ironworks left its chords
+				// out of A, A' and the climax for the melody (chord_drone's fix, DroneRests)
+		Changed = static_cast<int>(Old.size());
+		break;
 	default: {	// the last note on the key's tonic, held to the end of the bars; over a chord without the tonic (a turnaround's
 				// V7, where the tonic would clash with its third), on the chord's tone nearest the note
 		Out = Notes;
@@ -17492,7 +17628,8 @@ std::string VaryPartTool(Session &S, const Json &Args)
 	BuildPart(S.Cells(Channel), First, End, Out, OptionsFor(S, Channel, Direct(S, AsClip)), C.Cells, Warnings);
 	std::vector<Change> Changes(1, C);
 	static const char *const DONE[] = { "passing and neighbour notes added", "simplified to the notes on the beats",
-		"syncopated (strong-beat notes half a beat early)", "an octave up", "an octave down", "ending on the tonic", "" };
+		"syncopated (strong-beat notes half a beat early)", "an octave up", "an octave down", "ending on the tonic", "",
+		"resting (its notes taken out, a note ringing into the bars released)" };
 	const std::string Done = Variation == 6 ? std::string("struck again on the ") + ChordRhythms()[static_cast<size_t>(Rhythm)].Name +
 		" rhythm (" + ChordRhythms()[static_cast<size_t>(Rhythm)].Description + "), softer off beat 1" : std::string(DONE[Variation]);
 	const std::string What = Info.FullName() + " " + (EndingChord.empty() ? Done : "ending on " +
@@ -22783,11 +22920,12 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 					!DroneFinding(View, Ears, c, Lead, 1, Bars, DK, F))
 					continue;
 				std::string Text = F.Summary + ".";
-				if (Direct)
+				if (Direct && !F.Fix.IsNull())
 					Text += " Fix: " + CallText(F.Fix) + ".";
 				else
 					Text += " Once it's in the song, check_song gives the fix: polish's colors touch takes out the chords' colors that "
-						"rub it, else add_chords_and_bass over those bars (without chords) fits them to the melody.";
+						"rub it, and where they still rub, vary_part's rest lets them sit out the parts where the melody carries the "
+						"song.";
 				Out.push_back(Text);
 			}
 		}
@@ -25016,6 +25154,19 @@ Json ListenCallOf(Session &S, const ListenReport &R, const ListenFinding &F, std
 				"(about 15 cents either way, about 5 times a second) where it came in");
 		}
 		if (Motion == LISTEN_VIBRATO_EFFECT) {
+			// The vibrato stays on past the notes heard wobbling (short ones after them carry it on, to the loop's end, where
+			// check_loop then finds it still on): the call reaches the last note it stays on for
+			const std::vector<NoteInfo> &Notes = S.Notes(pPart->Channel);
+			const std::vector<int> Vibrato = StickyAt(S.Cells(pPart->Channel), Notes, S.Channel(pPart->Channel).EffectColumns,
+				EFF_VIBRATO);
+			const int After = S.Time.BarEnd(ToBar);
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				if (Notes[i].Row < After)
+					continue;
+				if (Vibrato[i] == 0)
+					break;
+				ToBar = S.Time.BarOf(Notes[i].Row);
+			}
 			A.Set("channel", Name);
 			A.Set("from_bar", FromBar);
 			A.Set("to_bar", ToBar);
@@ -31770,10 +31921,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"volumes keep them. Run it after the parts are written.",
 			Schema()
 				.Add("touches", Touches)
-				.Add("style", EnumProp("any, calm (also \"ambient\") or lively: calm leaves out accents unless asked, and its vibrato is "
-					"the shallowest (451), coming in about 27 frames in, only on long notes still sounding then; lively gives the "
-					"default touches, accents and all (a stage's lead is a step louder on a bar's first note). Default: calm when the "
-					"track's name says so.", std::vector<std::string>{ "any", "calm", "ambient", "lively" }))
+				.Add("style", EnumProp("any, calm (also \"ambient\") or lively: calm leaves out accents unless asked, its vibrato the "
+					"shallowest (451), about 27 frames in, on long notes; lively gives the default touches, accents and all. Default: "
+					"calm when the track's name says so.", std::vector<std::string>{ "any", "calm", "ambient", "lively" }))
 				.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default: every melodic channel)."))
 				.Add("melody_channel", ChannelProp("The melody, for the vibrato, and the part clashes and colors leave as written. "
 					"Default: the busiest channel (for clashes and colors, the song's)."))
@@ -32392,14 +32542,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("vary_part", "Vary a part",
 		"Changes a melodic part a little, for a repeat that shouldn't sound pasted: embellish (passing notes between notes "
-		"a third apart and a neighbour note on held ones, at most two a bar), simplify (only the notes on the beats), "
-		"syncopate (notes on the middle of a bar, and every other bar's first beat, come half a beat early), octave_up, "
-		"octave_down, ending (the last note goes to the key's tonic and holds to the end), restrike (held notes struck again "
-		"on a rhythm, softer off beat 1).",
+		"a third apart, a neighbour on held ones, at most two a bar), simplify (only the notes on the beats), syncopate "
+		"(notes mid-bar, and every other bar's first beat, half a beat early), octave_up, octave_down, ending (the last "
+		"note to the key's tonic, held to the end), restrike (held notes struck again on a rhythm, softer off beat 1), rest "
+		"(the part sits the bars out, a note ringing in released).",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("variation", EnumProp("The variation.", std::vector<std::string>{ "embellish", "simplify", "syncopate", "octave_up",
-				"octave_down", "ending", "restrike" }), true)
+				"octave_down", "ending", "restrike", "rest" }), true)
 			.Add("rhythm", EnumProp("restrike: the rhythm held notes are struck again on (default tresillo).", StyleNames(ChordRhythms())))
 			.Add("from_bar", BarProp("First bar."))
 			.Add("to_bar", BarProp("Last bar (default: the song's end)."))

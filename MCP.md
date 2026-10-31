@@ -856,10 +856,17 @@ JSON as `fix`.
   the touch `colors` over those bars, which takes out only the colors that
   rub (see below), keeping every note, the progression and the bass; when
   that alone would leave the chords rubbing 30% of the time or more (their
-  triads' own notes rub the tune), `add_chords_and_bass` over those bars
-  without `chords` follows it in the fix's `then`, so the chords (and the
-  bass) are fitted to the melody again, under its lowest note; with no
-  color to take out, that refit is the fix. A
+  triads' own notes rub the tune), or there's no color to take out, the
+  chords rest where the melody carries the song: `vary_part` with `rest`
+  over each section (else each 8 bars) where they rub it more than 21% of
+  the time, in the fix's `then`, never the intro, a break or an outro, nor a
+  contrasting section (B, a bridge; without one the part rubbing least
+  keeps its chords). The finding says where they rest, where they still
+  play and how much they rub there; with nothing to rest by rule it's
+  advice. Fitting the chords to the melody again (`add_chords_and_bass`)
+  was the fix before: the user heard it as way too much going on at once,
+  and all too loud, and liked the chords resting in A, A' and the climax,
+  playing in the intro, B (quieter) and the break. A
   local model's lively stage put lush chords on Pulse 1 under the whole
   tune, and the user found that Pulse 1 irritating, distracting from the
   real track (struck again on a tresillo, no better); its arpeggio's add9
@@ -868,7 +875,9 @@ JSON as `fix`.
   often, as loud and as high against the melody. On Ironworks2 the colors
   touch took the rubs from 42% to 30% (Cm(add9) as Cm7, Dbmaj7 and Abmaj7
   as their add9, a G7 as G); the rest is the progression's own (Db under
-  the tune's C, its Ab over the tune's G), so the refit follows there.
+  the tune's C, its Ab over the tune's G), so the chords then rest in A, A'
+  and the climax (bars 5-20 and 29-36), playing on in the intro, B and the
+  break, 10% of the time rubbing.
 - `polish` with the touch `colors` works on a chord part's lush chords
   (instruments named as `add_chords_and_bass` names them, "Lush m(add9)")
   and `0xy` chords. A color (an added ninth, a seventh, a sixth) rubs the
@@ -1158,7 +1167,7 @@ before a batch of changes.
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
-| `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic, held notes struck again on a rhythm (`restrike` with `rhythm`, default `tresillo`; softer off beat 1 as chord parts strike, so tresillo plays 6, 4 and 5 at volume 6). `ending` lands on the tonic, or over a chord without it (a turnaround's A7 in D major) on the chord's tone nearest the note. `embellish` works on a lively melody of short notes too: a passing note between notes a third apart, a neighbour between repeated ones, a note from beside into a long note (or a turn before it), at most two a bar, each taking a note's last sixteenth (the second half of a note of a beat or more); an ornament a semitone (or a semitone and octaves) from what another part sounds there is left out, as `check_song` would hear a clash |
+| `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic, held notes struck again on a rhythm (`restrike` with `rhythm`, default `tresillo`; softer off beat 1 as chord parts strike, so tresillo plays 6, 4 and 5 at volume 6), or a rest (`rest`: the part sits the bars out, a note ringing into them ended, the note after them keeping its instrument and volume). `ending` lands on the tonic, or over a chord without it (a turnaround's A7 in D major) on the chord's tone nearest the note. `embellish` works on a lively melody of short notes too: a passing note between notes a third apart, a neighbour between repeated ones, a note from beside into a long note (or a turn before it), at most two a bar, each taking a note's last sixteenth (the second half of a note of a beat or more); an ornament a semitone (or a semitone and octaves) from what another part sounds there is left out, as `check_song` would hear a clash |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests or one that hardly pauses (a rest of a beat or more, or a note held two beats, as it sounds, in under 45% of the two-bar spans it plays in, 75% on a calm track: a held note counts in the span it starts in, and a break without the melody isn't counted; the bars that run on named, and a busy part taken for the melody left out), melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). The mixer's starting pans count, and an intro more than 10 dB under the rest is tipped (in a game it reads as silence). With style calm (or a track named calm, a night version) it isn't asked for drums, fills, accents, more notes or shorter ones; it hears the balance as the stems would and tips a melody more than 4 dB over the chords, and warns about a lead whose sound holds a high, steady level; lively hears a stage's balance (3-4 dB). A cue or a jingle (a track that halts within half a minute) is judged as one: the tips for looping stages (the length, variety, fills and a sampled kit, a bass that moves, chord colors, a beat, a lead's steady level) are left out, those about notes that vanish, clashing parts and the balance stay; a sound effect gets a short check of its own, without a score. It also finds what drafts miss, each with the call that fixes it (see [What drafts miss](#what-drafts-miss)), and a rest before a bar line breathes only where it ends a phrase of two bars or more. `format` short gives the score, the numbers that matter and the three tips that matter most (see [Short replies](#short-replies)). See [Measuring the mix](#measuring-the-mix) for how it tells an echo, a sparkle and a soft bass |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |

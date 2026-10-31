@@ -2141,10 +2141,11 @@ panel's `WORDS` say "chord part rubbing the tune"): a chord part sounding in
 `DRONE_WITH` of the melody's bars (`DRONE_BARS` at least), within
 `DRONE_UNDER_DB` of it, rubbing it `DRONE_RUB` (0.30) of the time, not calm.
 Its fix (`DroneFix`) is polish's `colors` touch since `feat-color-rubs`
-(below); the refit (`DroneRefit`) is `add_chords_and_bass` over those bars
-without `chords`, so the chords and the bass are fitted to the melody again
-under its lowest note, then the same for a second bass there (Ironworks'
-triangle in the climax); on Ironworks2 that left 0.15. `write_notes` warns
+(below), then rests since `feat-drone-rests` (below). The refit
+(`DroneRefit`, `add_chords_and_bass` over those bars without `chords`, then
+a second bass) left Ironworks2 at 0.15, but the user heard it as "way too
+much stuff going on at the same time and all too loud": it stays as a
+function, out of the fix. `write_notes` warns
 with the same rule and fix when the part written is the melody or the chord
 part (`WritingWarnings`). The rhythm went: what_next gives no kind a
 `rhythm` (`NextKind::ChordRhythm` is gone), the style guide and recipes no
@@ -2234,6 +2235,30 @@ Applefall Lane 6; none has a `chord_drone` finding, so nothing gives it
 there), and `add` 50 in 4 (City's third track 26). `TestColorRubs` and `TestWhatNextLoop` (lively:
 plain chords, the colors step after the melody and before the harmony)
 cover it.
+
+Chords that rest (from `feat-drone-rests`): the user liked the Ironworks
+whose Pulse 1 plays its chords only in the intro, B (quieter) and the break,
+none in A, A' and the climax (`keep/Ironworks-liked.ftm`, and an earlier
+hand-made one; neither gets a finding). So where the colors don't exist or
+leave `DRONE_RUB` or more, `DroneFix`'s `then` (or the fix, without colors)
+is `vary_part`'s new variation `rest` (`case 7`: the notes taken out,
+`BuildPart` ending a note that rings in and keeping the next one's
+instrument and volume) over each span `PlanDroneRests` picks: the sections
+(else `DRONE_BLOCK_BARS` blocks) where the chords play with the melody and
+rub it over `DRONE_REST_RUB` (0.21, the kept songs' most) as the colors leave
+them, never an intro, break or outro (`IsFreeSectionBase`) nor a contrasting
+section (any but A, a verse, a chorus or a climax name); without one, the
+part rubbing least stays. The finding says where they rest, where they
+still play and the rub left (`rests`, `rub_share_left`); nothing to plan is
+advice, a null fix. On Ironworks2: polish `colors` over bars 5-36, then
+rests in 5-20 (A, A') and 29-36 (the climax), the chords left in Intro, B and
+Break under the melody in 8 of its 32 bars, rubbing 10%; check_song then
+finds no clash and no `chord_drone`. Also here: check_song's `repeat` fix
+syncopates a second repeat of a part when the one it repeats is itself a
+repeat (two repeats embellished alike, `RepeatFindings`), and listen's
+vibrato fix reaches the last note the `4xy` stays on (`ListenCallOf`), the
+two walks `next` failed after `feat-color-rubs` met `feat-shape-variations`.
+`TestChordDrones` covers it.
 
 ## What this repository is
 

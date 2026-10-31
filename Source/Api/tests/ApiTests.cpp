@@ -27409,9 +27409,9 @@ void TestToolReplies()
 }
 
 // Chords that rub the tune (from feat-chords-room; feat-chord-rests' rule judged their rhythm): lush chords under the whole
-// melody whose arpeggio's notes sit a semitone from its notes much of the time are found, with add_chords_and_bass fitting
-// them (and every bass under them) to the melody again as the fix; chords that hold the melody's notes, a quiet pad's and a
-// calm track's aren't. Rubbing: maj7 chords on Db and Ab under a tune in C (G, A, C, D and E each a semitone from one of
+// melody whose arpeggio's notes sit a semitone from its notes much of the time are found, with the chords resting where
+// the melody carries the song as the fix (feat-drone-rests; feat-chords-room's refit, which the user heard as too much at
+// once, is gone from it); chords that hold the melody's notes, a quiet pad's and a calm track's aren't. Rubbing: maj7 chords on Db and Ab under a tune in C (G, A, C, D and E each a semitone from one of
 // their notes); fitting: C, Am, F and G under the same tune
 void DroneSong(FakeSong &Song, int ChordVolume, bool Rubbing = true)
 {
@@ -27610,17 +27610,27 @@ void TestChordDrones()
 			CHECK_EQ(IntegerOf(Found[0], "bars_with_melody"), 24);
 			CHECK_HAS(TextOf(Found[0], "message"), "Chords that drone against the tune: 2A03 Pulse 1's chords play under the "
 				"melody in 24 of its 24 bars");
-			// The fix: the chords and the bass fitted to the melody again, over the bars they play together in
+			CHECK_HAS(TextOf(Found[0], "message"), "So the chords rest where the melody carries the song, in \"A\" and "
+				"\"A'\", and still play in \"B\"");
+			// The fix: no colors to take out (the maj7's seventh doesn't rub; its root and third do), so the chords rest
+			// in A and A', keeping B, the contrasting section
 			const Json *pFix = Found[0]->Get("fix");
-			CHECK(pFix != 0 && TextOf(pFix, "tool") == "add_chords_and_bass");
+			CHECK(pFix != 0 && TextOf(pFix, "tool") == "vary_part");
 			if (pFix != 0) {
-				const Json *pArgs = pFix->Get("arguments");
-				CHECK(TextOf(pArgs, "chord_channel") == "2A03 Pulse 1" && TextOf(pArgs, "chord_style") == "lush" &&
-					TextOf(pArgs, "melody_channel") == "VRC6 Pulse 1" && IntegerOf(pArgs, "from_bar") == 1 &&
-					IntegerOf(pArgs, "to_bar") == 24 && pArgs->Get("chords") == 0);
-				CHECK(pFix->Get("then") == 0);	// one bass
+				CHECK(pFix->Get("arguments") != 0 && WriteJson(*pFix->Get("arguments")) == "{\"channel\":\"2A03 Pulse 1\","
+					"\"variation\":\"rest\",\"from_bar\":1,\"to_bar\":8}");
+				const Json *pThen = pFix->Get("then");
+				CHECK(pThen != 0 && pThen->Size() == 1);
+				if (pThen != 0 && pThen->Size() == 1) {
+					CHECK_EQ(WriteJson(*pThen->At(0).Get("arguments")), std::string("{\"channel\":\"2A03 Pulse 1\","
+						"\"variation\":\"rest\",\"from_bar\":17,\"to_bar\":24}"));
+				}
+				CHECK_LACKS(WriteJson(*pFix), "add_chords_and_bass");
 				Fix = *pFix;
 			}
+			const Json *pRests = Found[0]->Get("rests");
+			CHECK(pRests != 0 && WriteJson(*pRests) == "[[1,8],[17,24]]");
+			CHECK(Found[0]->Get("rub_share_left") != 0);
 		}
 		ProblemList List;
 		std::string Error;
@@ -27631,30 +27641,62 @@ void TestChordDrones()
 		// The review weighs it in, and what_next gives its fix as a step
 		CHECK_HAS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "drone against the tune");
 		CHECK_HAS(Run(Song, "what_next", "{\"all\": true, \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
-			"add_chords_and_bass {\"chord_channel\":\"2A03 Pulse 1\",\"melody_channel\":\"VRC6 Pulse 1\",\"chord_style\":\"lush\"");
-		// Made, it leaves chords that hold the melody's notes
+			"vary_part {\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\",\"from_bar\":1,\"to_bar\":8}");
+		// Made, the chords sit A and A' out: an end where B's last chord would ring into A', B's first chord with its
+		// instrument and volume, the bass and the melody as they were, and nothing left to find
+		const std::vector<Cell> Bass = Song.Rows[2], Tune = Song.Rows[5];
 		if (Fix.Get("arguments") != 0) {
-			const ToolResult Made = Run(Song, "add_chords_and_bass", WriteJson(*Fix.Get("arguments")));
-			CHECK(!Made.IsError);
+			CHECK(!Run(Song, "vary_part", WriteJson(*Fix.Get("arguments"))).IsError);
+			CHECK(!Run(Song, "vary_part", WriteJson(*Fix.Get("then")->At(0).Get("arguments"))).IsError);
+			bool Quiet = true;
+			for (int r = 0; r < 24 * 16; ++r)
+				if ((r < 8 * 16 || r >= 16 * 16) && Song.Rows[0][static_cast<size_t>(r)].HasNote())
+					Quiet = false;
+			CHECK(Quiet);
+			CHECK(Song.Rows[0][8 * 16].HasNote() && Song.Rows[0][8 * 16].Instrument == 3 && Song.Rows[0][8 * 16].Volume == 8);
+			CHECK(Song.Rows[0][16 * 16].IsEnd());
+			CHECK(Song.Rows[2] == Bass && Song.Rows[5] == Tune);
 			CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").empty());
 		}
 	}
-	// A second bass in those bars is fitted after
+	// Without sections: blocks of 8 bars, the one rubbing least (the first, of three alike) kept
 	{
 		FakeSong Song(6);
 		DroneSong(Song, 8);
-		for (int Bar = 17; Bar <= 24; ++Bar)
-			Song.Put(7, (Bar - 1) * 16, Bar % 2 == 1 ? "C#2" : "G#1", Bar == 17 ? 1 : NO_INSTRUMENT);
+		Song.Info.Sections.clear();
 		const Json Out = Parse(Run(Song, "check_song", Args).Text);
 		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone");
 		CHECK_EQ(Found.size(), static_cast<size_t>(1));
-		const Json *pThen = Found.empty() || Found[0]->Get("fix") == 0 ? 0 : Found[0]->Get("fix")->Get("then");
-		CHECK(pThen != 0 && pThen->Items().size() == 1);
-		if (pThen != 0 && pThen->Items().size() == 1) {
-			const Json *pArgs = pThen->Items()[0].Get("arguments");
-			CHECK(TextOf(pArgs, "chord_channel") == "none" && TextOf(pArgs, "bass_channel") == "VRC6 Sawtooth" &&
-				IntegerOf(pArgs, "from_bar") == 17 && IntegerOf(pArgs, "to_bar") == 24);
+		const Json *pFix = Found.empty() ? 0 : Found[0]->Get("fix");
+		CHECK(pFix != 0 && pFix->Get("then") == 0 && pFix->Get("arguments") != 0);
+		if (pFix != 0 && pFix->Get("arguments") != 0) {
+			CHECK_EQ(WriteJson(*pFix->Get("arguments")), std::string("{\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\","
+				"\"from_bar\":9,\"to_bar\":24}"));
 		}
+		if (!Found.empty())
+			CHECK_HAS(TextOf(Found[0], "message"), "in bars 9-16 and bars 17-24, and still play in bars 1-8");
+	}
+	// Only contrasting sections, nothing to rest by rule and no colors to take out: advice, without a call
+	{
+		FakeSong Song(6);
+		DroneSong(Song, 8);
+		Song.Info.Sections[0].Name = "B";
+		Song.Info.Sections[1].Name = "Bridge";
+		Song.Info.Sections[2].Name = "C";
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		if (!Found.empty()) {
+			CHECK(Found[0]->Get("fix") == 0 || Found[0]->Get("fix")->IsNull());
+			CHECK_HAS(TextOf(Found[0], "message"), "no part to rest them in by rule");
+		}
+	}
+	// vary_part's rest asks for notes to take out
+	{
+		FakeSong Song(6);
+		DroneSong(Song, 8);
+		CHECK_HAS(Run(Song, "vary_part", "{\"channel\": \"VRC6 Sawtooth\", \"variation\": \"rest\", \"from_bar\": 1, "
+			"\"to_bar\": 4}").Text, "has no notes in bars 1-4");
 	}
 	// Chords that hold the melody's notes, a quiet pad well under the melody and a calm track's aren't
 	{
@@ -27682,7 +27724,7 @@ void TestChordDrones()
 			"D4 - . .\"}").Text;
 		if (Rubbing == 1) {
 			CHECK_HAS(Written, "2A03 Pulse 1's chords rub a semitone against the melody");
-			CHECK_HAS(Written, "Fix: add_chords_and_bass {\"chord_channel\":\"2A03 Pulse 1\"");
+			CHECK_HAS(Written, "Fix: vary_part {\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\"");
 		}
 		else
 			CHECK_LACKS(Written, "against the melody");
