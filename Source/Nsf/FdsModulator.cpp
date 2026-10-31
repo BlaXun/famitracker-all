@@ -124,8 +124,10 @@ FdsModMotion FdsModulatorMotion(int Speed, int Depth, const std::vector<int> &Ta
 std::string CentsInWords(double Cents)
 {
 	Cents = std::fabs(Cents);
-	if (Cents < 12.0)
+	if (Cents < 8.0)
 		return "a few cents";
+	if (Cents < 18.75)	// 12 cents, said as a quarter of a semitone, is an eighth
+		return "about an eighth of a semitone";
 	if (Cents < 37.5)
 		return "about a quarter of a semitone";
 	if (Cents < 62.5)

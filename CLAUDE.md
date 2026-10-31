@@ -2260,6 +2260,32 @@ vibrato fix reaches the last note the `4xy` stays on (`ListenCallOf`), the
 two walks `next` failed after `feat-color-rubs` met `feat-shape-variations`.
 `TestChordDrones` covers it.
 
+Finishing details (from `fix-finish-details`), from six songs made by
+following `what_next`: `FindSeams` ends a note that rings from the intro into
+the loop's start the first time where nothing sounds there on repeat (a halt,
+or a release for a sound that fades, at the loop's start, which changes
+nothing on repeat; Guard Tower's intro chord on Pulse 1 into bar 3 was left
+as "can't be fixed there", so `what_next` took the seam as done and the
+export, its seam not clean, looped from the second time through at 48 s).
+`MakeEcho` keeps its detune off the notes that double another part
+(`EchoDoubles`: the same pitch or octaves for half the note or more, the
+source and the echo's channel aside), writing P80 there and the detune back
+after, and says so: the Airship's P81 echo beat against the harmony voice.
+`CentsInWords` (`Source/Nsf/FdsModulator.cpp`, listen's words too) says 8-19
+cents as an eighth of a semitone. `DescribeDesign` gives a pitch sequence's
+vibrato on the period chips at A-3, A-4 and A-5 (the triangle's period
+counts 32, the sawtooth's 14), since a step is more cents the higher the
+note. `review_arrangement` without a style reviews a track that looks calm
+(`LooksCalm`) as calm (the other tools still only suggest it), and leaves
+out its "under half a minute" tip for a song laid out as the small shape
+(`LaidOutShape`). `ExportTrack` fades in only where the DPCM channel plays
+samples (the mix's `Zxx` is on every song's first row) and says the
+loudness change in plain words, only from half a dB. `NoteClassName` spells
+a minor key's raised 6th and 7th with the sharps' names in the keys spelled
+with flats (C# in D minor, F# in G minor). `TestIntroNoteIntoLoop`,
+`TestEchoInTuneWhereDoubled`, `TestVibratoAcrossRegister`,
+`TestReviewKeepsItsStyle` and `TestMinorLeadingTone` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

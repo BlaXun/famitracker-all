@@ -807,6 +807,13 @@ std::string KeyName(const Key &K)
 
 std::string NoteClassName(int PitchClass, const Key &K)
 {
+	// A minor key's raised 7th and 6th (harmonic and melodic minor's leading tone, a dominant's third) are the degree's
+	// letter raised: C# in D minor, F# in G minor, never Db or Gb; its own flats stay flats (read_notes spelled D minor's
+	// leading tone Db5). The sharps' names give exactly that for the keys spelled with flats
+	const int Mode = (K.Mode >= 0 && K.Mode < MODE_COUNT) ? K.Mode : 0;
+	const int Relative = Mod12(PitchClass - K.Tonic);
+	if (UsesFlats(K) && MODES[Mode].Steps[2] == 3 && (Relative == 11 || Relative == 9))
+		return SHARP_CLASSES[Mod12(PitchClass)];
 	return (UsesFlats(K) ? FLAT_CLASSES : SHARP_CLASSES)[Mod12(PitchClass)];
 }
 

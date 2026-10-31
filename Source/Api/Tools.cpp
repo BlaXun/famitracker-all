@@ -8345,6 +8345,41 @@ int EchoVolume(const Session &S, const ChannelInfo &Source, const NoteInfo &N, c
 	return Best;
 }
 
+// Which echo notes double another part (not the echo's source or its own channel): the same pitch as it sounds, or
+// octaves apart, for half the note or more. A detune there beats against it (listen's beating); Doubled names the parts
+std::vector<bool> EchoDoubles(Session &S, Draft &D, const EchoPlan &Plan, const std::vector<PartNote> &Notes, std::string &Doubled)
+{
+	std::vector<bool> Out(Notes.size(), false);
+	std::vector<std::string> Names;
+	const int Lifted = Written(S.Channel(Plan.Target), 0);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Plan.Target || c == Plan.Source || !IsMelodic(S.Channel(c)))
+			continue;
+		const int Lift = Written(S.Channel(c), 0);
+		const std::vector<NoteInfo> Theirs = D.Notes(c);
+		bool Any = false;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const PartNote &E = Notes[i];
+			int Together = 0;
+			for (size_t k = 0; k < Theirs.size(); ++k) {
+				const int From = std::max(E.Row, Theirs[k].Row), To = std::min(E.Row + E.Rows, Theirs[k].Row + Theirs[k].Rows);
+				if (To > From && (Theirs[k].Pitch - Lift - (E.Pitch - Lifted)) % 12 == 0)
+					Together += To - From;
+			}
+			if (Together > 0 && 2 * Together >= E.Rows) {
+				Out[i] = true;
+				Any = true;
+			}
+		}
+		if (Any)
+			Names.push_back(S.Channel(c).FullName());
+	}
+	Doubled.clear();
+	for (size_t i = 0; i < Names.size(); ++i)
+		Doubled += (i == 0 ? "" : (i + 1 == Names.size() ? " and " : ", ")) + Names[i];
+	return Out;
+}
+
 // pStop: where the rows written end, for Draft::Collect, so the notes the echo wrote alike (a pan carried over
 // them) count as its own
 int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std::vector<std::string> &Warnings, int *pStop = 0)
@@ -8404,9 +8439,24 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 	// On the N163, a sound another N163 channel plays there (the melody's own, from another soft channel) as a copy of its own
 	OwnWaveSounds(S, &D, Plan.Target, First + Plan.Delay, Stop, Notes);
 	if (Plan.Detune != 0) {
-		// A little off the melody's pitch, so the two shimmer where they overlap; back in tune after
-		Notes.front().Effects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80 + Plan.Detune));
-		Notes.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80));
+		// A little off the melody's pitch, so the two shimmer where they overlap; back in tune after. Where an echo note
+		// doubles another part (its pitch or an octave, as a harmony voice landing on the melody's note a beat late does),
+		// it plays in tune: detuned there, the two beat and sound sour (listen's beating, which the Airship's echo had)
+		std::string Doubled;
+		const std::vector<bool> InTune = EchoDoubles(S, D, Plan, Notes, Doubled);
+		int Kept = 0, Now = 0x80;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const int Want = InTune[i] ? 0x80 : 0x80 + Plan.Detune;
+			Kept += InTune[i] ? 1 : 0;
+			if (Want != Now || i == 0)
+				Notes[i].Effects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), Want));
+			Now = Want;
+		}
+		if (Now != 0x80)
+			Notes.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80));
+		if (Kept > 0)
+			Warnings.push_back(Format("Where the echo doubles %s's notes, %s in tune (P80): detuned there, the two would beat "
+				"and sound sour.", Doubled.c_str(), Plural(Kept, "note plays", "notes play").c_str()));
 	}
 	// Its place between the speakers, on the notes where it changes (the ones between keep it)
 	int Last = -1;
@@ -15923,7 +15973,18 @@ std::string ReviewTool(Session &S, const Json &Args)
 	// stands out, more notes or shorter ones, and its balance and its lead's sound are heard as calm tracks want them; a
 	// lively stage's are heard as stages that bounce without pressing want them. Calm when asked, or when the track's
 	// name says so
-	const TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "reviews it as a calm track", "any");
+	TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "reviews it as a calm track", "any");
+	{
+		// The review judges by what the song is: a track that looks calm (slow, no drum kit) is reviewed as one, where the
+		// other tools only suggest it (Hut in a Field, a calm song by what_next, got "No drums", a walking bass and accents
+		// as its tips, under a line saying it looked calm)
+		double Bpm = 0.0;
+		if (Chosen.Style == STYLE_ANY && StyleArg(Args) < 0 && LooksCalm(S, Bpm)) {
+			Chosen.Style = STYLE_CALM;
+			Chosen.Note = Format("Calm: it looks calm (%s BPM, no drums), so it's reviewed as a calm track (style any reviews it as "
+				"any other).", FormatNumber(std::floor(Bpm + 0.5)).c_str());
+		}
+	}
 	const bool Calm = Chosen.Style == STYLE_CALM, Lively = Chosen.Style == STYLE_LIVELY;
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
 	if (Form != "text" && Form != "short")
@@ -16772,7 +16833,11 @@ std::string ReviewTool(Session &S, const Json &Args)
 	Lines.push_back(Format("Length: %d bars, %s at %s.", BarCount, SecondsText(Seconds).c_str(), PaceText(S, false).c_str()));
 	Numbers.insert(Numbers.begin(), Format("%d bars, %s at %s", BarCount, SecondsText(Seconds).c_str(),
 		PaceText(S, false).c_str()));
-	if (Seconds > 0 && Seconds < 30 && BarCount <= 16 && !LoopFound)
+	// A song laid out as a small loop (song_shape's small shape: a shop, a menu, a house) is short by design: what_next
+	// chose its 14 bars, and the tip asked for 16 to 32 right after (the Odds and Ends Shop)
+	const SongShape *pLaidShape = LaidOutShape(S.Song.Sections, S.Song.TrackName, Bpm);
+	const bool ShortByShape = pLaidShape != 0 && pLaidShape->Id == "small";
+	if (Seconds > 0 && Seconds < 30 && BarCount <= 16 && !LoopFound && !ShortByShape)
 		Tip(0.0, "Under half a minute before it loops: game music heard for minutes wants more material, an A part and "
 			"a B part (16 to 32 bars or more).");
 
@@ -20134,8 +20199,20 @@ std::vector<Seam> FindSeams(Session &S, const std::vector<std::vector<Cell> > &C
 			else if (PitchFirst != PitchAgain && pFirst != 0) {
 				Seam H;
 				H.Channel = c;
-				H.Text = Format("%s: the first time, %s from the intro sounds into %s; on repeat, nothing does.",
-					Info.FullName().c_str(), PitchText(Info, PitchFirst).c_str(), Where.c_str());
+				H.Text = Format("%s: the first time, %s from the intro sounds into %s; on repeat, nothing does. Put a release (===) "
+					"or halt (---) there.", Info.FullName().c_str(), PitchText(Info, PitchFirst).c_str(), Where.c_str());
+				// Ending the intro's note at the loop's start changes nothing on repeat, where nothing sounds there (an
+				// instrument set there without a note would be lost with it). A sound that fades on a release fades there
+				if (Start.Instrument == NO_INSTRUMENT) {
+					const InstrumentInfo *pSound = FindInstrument(S.Song, pFirst->Instrument);
+					const bool Fades = pSound != 0 && pSound->Releases;
+					H.What = Fades ? SEAM_RELEASE : SEAM_HALT;
+					H.Row = LoopRow;
+					H.Done = Format("a %s on %s at %s, where %s from the intro rang into the loop the first time", Fades ?
+						"release (===)" : "halt (---)", Info.FullName().c_str(), Where.c_str(), PitchText(Info, PitchFirst).c_str());
+					Start.Note = Fades ? NOTE_RELEASE : NOTE_HALT;
+					Start.Octave = 0;
+				}
 				Seams.push_back(H);
 			}
 		}
@@ -22093,10 +22170,12 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	if (!S.Host().RenderTrack(Track, EndTick / Rate + 1.0, RenderOptions(), Left, Right, SampleRate, Marks, Error))
 		throw Problem("The track couldn't be rendered: " + Error);
 	Right.resize(Left.size());
-	// A DPCM level set on the song's first row steps the DMC's output up from silence there: a pop
+	// A DPCM level set on the song's first row steps the DMC's output up from silence there: a pop. Only where the channel
+	// plays samples: the mix sets Zxx on the first row of every song for the triangle's level, and the reply then spoke of
+	// the DPCM's pop on songs without one (FamiTracker starts the DMC at that level since feat-sfx-fixes anyway)
 	bool StartStep = false;
 	for (int c = 0; c < S.ChannelCount() && !StartStep; ++c) {
-		if (S.Channel(c).Kind != KIND_DPCM)
+		if (S.Channel(c).Kind != KIND_DPCM || S.Notes(c).empty())
 			continue;
 		const Cell &Start = Cells[static_cast<size_t>(c)][static_cast<size_t>(Rows[0].Row)];
 		for (int k = 0; k < Columns[static_cast<size_t>(c)] && !StartStep; ++k)
@@ -22193,8 +22272,12 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	if (!MixerList(S).empty())
 		Text += ", mixed as FamiTracker's mixer has it (View > Mixer)";
 	if (Loudness < 0.0 && Measured > -70.0) {
-		Text += Format(", %s at %.1f LUFS (%.1f dB %s than FamiTracker plays it)", Cut.Loops ? "its loop" : "it", Measured + Raised,
-			std::fabs(Raised), Raised >= 0.0 ? "louder" : "quieter");
+		// Said plainly, and the change only where there is one worth saying: the file is turned up or down from the level the
+		// song plays at in FamiTracker to reach the loudness asked
+		Text += Format(", %s at %.1f LUFS", Cut.Loops ? "its loop" : "it", Measured + Raised);
+		if (std::fabs(Raised) >= 0.5)
+			Text += Format(" (the file turned %s %.1f dB from how loud the song plays in FamiTracker, to reach that loudness)",
+				Raised >= 0.0 ? "up" : "down", std::fabs(Raised));
 		if (Short)	// BS.1770 gates in blocks of 400 ms, which a sound this short doesn't fill
 			Text += Format(", measured over its whole %.2f s (shorter than the 400 ms blocks loudness is gated in, so ungated)",
 				static_cast<double>(Kept.size()) / SampleRate);
@@ -22206,9 +22289,9 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	else if (Loudness < 0.0)
 		Text += ", silent, so its level stayed";
 	else if (Raised >= 0.1)
-		Text += Format(", %.1f dB louder than FamiTracker plays it (its loudest peak at -1 dBFS)", Raised);
+		Text += Format(", turned up %.1f dB from how loud the song plays in FamiTracker (its loudest peak at -1 dBFS)", Raised);
 	if (FadeIn > 0)
-		Text += Format(", fading in over its first %d ms (the DPCM level set as it starts pops)",
+		Text += Format(", fading in over its first %d ms (the drum samples' level, Zxx, set as it starts would click)",
 			static_cast<int>(FadeIn * 1000 / static_cast<size_t>(std::max(1, SampleRate))));
 	if (!Cut.Loops)
 		Text += Cut.Tail ? ", plays once (the song halts), its last notes ringing out in the mixer's space." :
