@@ -136,6 +136,11 @@ public:
 	// Help > Example songs: the song just opened from a file of its own becomes a new one without a file, named
 	// Title until it's saved (Save asks for a name)
 	void MakeUntitled(LPCTSTR Title);
+	// File > Backups... and the backup tools (Api/Backups.h): the song as it is saved to Path, leaving its own path, its
+	// modified flag and File > Save's .bak alone; and a backup just opened taking the song's own file back, so saving goes
+	// there, with changes to save
+	BOOL SaveCopy(LPCTSTR Path) const;
+	void TakeBackPath(LPCTSTR Path);
 	// Counts the songs this document has held (each new, opened or imported one), so a walkthrough of an example
 	// song sees another song come
 	unsigned int GetSongSerial() const { return m_iSongSerial; }

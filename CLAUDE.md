@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 40 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 43 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -1026,7 +1026,7 @@ or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRA
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
 (`CoreTools`) is `what_next` and every tool its steps call and `explain`, 38 (with `song_shape` and `listen`; 40 with
-the agent log's `write_log` and `read_user_notes`), not
+the agent log's `write_log` and `read_user_notes`; 43 with the backups' three), not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -1956,6 +1956,70 @@ bottom unless scrolled up (`Stick`), and adds a note with `LOG_USER`, then
 `CMcpConnection::SaveAgentLog`. FakeSong's `SongIdentity` counts `SongSerial`
 (New, Open, OpenText) and `FilesBeside` leaves the log out of the tests that
 count the files next to the song. `TestAgentLog` covers it.
+
+Intros that lead in (from `feat-tool-issues`, GitHub issue #1): a local model
+asked for a catchy, upbeat song wrote a slow, sparse intro and then started the
+whole band at once in A; asked to fix it, it made the intro quieter, so the jump
+grew. `IntroFinding` (beside `LoopFinding` in `Tools.cpp`, `ARRANGE_INTRO`,
+check_song's kind `intro` before `warble` in `CHECK_KIND`, severity medium;
+`PROBLEM_INTRO` in `ProblemList.h`, after `PROBLEM_LOOP`) measures the intro
+(`IntroShapeOf`: a section named Intro at the start, else the bars before the
+loop, up to `INTRO_MOST_BARS`) against the 4-8 bars after it: the rows a bar
+where any note starts (the pulse), the drums' hits and the main part's bass's
+notes a bar (the beat), whether the beat plays in the intro's last bar, and
+both as heard (`Hearing::Loudness`). The pulse jumps (`IntroPulseJumps`, not
+on a calm track) at `INTRO_PULSE_RATIO` with the beat coming in from under
+`INTRO_BEAT_SHARE` and no lead-in; the loudness at `INTRO_QUIET_DB` under.
+Its fix copies the loop's last bar's drums (else the bass) into the intro's
+last bar (`BarIntoMain`); the loudness alone is advice, its `Fix` null
+(`FixLine` writes no "Fix:"), and the review's older intro tip stays out when
+it's there. The constants were calibrated with a local harness (not
+committed) running check_song on the user's 43 liked songs
+(`/home/claude/songs/regress/keep`, never committed; `SongFiles.h` from
+`feat-busy-check` reads them): none gets it (comment before the constants).
+`what_next`'s intro (`WhatNext::Depth`) says it builds the intro in A's
+rhythm, and after the chords and bass are copied in, with drums and not calm,
+copies A's last bar of drums into the intro's last bar (`StepWhat`: "Bring the
+beat in"). `TestIntroFindings` and `TestWhatNextLoop` (no `intro` finding
+after a walk; the fill there with drums) cover it.
+
+Listening said plainly (from `feat-tool-issues`, GitHub issue #9): a local
+model told the user it can't actually listen to the song. `listen`'s
+description, its replies (the first line says it rendered the real audio and
+heard it as an ear would; every text reply ends with `LISTEN_EAR`: the user's
+own ear has the final word), `what_next`'s listen step (`WhatNext::Listened`),
+`ToolSet::Instructions` and `CoreInstructions` ("You can hear the song: listen
+renders its real audio..."; trimmed elsewhere to stay under the tests' 4,200
+characters) say so, and `play`, `compare_versions` and `check_song` no longer
+say "you can't hear": they play for the user's ears and point to `listen`.
+`TestListenSaysItHears` covers the texts.
+
+Backups (from `feat-tool-issues`, GitHub issue #4): `create_backup`,
+`list_backups` and `restore_backup` (`CreateBackupTool`, `ListBackupsTool`,
+`RestoreBackupTool` before the reference library in `Tools.cpp`;
+`KeepBackup`, `ReadSongBackups`) keep copies of the song in a Backups folder
+beside its file. `Source/Api/Backups.cpp` (portable) names them
+(`BackupFileName`: song, time to the minute, the label's plain words,
+`(2)` when taken), writes and reads the index (`<song> backups.txt`,
+`WriteBackupIndex`, `ReadBackupIndex`), lists what's on disk
+(`SongBackups`: the index's entries whose files are there, then the song's
+backup files it doesn't name) and finds one (`FindBackup`: number, label,
+words of one label). The host does the files (`SongHost::SaveBackup`,
+`ListBackups`, `ReadBackupText`, `WriteBackupText`, `OpenBackup`; defaults
+refuse): `CMcpLink` saves with `CFamiTrackerDoc::SaveCopy` (the private
+`SaveDocument`, so the song's path, modified flag and File > Save's `.bak`
+stay as they were, unlike `OnSaveDocument`), and restores by reading the
+backup with `nsf::ReadFtmFile` first, clearing the modified flag (the tools
+kept a backup of the changes), `theApp.OpenDocumentFile(Path, FALSE)` and
+`CFamiTrackerDoc::TakeBackPath` (the song's own file again, modified, the
+window's title). FakeSong keeps `BackupSongs` and `BackupTexts` the same way.
+File > Backups... (`ID_FILE_BACKUPS` 38220, `IDD_BACKUPS` 750, controls
+2740-2746) is `Source/BackupsDlg.cpp`: a report list from `list_backups`
+with `format` json, Create, Restore (asks first; `SongChanged` after) and
+Open folder, all through `CMcpConnection::RunTool` with `FromDialog`. The
+three are in `CoreTools` (43 now) and `AssistantToolKinds` (list reads, the
+others change), and `AfterCall` keeps them aside and logs them.
+`TestBackups` covers them.
 
 ## What this repository is
 

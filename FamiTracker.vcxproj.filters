@@ -1326,6 +1326,9 @@
     <ClCompile Include="Source\Api\AgentLog.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\Backups.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Png.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1465,6 +1468,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\AgentLog.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\Backups.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Png.h">
@@ -1670,7 +1676,13 @@
     <ClCompile Include="Source\AgentLogPanel.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\BackupsDlg.cpp">
+      <Filter>Recorder</Filter>
+    </ClCompile>
     <ClInclude Include="Source\AgentLogPanel.h">
+      <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\BackupsDlg.h">
       <Filter>Recorder</Filter>
     </ClInclude>
     <ClCompile Include="Source\BarsPlayer.cpp">

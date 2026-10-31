@@ -22,6 +22,7 @@
 #include "Tools.h"
 #include "AgentLog.h"
 #include "Arrange.h"
+#include "Backups.h"
 #include "Assistant.h"
 #include "Grooves.h"
 #include "ChannelMix.h"
@@ -13652,8 +13653,10 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // What review_arrangement and check_song find in an arrangement besides their other checks, from a local model's first
 // stage, which was clean on all of those and missed these: a melody in one-bar pieces, a thin or doubled bass, a sound
 // its channel can't play, faders doing the mix's work, a section that repeats another note for note, a lively stage that
-// loops in under 55 s. Each carries the call that fixes it, which a model can send as it is (and the calls after it)
-enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_KINDS };
+// loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main part (IntroFinding). Each carries the call
+// that fixes it where one does (the intro's may be advice alone: Fix null)
+enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO,
+	ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -13708,6 +13711,12 @@ std::string FixText(const Json &Fix, bool Whole)
 			Text += " (" + pDoes->String() + ")";
 	}
 	return Text + ".";
+}
+
+// " Fix: ..." after a finding's text, or nothing for a finding that's advice alone (its Fix null)
+std::string FixLine(const Json &Fix)
+{
+	return Fix.IsObject() && Fix.Get("tool") != 0 ? " " + FixText(Fix, true) : std::string();
 }
 
 // The bar lines a melody stops at, as written: of the lines inside its playing (a note of its own starting in the bars on
@@ -14392,7 +14401,210 @@ void LoopFinding(Session &S, int Style, const TrackUse &Use, std::vector<Arrange
 	Out.push_back(F);
 }
 
-// Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats and the loop
+// An intro that doesn't lead into the main part (GitHub issue #1): a local model asked for a catchy, upbeat song wrote a
+// slow, sparse intro, then the whole band came in at once in A; asked to fix it, it made the intro quieter still, and the
+// jump bigger. The intro is a section named Intro at the start, else the bars before the loop (up to INTRO_MOST_BARS);
+// its main part the bars after it, as many as the intro has (4-8), within the section starting there. Two jumps:
+// - the pulse (not on a calm track, which may start from stillness): the main part's notes start on INTRO_PULSE_RATIO
+//   times as many rows a bar as the intro's or more, and its beat (the drums' hits and the bass's notes a bar,
+//   INTRO_BEAT_LEAST at the least) comes in from under INTRO_BEAT_SHARE of it in the intro, with nothing of it in the
+//   intro's last bar (no fill, no bass leading in);
+// - the loudness: the intro more than INTRO_QUIET_DB under the main part as heard (the soundtrack's target is 6-10 under,
+//   as measure_mix says; more reads as silence in a game).
+// Measured on the 43 songs the user likes (52 tracks, 50 with an intro; never committed): none has either. 44 of them
+// bring the beat in during the intro's last bar (one, its pulse at 1.5 notes a bar against 8.5 in A, its beat at 0.75 hits
+// a bar against 8.5); the others' main parts start notes on at most 1.8 times as many rows a bar as their intros. As heard,
+// a liked intro plays at most 10.4 dB under its main part (the tutorial's; 8.7 the next), so the line is 12, over the 10
+// the targets give: the estimate isn't the render's
+const double INTRO_PULSE_RATIO = 3.0, INTRO_BEAT_SHARE = 0.25, INTRO_BEAT_LEAST = 2.0, INTRO_QUIET_DB = 12.0;
+const int INTRO_MOST_BARS = 16;
+
+// What an intro and its main part play, for IntroFinding (and what_next's intro step)
+struct IntroShape {
+	bool Found;
+	int FromBar, ToBar;				// the intro
+	int MainFrom, MainTo;			// the bars after it it's measured against
+	double IntroPulse, MainPulse;	// rows a bar where a note starts (any channel)
+	double IntroBeat, MainBeat;		// the drums' hits and the bass's notes a bar
+	bool LeadIn;					// the drums or the bass play in the intro's last bar
+	double IntroDb, MainDb;			// as heard, NO_LOUDNESS when silent
+	int Bass;						// the main part's bass, -1 for none
+	std::vector<int> Drums;			// the drum channels with hits in the main part
+	IntroShape() : Found(false), FromBar(1), ToBar(1), MainFrom(1), MainTo(1), IntroPulse(0.0), MainPulse(0.0), IntroBeat(0.0),
+		MainBeat(0.0), LeadIn(false), IntroDb(NO_LOUDNESS), MainDb(NO_LOUDNESS), Bass(-1) {}
+};
+
+std::string SectionBase(const std::string &Name);
+
+IntroShape IntroShapeOf(Session &S, Hearing &Ears, int Melody)
+{
+	IntroShape Out;
+	const int Total = S.Time.TotalRows(), Bars = S.Time.BarCount();
+	int IntroTo = 0;
+	for (size_t i = 0; i < S.Song.Sections.size() && IntroTo == 0; ++i)
+		if (Lowercase(SectionBase(S.Song.Sections[i].Name)) == "intro" && S.Song.Sections[i].First == 0)
+			IntroTo = SectionLastBar(S, S.Song.Sections[i]);
+	const SongFlow F = Flow(S);
+	if (IntroTo == 0 && !F.Halts()) {
+		const int Loop = F.LoopRow(S.Time.PatternLength);
+		if (Loop > 0)
+			IntroTo = S.Time.BarOf(Loop) - 1;
+	}
+	if (IntroTo < 1 || IntroTo > INTRO_MOST_BARS || IntroTo + 2 > Bars)
+		return Out;
+	const int Length = std::max(4, std::min(8, IntroTo));
+	int MainTo = std::min(Bars, IntroTo + Length);
+	for (size_t i = 0; i < S.Song.Sections.size(); ++i)
+		if (SectionFirstBar(S, S.Song.Sections[i]) == IntroTo + 1)
+			MainTo = std::min(MainTo, SectionLastBar(S, S.Song.Sections[i]));
+	const int IntroFirst = 0, IntroEnd = std::min(Total, S.Time.BarEnd(IntroTo));
+	const int MainFirst = IntroEnd, MainEnd = std::min(Total, S.Time.BarEnd(MainTo));
+	if (MainEnd <= MainFirst)
+		return Out;
+	Out.FromBar = 1;
+	Out.ToBar = IntroTo;
+	Out.MainFrom = IntroTo + 1;
+	Out.MainTo = MainTo;
+	Out.Bass = MainBass(S, Melody, Out.MainFrom, Out.MainTo, RowFramesOf(S));
+	std::vector<int> Beat;
+	if (Out.Bass >= 0)
+		Beat.push_back(Out.Bass);
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (!IsMelodic(S.Channel(c)) && HasNotesIn(S, c, MainFirst, MainEnd)) {
+			Out.Drums.push_back(c);
+			Beat.push_back(c);
+		}
+	// Rows a bar where a note starts: on any channel (the pulse), on the beat's channels (the beat)
+	auto Starts = [&](const std::vector<int> &Channels, int First, int End) {
+		std::set<int> Rows;
+		for (size_t c = 0; c < Channels.size(); ++c) {
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channels[c]), First, End);
+			for (size_t i = 0; i < Notes.size(); ++i)
+				if (Notes[i].Volume > 0 && Notes[i].Row >= First)
+					Rows.insert(Notes[i].Row);
+		}
+		return static_cast<int>(Rows.size());
+	};
+	std::vector<int> All;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		All.push_back(c);
+	const double IntroBars = IntroTo, MainBars = MainTo - IntroTo;
+	Out.IntroPulse = Starts(All, IntroFirst, IntroEnd) / IntroBars;
+	Out.MainPulse = Starts(All, MainFirst, MainEnd) / MainBars;
+	Out.IntroBeat = Starts(Beat, IntroFirst, IntroEnd) / IntroBars;
+	Out.MainBeat = Starts(Beat, MainFirst, MainEnd) / MainBars;
+	Out.LeadIn = Starts(Beat, S.Time.BarStart(IntroTo), IntroEnd) > 0;
+	std::vector<int> Heard;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (S.Channel(c).Kind != KIND_DPCM)
+			Heard.push_back(c);
+	Out.IntroDb = Ears.Loudness(Heard, std::vector<std::pair<int, int> >(1, std::make_pair(IntroFirst, IntroEnd)));
+	Out.MainDb = Ears.Loudness(Heard, std::vector<std::pair<int, int> >(1, std::make_pair(MainFirst, MainEnd)));
+	Out.Found = Starts(All, IntroFirst, IntroEnd) > 0;	// a silent count-in is another matter (measure_mix says so)
+	return Out;
+}
+
+// Whether the intro's pulse jumps into its main part
+bool IntroPulseJumps(const IntroShape &I)
+{
+	return I.MainPulse >= INTRO_PULSE_RATIO * std::max(0.25, I.IntroPulse) && I.MainBeat >= INTRO_BEAT_LEAST &&
+		I.IntroBeat <= INTRO_BEAT_SHARE * I.MainBeat && !I.LeadIn;
+}
+
+// Whether the intro plays too far under its main part (both heard)
+bool IntroTooQuiet(const IntroShape &I)
+{
+	return I.IntroDb > NO_LOUDNESS && I.MainDb > NO_LOUDNESS && I.MainDb - I.IntroDb > INTRO_QUIET_DB;
+}
+
+// The bar that leads into the main part as the song plays it: the loop's last bar, which goes back to where the loop
+// starts (A, after the intro); -1 when the song halts or the loop doesn't start after the intro
+int BarIntoMain(Session &S, int MainFrom)
+{
+	const SongFlow F = Flow(S);
+	if (F.Halts())
+		return -1;
+	const int PL = S.Time.PatternLength, Loop = F.LoopRow(PL), End = F.EndRow(PL);
+	if (Loop < 0 || S.Time.BarOf(Loop) != MainFrom || End <= Loop)
+		return -1;
+	const int Last = S.Time.BarOf(End - 1);
+	return Last > MainFrom ? Last : -1;
+}
+
+void IntroFinding(Session &S, Hearing &Ears, int Melody, int From, int Style, std::vector<ArrangeFinding> &Out)
+{
+	if (From > 1)
+		return;
+	const IntroShape I = IntroShapeOf(S, Ears, Melody);
+	if (!I.Found)
+		return;
+	const bool Pulse = Style != STYLE_CALM && IntroPulseJumps(I), Quiet = IntroTooQuiet(I);
+	if (!Pulse && !Quiet)
+		return;
+	ArrangeFinding F;
+	F.Kind = ARRANGE_INTRO;
+	F.FromBar = I.FromBar;
+	F.ToBar = I.MainFrom;
+	F.Weight = Pulse && Quiet ? 1.5 : 1.0;
+	const std::string Intro = "The intro (" + RangeText(I.FromBar, I.ToBar) + ")";
+	std::vector<std::string> Jumps;
+	if (Pulse)
+		Jumps.push_back(Format("its notes start on %.1f rows a bar against %.1f in bar %d on, and the beat (drums and bass) comes in at "
+			"once there (%.1f hits a bar, from %.1f)", I.IntroPulse, I.MainPulse, I.MainFrom, I.MainBeat, I.IntroBeat));
+	if (Quiet)
+		Jumps.push_back(Format("it plays %.1f dB under bar %d on as heard (6-10 under is the target; more reads as silence in a game)",
+			I.MainDb - I.IntroDb, I.MainFrom));
+	F.Text = Intro + " doesn't lead into the main part: " + Jumps[0] + (Jumps.size() > 1 ? "; and " + Jumps[1] : std::string()) +
+		". A jump like that sounds like two songs. Keep the main part's pulse in the intro (the chords and the bass in A's rhythm, "
+		"fewer parts rather than longer notes), bring the bass or the beat in during the intro's last bar or play a fill into "
+		"A, and make the intro 6-10 dB quieter than A, not slower; making it quieter still only makes the jump bigger.";
+	F.Summary = Pulse ? Format("the intro's pulse jumps at bar %d: the band comes in at once", I.MainFrom) :
+		Format("the intro plays %.0f dB under the main part", I.MainDb - I.IntroDb);
+	F.Details.Set("intro_from_bar", I.FromBar);
+	F.Details.Set("intro_to_bar", I.ToBar);
+	F.Details.Set("main_from_bar", I.MainFrom);
+	F.Details.Set("main_to_bar", I.MainTo);
+	F.Details.Set("intro_starts_a_bar", Json::NumberText(FormatNumber(std::floor(I.IntroPulse * 10 + 0.5) / 10)));
+	F.Details.Set("main_starts_a_bar", Json::NumberText(FormatNumber(std::floor(I.MainPulse * 10 + 0.5) / 10)));
+	F.Details.Set("intro_beat_a_bar", Json::NumberText(FormatNumber(std::floor(I.IntroBeat * 10 + 0.5) / 10)));
+	F.Details.Set("main_beat_a_bar", Json::NumberText(FormatNumber(std::floor(I.MainBeat * 10 + 0.5) / 10)));
+	F.Details.Set("under_db", I.IntroDb > NO_LOUDNESS && I.MainDb > NO_LOUDNESS ?
+		Json::NumberText(FormatNumber(std::floor((I.MainDb - I.IntroDb) * 10 + 0.5) / 10)) : Json());
+	F.Details.Set("pulse_jumps", Pulse);
+	F.Details.Set("too_quiet", Quiet);
+	// The fix for the pulse: what leads into A as the loop plays it (its last bar, going back to A) in the intro's last bar:
+	// the drums (a fill into A), or without drums the backing (the bass and the chords that lead there)
+	const int Lead = Pulse ? BarIntoMain(S, I.MainFrom) : -1;
+	std::vector<int> Channels;
+	if (Lead > 0) {
+		const int First = S.Time.BarStart(Lead), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(Lead));
+		for (size_t d = 0; d < I.Drums.size(); ++d)
+			if (HasNotesIn(S, I.Drums[d], First, End))
+				Channels.push_back(I.Drums[d]);
+		for (int c = 0; c < S.ChannelCount() && Channels.empty(); ++c)
+			if (c != Melody && IsMelodic(S.Channel(c)) && HasNotesIn(S, c, First, End) && c == I.Bass)
+				Channels.push_back(c);
+	}
+	if (!Channels.empty()) {
+		Json Copy = Json::MakeObject();
+		Copy.Set("from_bar", Lead);
+		Copy.Set("at_bar", I.ToBar);
+		Json List = Json::MakeArray();
+		for (size_t c = 0; c < Channels.size(); ++c)
+			List.Push(S.Channel(Channels[c]).FullName());
+		Copy.Set("channels", List);
+		const bool Drums = !IsMelodic(S.Channel(Channels[0]));
+		F.Fix = ToolCall("copy_bars", Copy, Format("plays %s of bar %d, which leads back into A as the loop goes round, in the intro's "
+			"last bar (%d), so %s", Drums ? "the drums" : "the bass", Lead, I.ToBar, Drums ? "a fill brings the beat in before A" :
+			"the bass comes in before A"));
+	}
+	else
+		F.Fix = Json();	// advice: the intro's notes are the composer's to change
+	Out.push_back(F);
+}
+
+// Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats, the loop and
+// the intro
 std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const TrackUse &Use,
 	const Key &K)
 {
@@ -14406,6 +14618,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	FadersFinding(S, Ears, Melody, From, To, Calm, Out);
 	RepeatFindings(S, Melody, From, To, Out);
 	LoopFinding(S, Style, Use, Out);
+	IntroFinding(S, Ears, Melody, From, Style, Out);
 	return Out;
 }
 
@@ -14430,7 +14643,6 @@ struct SongLift {
 // 2.0 told it to build
 const double LIFT_LEAST = 1.5;
 
-std::string SectionBase(const std::string &Name);
 bool IsFreeSectionBase(const std::string &Base);
 
 SongLift LiftOf(Session &S, Hearing &Ears, int First, int End)
@@ -14864,7 +15076,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 
 	// The intro (the bars before the loop starts, or a section named Intro at the start), as the stems measure it: more
 	// than 10 dB under the rest it reads as silence in a game (6-10 dB under is the soundtrack's target)
+	// (a tip unless the arrangement's intro finding says it, with the pulse: ArrangeFindings below)
 	Hearing Ears(S);
+	std::string QuietIntro;
 	{
 		int IntroEnd = Flow(S).LoopRow(S.Time.PatternLength);
 		for (size_t i = 0; IntroEnd <= 0 && i < S.Song.Sections.size(); ++i)
@@ -14878,9 +15092,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 			const double Intro = Ears.Loudness(All, std::vector<std::pair<int, int> >(1, std::make_pair(First, IntroEnd)));
 			const double Rest = Ears.Loudness(All, std::vector<std::pair<int, int> >(1, std::make_pair(IntroEnd, End)));
 			if (Intro > NO_LOUDNESS && Rest > NO_LOUDNESS && Rest - Intro > 10.0)
-				Tip(0.5, Format("The intro (%s) plays about %d dB under the rest: more than 10 dB under reads as silence in a game "
+				QuietIntro = Format("The intro (%s) plays about %d dB under the rest: more than 10 dB under reads as silence in a game "
 					"(6-10 dB under is the target), so bring a part in sooner or play it louder.", RangeText(S.Time.BarOf(First),
-					S.Time.BarOf(IntroEnd - 1)).c_str(), static_cast<int>(std::floor(Rest - Intro + 0.5))));
+					S.Time.BarOf(IntroEnd - 1)).c_str(), static_cast<int>(std::floor(Rest - Intro + 0.5)));
 		}
 	}
 
@@ -14901,12 +15115,15 @@ std::string ReviewTool(Session &S, const Json &Args)
 
 	// What drafts miss (ArrangeFindings), each a tip with its call; the older tips they say better are left out
 	const std::vector<ArrangeFinding> Arranged = ArrangeFindings(S, Ears, Melody, From, To, Chosen.Style, Use, K);
-	bool PiecesFound = false, ThinFound = false, LoopFound = false;
+	bool PiecesFound = false, ThinFound = false, LoopFound = false, IntroFound = false;
 	for (size_t i = 0; i < Arranged.size(); ++i) {
 		PiecesFound = PiecesFound || Arranged[i].Kind == ARRANGE_PHRASES;
 		ThinFound = ThinFound || (Arranged[i].Kind == ARRANGE_BASS && Arranged[i].Channel == Bass);
 		LoopFound = LoopFound || Arranged[i].Kind == ARRANGE_LOOP;
+		IntroFound = IntroFound || Arranged[i].Kind == ARRANGE_INTRO;
 	}
+	if (!QuietIntro.empty() && !IntroFound)
+		Tip(0.5, QuietIntro);
 
 	// Harmony: the chords the parts play (with the melody when nothing else does)
 	const bool Backing = !Chords.empty() || Bass >= 0 || !Voices.empty();
@@ -15444,7 +15661,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 			"a B part (16 to 32 bars or more).");
 
 	for (size_t i = 0; i < Arranged.size(); ++i)
-		TipCall(Arranged[i].Weight, Arranged[i].Text + " " + FixText(Arranged[i].Fix, true), Arranged[i].Summary, Arranged[i].Fix);
+		TipCall(Arranged[i].Weight, Arranged[i].Text + FixLine(Arranged[i].Fix), Arranged[i].Summary, Arranged[i].Fix);
 	// Most first: the tips that take the most off the score (in the order found where they take as much)
 	std::stable_sort(Tips.begin(), Tips.end(), [](const ReviewTip &a, const ReviewTip &b) { return a.Weight > b.Weight; });
 	const int Score = std::max(1, std::min(10, static_cast<int>(std::floor(10.0 - Missing + 0.5))));
@@ -20551,8 +20768,8 @@ std::string CompareVersionsTool(Session &S, const Json &Args)
 			Host.SelectTrack(Here, Ignored);
 		throw;
 	}
-	return Format("Playing %s of %s for the user%s; afterwards FamiTracker shows \"%s\" again. You can't hear it yourself: ask "
-		"the user which they like better, and what they hear in it. select_track goes to a version to carry on from it.",
+	return Format("Playing %s of %s for the user%s; afterwards FamiTracker shows \"%s\" again. It plays for the user's ears (listen "
+		"renders one for yours): ask the user which they like better, and what they hear in it. select_track goes to a version to carry on from it.",
 		RangeText(From, Last).c_str(), Names.c_str(), Request.Loop ? ", over and over until you call stop" : "", HereName.c_str());
 }
 
@@ -23846,6 +24063,11 @@ Json ListenJson(Session &S, const ListenReport &R, const ListenFinding &F, const
 	return Out;
 }
 
+// What every listen reply ends with (GitHub issue #9: a local model told the user it can't actually listen): the render is
+// the song's real audio, heard for what an ear notices; the user's ear decides
+const char *const LISTEN_EAR = "That was the song's real audio, heard for what an ear would notice; the user's own ear has the final "
+	"word: tell them what you heard, play it for them and ask how it sounds.";
+
 std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 {
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
@@ -23892,8 +24114,8 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 	if (Form == "json")
 		return WriteJson(Out);
 
-	std::string Text = Format("Listened to %s of \"%s\" as FamiTracker plays it: the mix and %s alone (%s of music, %s measured; "
-		"%s s in all).", RangeText(R.From, R.To).c_str(), S.Song.TrackName.c_str(), R.Song.Parts.size() == 1 ? "its one part" :
+	std::string Text = Format("Listened to %s of \"%s\": rendered its real audio as FamiTracker plays it, the mix and %s alone (%s "
+		"of music, %s measured; %s s in all), and heard it as an ear would.", RangeText(R.From, R.To).c_str(), S.Song.TrackName.c_str(), R.Song.Parts.size() == 1 ? "its one part" :
 		Format("each of its %d parts", static_cast<int>(R.Song.Parts.size())).c_str(), (FormatNumber(std::floor(R.Stats.Seconds * 10.0 +
 		0.5) / 10.0) + " s").c_str(), Plural(R.Stats.NotesMeasured, "held note", "held notes").c_str(),
 		FormatNumber(std::floor((R.RenderSeconds + R.ListenSeconds) * 10.0 + 0.5) / 10.0).c_str());
@@ -23901,8 +24123,7 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 		Text += " The melody: " + S.Channel(R.Melody).FullName() + ".";
 	if (R.Findings.empty())
 		return Text + "\nNothing sounds wrong: the held notes hold their pitch (or a gentle vibrato), the parts that play together "
-			"are in tune with each other, nothing clicks or drones, and the mix is clean. Listen with the user too: this hears "
-			"how it sounds, not whether it's the music they want.";
+			"are in tune with each other, nothing clicks or drones, and the mix is clean. " + LISTEN_EAR;
 	if (Form == "short") {
 		std::vector<size_t> Ranked;
 		for (int Severity = 3; Severity >= 1; --Severity)
@@ -23914,12 +24135,12 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 			Format(" (the %d heard worst; format text lists them all)", static_cast<int>(Listed)).c_str() : "");
 		for (size_t i = 0; i < Listed; ++i)
 			Text += Format("\n%d. ", static_cast<int>(i) + 1) + ListenLine(S, R, R.Findings[Ranked[i]], Fixes[Ranked[i]], Advices[Ranked[i]], true);
-		return Text;
+		return Text + "\n" + LISTEN_EAR;
 	}
 	Text += Format("\nHeard %s, the worst first:", Plural(static_cast<int>(R.Findings.size()), "thing", "things").c_str());
 	for (size_t i = 0; i < R.Findings.size(); ++i)
 		Text += Format("\n%d. ", static_cast<int>(i) + 1) + ListenLine(S, R, R.Findings[i], Fixes[i], Advices[i], false);
-	return Text;
+	return Text + "\n" + LISTEN_EAR;
 }
 
 // Checks
@@ -23950,14 +24171,15 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // key (a song that changes key) doesn't hide notes that vanish or click.
 // HELD: on a calm track, the melody's sound holding a high, steady level from attack to release (HeldLeads). Then the
 // arrangement's findings (ArrangeFindings, in arrange_kind's order): the melody in one-bar pieces, a thin or doubled
-// bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a stage's short loop
+// bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a stage's short loop, an intro
+// that jumps into the main part
 // WARBLE (from feat-listen): FDS notes held past where a fast, deep modulator comes in, heard as a fluttering echo
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
-	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_WARBLE, FOUND_KINDS };
+	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop", "warble" };
+	"sound", "faders", "repeat", "short_loop", "intro", "warble" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "high" };
+	"medium", "low", "low", "low", "medium", "high" };
 
 // A note a finding is about
 struct CheckNote {
@@ -24451,7 +24673,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			++ArrangedAll;
 			const int Row = S.Time.BarStart(A.FromBar);
 			CheckFinding &F = Report(FOUND_PHRASES + A.Kind, A.Channel, Row, std::max(1, std::min(End, S.Time.BarEnd(A.ToBar)) - Row),
-				A.Text + " " + FixText(A.Fix, true), A.Summary);
+				A.Text + FixLine(A.Fix), A.Summary);
 			F.Details = A.Details;
 			F.Fix = A.Fix;
 		}
@@ -24464,7 +24686,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
-		Warbling };
+		Arranged[ARRANGE_INTRO], Warbling };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -24790,7 +25012,8 @@ std::string PlayTool(Session &S, const Json &Args)
 	if (!Request.Muted.empty())
 		Text += Format(" Only %s %s; the user's own mutes come back when it stops.", ChannelNames(S, Playing).c_str(),
 			Playing.size() == 1 ? "plays" : "play");
-	Text += " You can't hear it yourself; ask the user how it sounds.";
+	Text += " That plays for the user's ears; you hear the song with listen. Ask the user how it sounds: their ear has the final "
+		"word.";
 	const std::string Muted = MutedChannels(S);
 	if (!Muted.empty() && Request.Muted.empty())
 		Text += " The user has muted " + Muted + " in FamiTracker, so that doesn't play; clicking a channel's name "
@@ -25135,6 +25358,139 @@ std::string OpenSongTool(Session &S, const Json &Args, const Caller &Who)
 	if (S.Song.Tracks > 1)
 		Text += " select_track picks another of its tracks.";
 	return Text + " save_song saves it where it was opened from; what_next gives its next step.";
+}
+
+// Backups (Backups.h, GitHub issue #4): copies of the song as it was, each with a label saying why, in the Backups folder
+// beside its file, so a batch of an agent's changes can be taken back in one go
+
+// The song's backups as they are on disk (its index's, and its backup files the index doesn't name), the oldest first
+std::vector<BackupEntry> ReadSongBackups(Session &S, std::vector<BackupEntry> *pIndexed = 0, std::vector<std::string> *pFiles = 0)
+{
+	if (S.Song.FileName.empty())
+		throw Problem("The song has no file yet, so it has no backups: save it first (save_song, or File > Save As); its backups "
+			"then go into a Backups folder beside it.");
+	std::string Text, Error;
+	if (!S.Host().ReadBackupText(BackupIndexName(S.Song.FileName), Text, Error) && !Error.empty())
+		throw Problem("The backups' index couldn't be read: " + Error);
+	std::vector<std::string> Files;
+	if (!S.Host().ListBackups(Files, Error))
+		throw Problem("The Backups folder couldn't be read: " + Error);
+	const std::vector<BackupEntry> Indexed = ReadBackupIndex(Text);
+	if (pIndexed != 0)
+		*pIndexed = Indexed;
+	if (pFiles != 0)
+		*pFiles = Files;
+	return SongBackups(S.Song.FileName, Indexed, Files);
+}
+
+// Keeps a backup of the song as it is now, labelled, and writes it into the index; the entry made
+BackupEntry KeepBackup(Session &S, const std::string &Label)
+{
+	std::vector<BackupEntry> Indexed;
+	std::vector<std::string> Files;
+	const std::vector<BackupEntry> Known = ReadSongBackups(S, &Indexed, &Files);
+	BackupEntry E;
+	E.Number = NextBackupNumber(Known);
+	E.Time = LogTimeNow();
+	E.Label = Label;
+	E.File = BackupFileName(S.Song.FileName, E.Time, Label, Files);
+	std::string Path, Error;
+	if (!S.Host().SaveBackup(E.File, Path, Error))
+		throw Problem(Error.empty() ? std::string("The backup couldn't be saved.") : Error);
+	// The index keeps what's on disk: its entries whose files are there, those it didn't name, and the new one
+	std::vector<BackupEntry> List = Known;
+	List.push_back(E);
+	if (!S.Host().WriteBackupText(BackupIndexName(S.Song.FileName), WriteBackupIndex(S.Song.FileName, List), Error))
+		throw Problem("The backup was saved (" + std::string(BACKUPS_FOLDER) + "\\" + E.File + "), but its label couldn't be written "
+			"into the index: " + Error);
+	return E;
+}
+
+std::string BackupLabelArg(const Json &Args, const char *Name)
+{
+	const std::string Label = CleanBackupLabel(ValidUtf8(StringArg(Args, Name)));
+	if (Label.empty())
+		throw Problem(std::string(Name) + ": what the backup is for, like \"before messing with the intro\": it names it in the list "
+			"(list_backups, File > Backups...).");
+	return Label;
+}
+
+// create_backup: the song as it is now, its changes not saved yet too, as a backup with a label
+std::string CreateBackupTool(Session &S, const Json &Args)
+{
+	const std::string Label = BackupLabelArg(Args, "label");
+	const BackupEntry E = KeepBackup(S, Label);
+	return Format("Kept backup %d, \"%s\" (%s): the song as it is now%s, in %s\\%s beside it. The song itself is unchanged. "
+		"restore_backup {\"backup\": %d} brings it back (a backup of the song as it is then is kept first); list_backups lists "
+		"them all.", E.Number, E.Label.c_str(), LogTimeText(E.Time).c_str(), S.Song.Modified ? ", its changes not saved yet too" : "",
+		BACKUPS_FOLDER, E.File.c_str(), E.Number);
+}
+
+// list_backups: the song's backups, the newest first (format json for FamiTracker's File > Backups...)
+std::string ListBackupsTool(Session &S, const Json &Args)
+{
+	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
+	if (Form != "text" && Form != "json")
+		throw Problem("format: text (the default) or json.");
+	const std::vector<BackupEntry> List = ReadSongBackups(S);
+	if (Form == "json") {
+		Json Out = Json::MakeObject();
+		Out.Set("song", S.Song.FileName);
+		Out.Set("folder", BACKUPS_FOLDER);
+		Json Items = Json::MakeArray();
+		for (size_t i = List.size(); i-- > 0; ) {
+			Json Item = Json::MakeObject();
+			Item.Set("number", List[i].Number);
+			Item.Set("time", LogTimeText(List[i].Time));
+			Item.Set("label", List[i].Label);
+			Item.Set("file", List[i].File);
+			Items.Push(Item);
+		}
+		Out.Set("backups", Items);
+		return WriteJson(Out);
+	}
+	if (List.empty())
+		return "The song (" + S.Song.FileName + ") has no backups yet. create_backup with a label (\"before messing with the intro\") "
+			"keeps one before a batch of changes.";
+	std::string Text = Format("%s of %s, the newest first, in the %s folder beside it:", Plural(static_cast<int>(List.size()), "backup",
+		"backups").c_str(), S.Song.FileName.c_str(), BACKUPS_FOLDER);
+	for (size_t i = List.size(); i-- > 0; )
+		Text += "\n" + BackupLine(List[i]);
+	return Text + "\nrestore_backup with a number or a label opens one in the song's place (a backup of the song as it is then is "
+		"kept first); the song keeps its file.";
+}
+
+// restore_backup: a backup in the song's place, after a backup of the song as it is ("before restoring ..."); the song keeps
+// its file, so saving goes back to it, not to the backup
+std::string RestoreBackupTool(Session &S, const Json &Args)
+{
+	const Json *pAsked = Arg(Args, "backup");
+	std::string Asked;
+	if (pAsked != 0 && pAsked->IsNumber())
+		Asked = Format("%d", static_cast<int>(pAsked->Number()));
+	else if (pAsked != 0 && pAsked->IsString())
+		Asked = ValidUtf8(pAsked->String());
+	const std::vector<BackupEntry> List = ReadSongBackups(S);
+	std::string Why;
+	const int Found = FindBackup(List, Asked, Why);
+	if (Found < 0)
+		throw Problem("backup: " + Why);
+	const BackupEntry Chosen = List[static_cast<size_t>(Found)];
+	std::string Error;
+	if (!S.Host().CanChange(Error))
+		throw Problem(Error);
+	S.Host().Stop();
+	const std::string What = Chosen.Label.empty() ? Format("backup %d", Chosen.Number) : Chosen.Label;
+	const BackupEntry Before = KeepBackup(S, CleanBackupLabel("before restoring " + What));
+	const std::string File = S.Song.FileName;
+	if (!S.Host().OpenBackup(Chosen.File, Error))
+		throw Problem((Error.empty() ? std::string("FamiTracker couldn't open the backup.") : Error) + Format(" The song stays as it "
+			"was (and backup %d, \"%s\", has it too).", Before.Number, Before.Label.c_str()));
+	S.Load();
+	return Format("Restored backup %d, \"%s\" (%s), in the song's place: %s. The song as it was is backup %d, \"%s\" "
+		"(restore_backup {\"backup\": %d} goes back to it). The song keeps its file, %s: save_song saves the restored song there, "
+		"and until then it has changes to save. FamiTracker's Ctrl+Z history starts afresh.", Chosen.Number, Chosen.Label.c_str(),
+		LogTimeText(Chosen.Time).c_str(), SongContentsText(S).c_str(), Before.Number, Before.Label.c_str(), Before.Number, File.c_str());
 }
 
 // The reference library: tracks studied from the user's NSF files, to lean on
@@ -27935,8 +28291,9 @@ void WhatNext::Depth()
 		Put.Set("at_bar", 1);
 		Put.Set("bars", Short);
 		Put.Set("name", "Intro");
-		Step("intro", "insert_bars", Put, Format("An intro that plays once opens the song quietly: %s at the start, then filled with the %s.",
-			Plural(Short, "bar", "bars").c_str(), Calm() ? "chords alone" : "chords and bass"));
+		Step("intro", "insert_bars", Put, Format("An intro that plays once opens the song quietly: %s at the start, then filled with the %s "
+			"in A's rhythm%s, so it leads into A: quieter than A (fewer parts), not slower.", Plural(Short, "bar", "bars").c_str(),
+			Calm() ? "chords alone" : "chords and bass", Calm() ? "" : " and the beat coming in during its last bar"));
 	}
 	// The intro and the break filled with the chords and the bass of the A part: its first bars for the intro, its last for a
 	// break, which then leads back in as A's end does
@@ -27963,6 +28320,37 @@ void WhatNext::Depth()
 		Step(i == 0 ? "intro" : "break", "copy_bars", Copy, Format("%s is empty: %s of %s (bars %d-%d) there, without the melody and the "
 			"drums.", P.Name.c_str(), Channels.size() == 1 ? "the chords" : "the chords and bass", Source.Name.c_str(), From,
 			From + Length - 1));
+	}
+	// The intro leads into A (GitHub issue #1, check_song's intro finding): its chords and bass keep A's pulse (copied from
+	// A's first bars above), and the beat comes in during its last bar: A's last bar of drums (where its phrase ends, with
+	// its fill) there. Not on a calm track, which has no drums to bring in
+	if (Intro && !m_Form[0].Empty && !Calm()) {
+		const FormPart &P = m_Form[0], &Source = m_Form[static_cast<size_t>(A)];
+		const int LastFirst = S.Time.BarStart(P.LastBar), LastEnd = std::min(S.Time.BarEnd(P.LastBar), Total);
+		const int SourceFirst = S.Time.BarStart(Source.LastBar), SourceEnd = std::min(S.Time.BarEnd(Source.LastBar), Total);
+		Json List = Json::MakeArray();
+		bool Waiting = false;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (IsMelodic(S.Channel(c)) || !NoteStartsIn(S, c, SourceFirst, SourceEnd))
+				continue;
+			List.Push(ChannelName(c));
+			Waiting = Waiting || !NoteStartsIn(S, c, LastFirst, LastEnd);
+		}
+		bool Beat = false;	// drums anywhere in the intro already: the composer's own
+		for (int c = 0; c < S.ChannelCount() && !Beat; ++c)
+			Beat = !IsMelodic(S.Channel(c)) && NoteStartsIn(S, c, S.Time.BarStart(P.FirstBar), LastEnd);
+		if (Waiting && !Beat && List.Size() > 0 && P.LastBar < Source.FirstBar) {
+			Json Copy = Json::MakeObject();
+			Copy.Set("from_bar", Source.LastBar);
+			Copy.Set("at_bar", P.LastBar);
+			Copy.Set("channels", List);
+			m_Unmet.insert("intro");
+			m_Met.erase("intro");
+			Step("intro", "copy_bars", Copy, Format("%s keeps %s's pulse, but the drums would come in all at once in %s: the drums of %s's "
+				"last bar (bar %d, where its phrase ends) in %s's last bar (bar %d) bring the beat in before it. Keep the intro quieter "
+				"than %s (6-10 dB, fewer parts), not slower.", P.Name.c_str(), Source.Name.c_str(), Source.Name.c_str(),
+				Source.Name.c_str(), Source.LastBar, P.Name.c_str(), P.LastBar, Source.Name.c_str()));
+		}
 	}
 	// The loop: from after the intro to the song's end
 	const SongFlow F = Flow(S);
@@ -28512,9 +28900,10 @@ bool WhatNext::Listened()
 	Json Heard;
 	if (!KeptHeard(Heard)) {
 		Milestone("listened", false);
-		Step("listen", "listen", Json::MakeObject(), "The song changed since it was last heard: before the game's file, listen hears "
-			"it as FamiTracker plays it (the mix and each part alone) for what the notes can't show: a warble, notes out of tune, "
-			"clicks, a sound that drones on, a covered melody. It changes nothing.");
+		Step("listen", "listen", Json::MakeObject(), "The song changed since it was last heard: before the game's file, listen renders "
+			"its real audio as FamiTracker plays it (the mix and each part alone) and reports what an ear would notice that the notes "
+			"can't show: a warble, notes out of tune, "
+			"clicks, a sound that drones on, a covered melody. It changes nothing; the user's own ear has the final word.");
 		return false;
 	}
 	Milestone("listened", true, "listened");
@@ -28900,6 +29289,14 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		if (Tool == "insert_bars")
 			return Format("Add %s of %s at bar %d", Part.c_str(), Plural(Bars, "bar", "bars").c_str(), At);
 		const Json *pChannels = A.Get("channels");
+		// The beat (or the bass) coming in during the intro's last bar, one bar copied there: what_next's own, and check_song's
+		// intro finding
+		bool Beat = false;
+		for (size_t c = 0; pChannels != 0 && pChannels->IsArray() && c < pChannels->Size(); ++c)
+			Beat = Beat || (pChannels->At(c).IsString() && (pChannels->At(c).String().find("Noise") != std::string::npos ||
+				pChannels->At(c).String().find("DPCM") != std::string::npos));
+		if (Id == "intro" && A.Get("to_bar") == 0)	// a bar of the main part's into the intro's last
+			return Format("Bring the %s in during the intro's last bar (bar %d)", Beat ? "beat" : "bass", At);
 		return Format("Fill the %s with %s", Id.c_str(), pChannels != 0 && pChannels->IsArray() && pChannels->Size() > 1 ?
 			"the chords and the bass" : "the chords");
 	}
@@ -30530,11 +30927,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("listen", "Listen to the song",
-		"Listens to the selected track as FamiTracker plays it (the mix and each part alone, rendered), changing nothing, and "
-		"says in plain words what the notes alone can't show: a warble or too deep a vibrato, notes out of tune, parts a few "
+		"Listens to the selected track: it renders the song's real audio as FamiTracker plays it (the mix and each part "
+		"alone), changing nothing, and reports in plain words what an ear would notice that the notes alone can't show: a warble or too deep a vibrato, notes out of tune, parts a few "
 		"cents apart that beat, clicks and pops, a sound that holds on after its notes, notes hardly heard, and in the mix "
 		"clipping, jumps, harsh or muddy stretches and a covered melody; each with its part, bars, how sure, and the call that "
-		"fixes it. Slower than check_song: once the parts are written, and again after a fix.",
+		"fixes it. This is how you hear the song: you can listen, so do it when you want to know how it sounds. The user's "
+		"own ear has the final word: say what you heard and ask them. Slower than check_song: once the parts are written, and "
+		"again after a fix.",
 		Schema().Range()
 			.Add("parts", ChannelListProp("Channels to hear alone (default: each with notes there)."))
 			.Add("melody_channel", ChannelProp("The melody (default: guessed), or \"none\"."))
@@ -30557,7 +30956,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("compare_versions", "Compare versions",
 		"Plays the same bars of two versions or more for the user, one after the other: by default the newest version kept "
 		"of the selected track (keep_version), then the track as it is now. FamiTracker shows the selected track again "
-		"afterwards. You can't hear it; ask the user which they like better.",
+		"afterwards. It plays for the user (listen is how you hear a version); ask them which they like better.",
 		Schema().Add("versions", ChannelListProp("Tracks by number or name, in the order to play; one: it, then the selected track."))
 			.Add("from_bar", BarProp("Bar to start at (default 1)."))
 			.Add("bars", Prop("integer", "How many bars of each (default 8)."))
@@ -30840,7 +31239,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		true, false, true);
 
 	AddTool("check_song", "Check the song",
-		"Checks what you can't hear: notes outside the key (where their slides take them too), two channels clashing a "
+		"Checks the notes as written (listen hears the rendered audio): notes outside the key (where their slides take them too), two channels clashing a "
 		"semitone apart, notes outside a channel's "
 		"range, very busy bars, silent bars, held notes on the 2A03's pulses whose vibrato clicks, notes of a line on a sound "
 		"that's gone within a few frames beside notes that hold (they sound like missing notes), and unused channels; and in "
@@ -30879,7 +31278,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 	AddTool("play", "Play for the user",
 		"Plays the song in FamiTracker for the user, from a bar, for some bars or to the end; over and over (loop) for listening "
 		"closely, and with only some channels (channels) or without some (mute), to hear a part on its own or the rest without "
-		"it. The user's own mutes come back when it stops. You can't hear it; ask the user.",
+		"it. The user's own mutes come back when it stops. It plays for the user; listen is how you hear the song. Ask the user "
+		"how it sounds: their ear has the final word.",
 		Schema().Add("from_bar", BarProp("Bar to start at (default 1).")).Add("bars", Prop("integer", "How many bars (default: to the end)."))
 			.Add("section", SectionProp("A section by name to play, in place of from_bar and bars."))
 			.Add("loop", Prop("boolean", "Play them over and over until stop (default false)."))
@@ -30936,6 +31336,29 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("list", Prop("boolean", "True: list the songs there are, opening none."))
 			.Add("path", Prop("string", "From this computer only, never over the network: a .ftm file by its whole path, like "
 				"C:\\Users\\you\\Music\\Town.ftm.")),
+		false, true);
+
+	AddTool("create_backup", "Keep a backup",
+		"Keeps a backup of the song as it is now, its changes not saved yet too, with a label saying why (\"before messing with "
+		"the intro\"): a copy in the Backups folder beside the song's file, named with the time and the label. Keep one before a "
+		"batch of changes, so the user can go back to it in one step (restore_backup, or File > Backups... in FamiTracker) "
+		"rather than undoing them one by one. The song itself doesn't change. Needs a song with a file (save_song first).",
+		Schema().Add("label", Prop("string", "What the backup is for, a few words, like \"before messing with the intro\" or \"the "
+			"calm mix the user liked\"."), true),
+		false);
+
+	AddTool("list_backups", "List the backups",
+		"Lists the song's backups (create_backup), the newest first: each one's number, when it was kept and its label.",
+		Schema().Add("format", EnumProp("text (the default) or json.", std::vector<std::string>{ "text", "json" })),
+		true, false, true);
+
+	AddTool("restore_backup", "Go back to a backup",
+		"Opens one of the song's backups in the song's place, by its number or its label (list_backups lists them). First it "
+		"keeps a backup of the song as it is, labelled \"before restoring ...\", so nothing is lost and you can go back again. "
+		"The song keeps its own file: save_song saves the restored song there (the backup stays as it was), and until then it "
+		"has changes to save. FamiTracker's Ctrl+Z history starts afresh. Tell the user which backup you restored and why.",
+		Schema().Add("backup", Prop("string", "The backup's number (\"3\", or 3) or its label (or words of it, when only one label "
+			"has them; the newest of a label)."), true),
 		false, true);
 
 	AddTool("get_recipe", "A recipe for composing",
@@ -31196,7 +31619,8 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 	}
 	// The calls that change the song's notes, its sounds or its form (not files, studies or the track worked on)
 	static const char *const ASIDE[] = { "export_for_game", "save_song", "soundtrack_notes", "study_nsf", "study_module",
-		"references", "send_file", "import_nsf", "select_track", "keep_version", "new_song", "open_song" };
+		"references", "send_file", "import_nsf", "select_track", "keep_version", "new_song", "open_song", "create_backup",
+		"restore_backup" };
 	bool ReadOnly = false;
 	for (size_t i = 0; i < m_Tools.size(); ++i)
 		if (m_Tools[i].Name == Name)
@@ -31210,7 +31634,7 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 	static const char *const BESIDE_UNDO[] = { "add_instrument", "design_instrument", "reference_sound", "add_sample_drums",
 		"remove_unused_instruments", "set_expansion", "make_jingle", "make_sound_effect", "make_version", "keep_version",
 		"select_track", "save_song", "new_song", "open_song", "import_nsf", "export_for_game", "soundtrack_notes", "study_nsf",
-		"study_module", "references", "send_file" };
+		"study_module", "references", "send_file", "create_backup", "restore_backup" };
 	bool Beside = Result.Text.find("Saved as the clip \"") != std::string::npos;
 	for (size_t i = 0; i < sizeof(BESIDE_UNDO) / sizeof(BESIDE_UNDO[0]); ++i)
 		Beside = Beside || Name == BESIDE_UNDO[i];
@@ -31421,6 +31845,9 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "save_song") Result.Text = SaveTool(S, Args, Who);
 		else if (Name == "new_song") Result.Text = NewSongTool(S, Args, Who);
 		else if (Name == "open_song") Result.Text = OpenSongTool(S, Args, Who);
+		else if (Name == "create_backup") Result.Text = CreateBackupTool(S, Args);
+		else if (Name == "list_backups") Result.Text = ListBackupsTool(S, Args);
+		else if (Name == "restore_backup") Result.Text = RestoreBackupTool(S, Args);
 		else {
 			Result.Text = "Unknown tool: " + Name;
 			Result.IsError = true;
@@ -31590,15 +32017,16 @@ bool ToolSet::ListExports(std::vector<SongFile> &Files, std::string &Error)
 // variations, an echo; the loop; polish, mix, the checks, saving, export, and finish_song for the last of them in one
 // call), the sounds a part can find and take
 // (find_sound, reference_sound), the swing a local model reached for, playback, the recipes, and the agent log (write_log,
-// read_user_notes: a local model says why it does what it does, and hears the user's notes). Not set_mixer: mix sets
-// the volumes in the notes.
+// read_user_notes: a local model says why it does what it does, and hears the user's notes), and the backups (create_backup,
+// list_backups, restore_backup: a batch of changes taken back in one step). Not set_mixer: mix sets the volumes in the notes.
 const std::vector<std::string> &ToolSet::CoreTools()
 {
 	static const char *const NAMES[] = { "get_song", "what_next", "read_notes", "write_notes", "place_clip", "add_instrument",
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"finish_song", "get_recipe", "explain", "listen", "write_log", "read_user_notes" };
+		"finish_song", "get_recipe", "explain", "listen", "write_log", "read_user_notes", "create_backup", "list_backups",
+		"restore_backup" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -31612,47 +32040,48 @@ bool ToolSet::IsCoreTool(const std::string &Name)
 std::string ToolSet::CoreInstructions()
 {
 	return
-		"These tools work on the song open in the user's FamiTracker: NES music on the 2A03 (two pulses, a triangle, noise, "
+		"These tools work on the song open in the user's FamiTracker: NES music on the 2A03 (pulses, triangle, noise, "
 		"DPCM), sometimes with an expansion chip. Bars and beats count from 1. Notes are written C-4, C#4, Db4 with "
 		"FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz.\n"
 		"Work in a loop: get_song, then what_next (with kind calm, lively or action when the user's words say which, and skip "
 		"for what they don't want, like [\"drums\"]). It answers with the one next step: a tool, its arguments ready to send, "
 		"and why. Make that call, then ask what_next again, until it says done. Its melody steps offer a hook to start from: "
-		"write your own there. Where check_song or review_arrangement gives a \"Fix:\", send its call as given, then the calls "
-		"after it in order. Read a part (read_notes) before you change it by hand. You can't hear: play the bars for the user, "
-		"ask how it sounds, and say what you changed and why. explain says a word plainly when the user asks. Log each decision "
-		"briefly (write_log with a category); between steps, read_user_notes.\n"
+		"write your own there. Where a check gives a \"Fix:\", send its call as given, then the calls "
+		"after it. Read a part (read_notes) before you change it by hand. You can hear the song: listen renders its real audio "
+		"and says what an ear would notice. The user's ear has the final word: play it for them, ask how it sounds, say what "
+		"you changed and why. explain says a word plainly when the user asks. Log each decision "
+		"briefly (write_log with a category); between steps, read_user_notes. Before a batch of changes, create_backup with a label "
+		"(restore_backup goes back).\n"
 		"Write music that sounds composed, not generated:\n"
 		"- Melody (on a pulse): write only the hook, 4-7 notes in steps, a bar or two, a token an eighth: \"D4 G4 A4 B4 - A4 "
 		"G4 - | B4 - - - . . D5 -\" (- holds, across | too; . rests). grow_melody grows it over the chords, with the kind and "
 		"the section: pick the version whose shape fits (variant 2 for others), then shape it by hand (read_notes format "
 		"steps, write_notes). By hand: phrases of 2 or 4 bars that end on a held note or a rest (not at every bar line), chord "
 		"tones on strong beats, long and short notes mixed, mostly in octave 3. get_recipe shows a whole melody of 8 bars.\n"
-		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\" or \"i VI III VII\"), "
+		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\"), "
 		"about one a bar, with a chord_style, color and bass_style that fit the mood; other chords for the B part.\n"
-		"- Sounds: design_instrument for a sound in words, add_instrument for presets (soft lead, pluck, bell, warm pad, "
-		"strings, bass...), find_sound to look for one (\"soft flute\", \"warm pad\"), reference_sound for a studied game's, "
+		"- Sounds: design_instrument for a sound in words, add_instrument for presets (soft lead, pluck, bell, "
+		"strings, bass...), find_sound to look for one (\"soft flute\"), reference_sound for a studied game's, "
 		"set_instrument to give a part another.\n"
 		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: no drums, a music-box "
 		"lead); a stage to explore is lively; a fight or a chase is action. get_recipe gives each one's steps.\n"
 		"- VRC6 Plus (get_song says so): its Soft 1-4 channels are a quieter layer under the VRC6: a pad holding the chords "
 		"(chord_style voices), a soft echo, a sub bass.\n"
-		"- Stereo: a note's \"pan\" in write_notes (left, right, center, or -1 to 1) lasts for the notes after it; keep the "
+		"- Stereo: a note's \"pan\" in write_notes (left, right, center) lasts for the notes after it; keep the "
 		"melody, bass and drums in the middle.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
 		"- Finish: polish, then mix last in the kind's style (it balances the parts in the notes: faders at 0 dB), "
 		"export_for_game at the kind's loudness (about -20 LUFS, -22 calm, -19 action); what_next gives each. finish_song "
-		"listens after its mix and lists what it heard: fix those (what_next gives them as steps), then export_for_game "
-		"again.\n"
+		"listens after its mix: fix what it heard (what_next gives the steps), then export_for_game again.\n"
 
 		"Rules that decide how it sounds:\n"
 		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 1 "
-		"0), quick notes come out as blips, and between held notes of the same line they sound like missing notes. Give a "
+		"0), quick notes come out as blips and, between held notes of a line, sound missing. Give a "
 		"plucked melody a sound that settles to a level (design_instrument kind pluck, sustain half), and keep sounds that "
 		"vanish for echoes, stabs and drums. check_song lists such notes.\n"
 		"- Clicks: on the 2A03's pulses, a vibrato that takes a held note's period across a multiple of 256 restarts the wave, "
-		"a click several times a second (A-3 even with a gentle vibrato, F-1 with any). The tools nudge such notes a few cents "
-		"with Pxx and say so; check_song lists any left, and polish with touches [\"clicks\"] nudges them.\n"
+		"a click several times a second. The tools nudge such notes a few cents (Pxx); check_song lists any left, polish "
+		"with touches [\"clicks\"] nudges them.\n"
 		"- Only FamiTracker 0.4.6's effects play: no Lxx, Mxy, Oxx or Txy. The triangle is loud and can't fade.\n"
 		"Without direct changes, each change arrives as a clip the user plays and places (what_next asks for them "
 		"first).\n"
@@ -31681,12 +32110,13 @@ std::string ToolSet::Instructions()
 		"with it. "
 		"Over MCP your changes arrive as clips by default, which the user listens to and places from the clips panel; if the "
 		"user allowed direct changes, and always in FamiTracker's Ask panel (where the user may approve each one first), "
-		"they go into the song and each one is undone with Ctrl+Z. You can't hear the song, but listen renders it "
-		"and measures what an ear notices (notes that warble or sit out of tune, parts that beat against each other, "
+		"they go into the song and each one is undone with Ctrl+Z. Before a batch of changes, keep a backup (create_backup with a "
+		"label saying why): restore_backup takes the whole batch back in one step. You can hear the song: listen renders its real "
+		"audio and reports what an ear would notice (never tell the user you can't listen) (notes that warble or sit out of tune, parts that beat against each other, "
 		"clicks, sounds that hold on after their notes, notes hardly heard, harsh or muddy stretches): run it once the "
 		"parts are written and again after changing an FDS or N163 sound, not after every small edit; fix its high "
 		"and medium findings with the call each gives, and play a low one's bars to the user (it has no call): change "
-		"them only if the user wants. finish_song listens after its mix and lists what it heard: fix those (what_next gives "
+		"them only if the user wants; the user's own ear has the final word. finish_song listens after its mix and lists what it heard: fix those (what_next gives "
 		"them as steps), then export_for_game again. Run "
 		"check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "

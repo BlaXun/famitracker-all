@@ -982,6 +982,17 @@
 #define IDC_AGENTLOG_LIST               2663
 #define ID_VIEW_AGENTLOG                38160
 
+// File > Backups... (BackupsDlg.cpp)
+#define IDD_BACKUPS                     750
+#define IDC_BACKUPS_SONG                2740
+#define IDC_BACKUPS_LIST                2741
+#define IDC_BACKUPS_LABEL               2742
+#define IDC_BACKUPS_CREATE              2743
+#define IDC_BACKUPS_RESTORE             2744
+#define IDC_BACKUPS_FOLDER              2745
+#define IDC_BACKUPS_RESULT              2746
+#define ID_FILE_BACKUPS                 38220
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED

@@ -37,7 +37,8 @@ struct Timing;	// Music.h
 // check_song's kinds, heard worst first (the order of its text and its JSON); HELD, on a calm track, a lead whose sound
 // holds a high, steady level from attack to release; then the arrangement's (Tools.cpp's ArrangeFindings): the melody
 // in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a section that
-// repeats another note for note, a lively stage's short loop. WARBLE: FDS notes held where a fast, deep modulator comes
+// repeats another note for note, a lively stage's short loop, an intro that jumps into the main part (from
+// feat-tool-issues, GitHub issue #1). WARBLE: FDS notes held where a fast, deep modulator comes
 // in, from the notes alone (heard as a short right note and then a fluttering echo). HEARD, HEARD_LOOK and HEARD_DETAIL:
 // the listen tool's findings (its JSON, "check" "listen"; from feat-listen-rest) by how badly they're heard: high (what
 // sounds wrong), medium (worth a look) and low (details that may be meant, to hear with the user). CLASH_DETAIL: check_song's
@@ -45,7 +46,7 @@ struct Timing;	// Music.h
 enum problem_kind {
 	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_HEARD, PROBLEM_RANGE, PROBLEM_HEARD_LOOK, PROBLEM_SILENT,
 	PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD, PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
-	PROBLEM_HEARD_DETAIL, PROBLEM_CLASH_DETAIL,
+	PROBLEM_INTRO, PROBLEM_HEARD_DETAIL, PROBLEM_CLASH_DETAIL,
 	PROBLEM_KINDS
 };
 

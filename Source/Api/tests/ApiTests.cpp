@@ -23,6 +23,7 @@
 // protocol, the musical helpers and every tool, against a song in memory.
 
 #include "../Arrange.h"
+#include "../Backups.h"
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
 #include "../ChannelMix.h"
@@ -1539,6 +1540,94 @@ public:
 		Redoable = 0;
 		OpenPath = Path;
 		Remember(Path);
+		return true;
+	}
+
+	// The Backups folder beside the song (create_backup, list_backups, restore_backup), as CMcpLink keeps it: the songs
+	// saved there by name, and its text files (the index)
+	std::map<std::string, SavedSong> BackupSongs;
+	std::map<std::string, std::string> BackupTexts;
+	int BackupsOpened = 0;
+
+	bool SaveBackup(const std::string &Name, std::string &Path, std::string &Error) override
+	{
+		if (Info.FileName.empty()) {
+			Error = "The song has no file yet, so there's no folder for its backups: save it first.";	// as CMcpLink
+			return false;
+		}
+		if (!IsPlainFileName(Name) || BackupSongs.count(Name) != 0 || BackupTexts.count(Name) != 0) {
+			Error = "There's already a file called " + Name + " in the Backups folder.";
+			return false;
+		}
+		Switch(Current);	// the selected track's cells into Tracks
+		SavedSong &Copy = BackupSongs[Name];
+		Copy.Info = Info;
+		Copy.Rows = Rows;
+		Copy.Tracks = Tracks;
+		Copy.Current = Current;
+		Copy.Clips = Clips;
+		Copy.Mix = Mix;
+		Copy.Saved = ++Clock;
+		Path = "C:\\Music\\Backups\\" + Name;	// the song itself keeps its file, its changes to save and its undo history
+		return true;
+	}
+
+	bool ListBackups(std::vector<std::string> &Names, std::string &) override
+	{
+		Names.clear();
+		for (std::map<std::string, SavedSong>::const_iterator it = BackupSongs.begin(); it != BackupSongs.end(); ++it)
+			Names.push_back(it->first);
+		for (std::map<std::string, std::string>::const_iterator it = BackupTexts.begin(); it != BackupTexts.end(); ++it)
+			Names.push_back(it->first);
+		return true;
+	}
+
+	bool ReadBackupText(const std::string &Name, std::string &Bytes, std::string &Error) override
+	{
+		Error.clear();
+		const std::map<std::string, std::string>::const_iterator it = BackupTexts.find(Name);
+		if (it == BackupTexts.end())
+			return false;
+		Bytes = it->second;
+		return true;
+	}
+
+	bool WriteBackupText(const std::string &Name, const std::string &Bytes, std::string &Error) override
+	{
+		if (Info.FileName.empty() || !IsPlainFileName(Name)) {
+			Error = "The song has no file yet, so there's no folder for its backups.";
+			return false;
+		}
+		BackupTexts[Name] = Bytes;
+		return true;
+	}
+
+	// As CMcpLink opens one: the backup's song in the song's place, which keeps its own file and has changes to save, with no
+	// undo history; the files beside the song stay (it's the same folder)
+	bool OpenBackup(const std::string &Name, std::string &Error) override
+	{
+		if (!CanChange(Error))
+			return false;
+		const std::map<std::string, SavedSong>::const_iterator it = BackupSongs.find(Name);
+		if (it == BackupSongs.end()) {
+			Error = "There's no backup called " + Name + " in the Backups folder.";
+			return false;
+		}
+		++BackupsOpened;
+		++SongSerial;
+		const bool Direct = Info.DirectChanges;
+		const std::string File = Info.FileName;
+		Info = it->second.Info;
+		Info.DirectChanges = Direct;
+		Info.FileName = File;
+		Info.Modified = true;
+		Rows = it->second.Rows;
+		Tracks = it->second.Tracks;
+		Current = it->second.Current;
+		Clips = it->second.Clips;
+		Mix = it->second.Mix;
+		Undos.clear();
+		Redoable = 0;
 		return true;
 	}
 
@@ -5326,8 +5415,9 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 40);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
-	// song_shape and 37 with explain (2026-10-26)
+	CHECK(Core.size() >= 15 && Core.size() <= 43);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
+	// song_shape and 37 with explain (2026-10-26), 40 with the agent log's two, 43 with the backups' three (2026-10-31)
+	CHECK_EQ(Core.size(), 43u);
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -15446,7 +15536,8 @@ void TestReviewFixes()
 		"50% left");
 	CHECK_HAS(Run(Song, "review_arrangement", REVIEW).Text, "Stereo: VRC6 Pulse 1 in the middle; VRC6 Pulse 2 panned 50% left.");
 
-	// An intro (bars 1-4) of the chords alone at 2 plays about 20 dB under the rest: tipped; at 8, not
+	// An intro (bars 1-4) of the chords alone at 2 plays about 20 dB under the rest: tipped, by the arrangement's intro finding
+	// since feat-tool-issues (more than 12 dB under; its pulse doesn't jump, only the melody comes in); at 8, not
 	for (int Pass = 0; Pass < 2; ++Pass) {
 		FakeSong Intro(3);
 		Intro.Info.DirectChanges = true;
@@ -15461,8 +15552,11 @@ void TestReviewFixes()
 		Intro.Info.Sections.push_back(Section("A", 1, 2));
 		const std::string Text = Run(Intro, "review_arrangement", REVIEW).Text;
 		if (Pass == 0)
-			CHECK_HAS(Text, "The intro (bars 1-4) plays about 20 dB under the rest: more than 10 dB under reads as silence in a game "
-				"(6-10 dB under is the target), so bring a part in sooner or play it louder.");
+		{
+			CHECK_HAS(Text, "The intro (bars 1-4) doesn't lead into the main part: it plays ");
+			CHECK_HAS(Text, " dB under bar 5 on as heard (6-10 under is the target; more reads as silence in a game).");
+			CHECK_LACKS(Text, "plays about 20 dB under the rest");
+		}
 		else
 			CHECK_LACKS(Text, "The intro");
 	}
@@ -18581,6 +18675,224 @@ void TestDraftFindings()
 	CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text), "short_loop") == 0);
 }
 
+// Backups (GitHub issue #4): create_backup keeps the song as it is, unsaved changes too, in the Backups folder beside it
+// with its label in the index; list_backups lists them, the newest first; restore_backup keeps a backup of the song as it
+// is ("before restoring ..."), then opens the one asked for in the song's place, which keeps its own file
+void TestBackups()
+{
+	// The pieces (Backups.h)
+	const LogTime When(2026, 10, 31, 14, 5);
+	CHECK_EQ(BackupSongName("C:\\Music\\Town.ftm"), std::string("Town"));
+	CHECK_EQ(BackupIndexName("Town.FTM"), std::string("Town backups.txt"));
+	CHECK_EQ(CleanBackupLabel("  before\tmessing   with\nthe intro "), std::string("before messing with the intro"));
+	CHECK_EQ(CleanBackupLabel(std::string(300, 'x')).size(), MAX_BACKUP_LABEL);
+	std::vector<std::string> Taken;
+	const std::string First = BackupFileName("Town.ftm", When, "before messing with the intro!", Taken);
+	CHECK_EQ(First, std::string("Town 2026-10-31 14-05 before messing with the intro.ftm"));
+	Taken.push_back("town 2026-10-31 14-05 before messing with the intro.ftm");
+	CHECK_EQ(BackupFileName("Town.ftm", When, "before messing with the intro", Taken),
+		std::string("Town 2026-10-31 14-05 before messing with the intro (2).ftm"));
+	CHECK_EQ(BackupFileName("Town.ftm", When, "a/b:c*?", Taken), std::string("Town 2026-10-31 14-05 a b c.ftm"));
+	CHECK(IsPlainFileName(BackupFileName("Town.ftm", When, "..\\..\\x", Taken)));
+	BackupEntry A, B;
+	A.Number = 1;
+	A.Time = When;
+	A.File = First;
+	A.Label = "before messing with the intro";
+	B.Number = 2;
+	B.Time = LogTime(2026, 10, 31, 15, 0);
+	B.File = "Town 2026-10-31 15-00 the calm mix.ftm";
+	B.Label = "the calm mix";
+	const std::string Index = WriteBackupIndex("Town.ftm", std::vector<BackupEntry>{ A, B });
+	CHECK_HAS(Index, "1\t2026-10-31 14:05\tTown 2026-10-31 14-05 before messing with the intro.ftm\tbefore messing with the intro\r\n");
+	std::vector<BackupEntry> Read = ReadBackupIndex(Index + "garbage\r\n3\tyesterday\tx.ftm\tbad\r\n4\t2026-10-31 16:00\t..\\x.ftm\tbad\r\n"
+		"2\t2026-10-31 16:00\ty.ftm\ttwice\r\n");
+	CHECK(Read.size() == 2 && Read[0].Label == A.Label && Read[1].Number == 2 && Read[1].File == B.File);
+	// Files the index doesn't name are the song's backups too, numbered after it; another song's aren't
+	const std::vector<std::string> Files = { First, B.File, "Town 2026-10-31 17-30 by hand (2).ftm", "Town night 2026-10-31 14-05 x.ftm",
+		"Town backups.txt", "Townhall 2026-10-31 14-05.ftm" };
+	const std::vector<BackupEntry> All = SongBackups("Town.ftm", std::vector<BackupEntry>{ A }, Files);
+	CHECK(All.size() == 3 && All[0].Number == 1 && All[1].Number == 2 && All[1].Label == "the calm mix" && All[2].Number == 3 &&
+		All[2].Label == "by hand");
+	std::string Why;
+	CHECK(FindBackup(All, "2", Why) == 1 && FindBackup(All, "#3", Why) == 2 && FindBackup(All, "CALM", Why) == 1);
+	CHECK(FindBackup(All, "9", Why) < 0 && Contains(Why, "no backup 9"));
+	CHECK(FindBackup(All, "the", Why) < 0 && Contains(Why, "Several backups"));
+	CHECK(FindBackup(All, "nothing like it", Why) < 0 && Contains(Why, "No backup's label"));
+	CHECK_EQ(BackupLine(All[0]), std::string("1. 2026-10-31 14:05, \"before messing with the intro\""));
+
+	// The tools
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(0, 0, "C-4", 0, 12);
+	CHECK_HAS(Run(Song, "list_backups", "{}").Text, "has no backups yet");
+	CHECK(Run(Song, "create_backup", "{}").IsError);
+	CHECK(Run(Song, "create_backup", "{\"label\": \"  \"}").IsError);
+	Song.Info.Modified = true;	// a change not saved yet goes into the backup too
+	ToolResult R = Run(Song, "create_backup", "{\"label\": \"before messing with the intro\"}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "Kept backup 1, \"before messing with the intro\" (");
+	CHECK_HAS(R.Text, "the song as it is now, its changes not saved yet too, in Backups\\test ");
+	CHECK_HAS(R.Text, "restore_backup {\"backup\": 1} brings it back");
+	CHECK(Song.BackupSongs.size() == 1 && Song.BackupTexts.count("test backups.txt") == 1);
+	CHECK(Song.Info.Modified && Song.Info.FileName == "test.ftm");	// the song itself as it was
+	const std::vector<std::vector<Cell> > Kept = Song.Rows;
+	// A batch of changes, then another backup
+	const ToolResult Written = Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"from_bar\": 1, \"instrument\": \"Square\", \"notes\": "
+		"\"E4 - - - G4 - - - | "
+		"C5 - - - - - - -\"}");
+	Check(!Written.IsError, Written.Text.c_str(), __LINE__);
+	const std::vector<std::vector<Cell> > Changed = Song.Rows;
+	CHECK(!(Changed[0][0] == Kept[0][0]) || !(Changed[0][4] == Kept[0][4]));
+	CHECK_HAS(Run(Song, "create_backup", "{\"label\": \"the new tune\"}").Text, "Kept backup 2, \"the new tune\"");
+	const std::string Listed = Run(Song, "list_backups", "{}").Text;
+	CHECK_HAS(Listed, "2 backups of test.ftm, the newest first, in the Backups folder beside it:\n2. ");
+	CHECK(Listed.find("\"the new tune\"") < Listed.find("\"before messing with the intro\""));
+	const Json Data = Parse(Run(Song, "list_backups", "{\"format\": \"json\"}").Text);
+	CHECK(Data.Get("backups") != 0 && Data.Get("backups")->Size() == 2 && IntegerOf(&Data.Get("backups")->At(0), "number") == 2);
+	// Restored by words of its label: a backup of the song as it is first, then the backup in its place; the song keeps its file
+	R = Run(Song, "restore_backup", "{\"backup\": \"intro\"}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "Restored backup 1, \"before messing with the intro\"");
+	CHECK_HAS(R.Text, "The song as it was is backup 3, \"before restoring before messing with the intro\"");
+	CHECK_HAS(R.Text, "The song keeps its file, test.ftm: save_song saves the restored song there");
+	CHECK(Song.BackupsOpened == 1 && Song.Info.FileName == "test.ftm" && Song.Info.Modified);
+	CHECK(Song.Rows[0][0] == Kept[0][0] && Song.Rows[0][4] == Kept[0][4]);
+	CHECK(Song.BackupSongs.size() == 3);
+	CHECK(Song.Undos.empty());
+	// And back again, by number (an integer too)
+	R = Run(Song, "restore_backup", "{\"backup\": 3}");
+	CHECK(!R.IsError);
+	CHECK(Song.Rows[0][0] == Changed[0][0] && Song.Rows[0][4] == Changed[0][4]);
+	CHECK_HAS(Run(Song, "list_backups", "{}").Text, "4. ");
+	CHECK(Run(Song, "restore_backup", "{\"backup\": 9}").IsError);
+	CHECK(Run(Song, "restore_backup", "{\"backup\": \"nothing like it\"}").IsError);
+	CHECK(Run(Song, "restore_backup", "{}").IsError);
+	// The index lost: the files still list, their labels read from their names
+	Song.BackupTexts.clear();
+	const std::string Again = Run(Song, "list_backups", "{}").Text;
+	CHECK_HAS(Again, "4 backups of test.ftm");
+	CHECK_HAS(Again, "\"the new tune\"");
+	// While a dialog is open in FamiTracker nothing is restored, and no backup is kept for it
+	Song.Busy = true;
+	CHECK(Run(Song, "restore_backup", "{\"backup\": 1}").IsError);
+	CHECK(Song.BackupsOpened == 2 && Song.BackupSongs.size() == 4);
+	Song.Busy = false;
+	// A song without a file has no Backups folder
+	FakeSong Untitled;
+	Untitled.Info.FileName.clear();
+	CHECK_HAS(Run(Untitled, "create_backup", "{\"label\": \"x\"}").Text, "The song has no file yet");
+	CHECK_HAS(Run(Untitled, "list_backups", "{}").Text, "save it first");
+	CHECK_HAS(ToolSet::CoreInstructions(), "Before a batch of changes, create_backup with a label");
+	CHECK_HAS(ToolSet::Instructions(), "restore_backup takes the whole batch back in one step");
+	// In the small set, and the Ask panel's kinds
+	CHECK(ToolSet::IsCoreTool("create_backup") && ToolSet::IsCoreTool("list_backups") && ToolSet::IsCoreTool("restore_backup"));
+	CHECK(AssistantCallChanges("create_backup", Json::MakeObject()) && AssistantCallChanges("restore_backup", Json::MakeObject()) &&
+		!AssistantCallChanges("list_backups", Json::MakeObject()));
+}
+
+// An intro that doesn't lead into the main part (GitHub issue #1): a slow, sparse intro (a held chord a bar), then the whole
+// band at once in A (eighths on the lead, the bass in quarters, hi-hats in eighths); made quieter, the jump only grows. The
+// finding says so with the call that brings the beat in during the intro's last bar (the drums of the loop's last bar,
+// which leads back into A), and that call takes the pulse's jump away; the loudness's is advice (no call)
+void IntroSong(FakeSong &Song, int IntroVolume)
+{
+	Song.Info.DirectChanges = true;
+	Song.Info.Sections.clear();
+	Song.Info.Sections.push_back(Section("Intro", 0, 0));
+	Song.Info.Sections.push_back(Section("A", 1, 3));
+	Song.AddInstrumentInfo(6, "Hi-hat", "2A03", false);
+	Song.Info.Instruments.back().Volume = std::vector<int>{ 12, 6, 3, 1, 0 };
+	const char *const CHORD[4] = { "C-3", "A-2", "F-2", "G-2" }, *const ROOTS[4] = { "C-2", "A-1", "F-1", "G-1" };
+	const char *const TUNE[8] = { "E-4", "G-4", "A-4", "G-4", "E-4", "D-4", "C-4", "D-4" };
+	for (int Bar = 1; Bar <= 16; ++Bar) {
+		const int Row = (Bar - 1) * 16, k = (Bar - 1) % 4;
+		// The chords: a held note a bar all the way (the intro's alone)
+		Song.Put(5, Row, CHORD[k], Bar == 1 || Bar == 5 ? 2 : NO_INSTRUMENT, Bar == 1 ? IntroVolume : Bar == 5 ? 10 : -1);
+		if (Bar <= 4)
+			continue;
+		for (int e = 0; e < 8; ++e) {
+			Song.Put(0, Row + e * 2, TUNE[(e + Bar) % 8], Bar == 5 && e == 0 ? 0 : NO_INSTRUMENT, Bar == 5 && e == 0 ? 12 : -1);
+			Song.Put(3, Row + e * 2, "1-#", Bar == 5 && e == 0 ? 6 : NO_INSTRUMENT, Bar == 5 && e == 0 ? 12 : -1);
+		}
+		for (int b = 0; b < 4; ++b)
+			Song.Put(2, Row + b * 4, ROOTS[k], Bar == 5 && b == 0 ? 1 : NO_INSTRUMENT);
+	}
+	Song.Rows[1][4 * 64 - 1].Effect[0] = EFF_JUMP;	// back to frame 1, bar 5: the intro plays once
+	Song.Rows[1][4 * 64 - 1].Param[0] = 1;
+}
+
+void TestIntroFindings()
+{
+	{
+		FakeSong Song(4);
+		IntroSong(Song, 10);
+		const Json Out = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "intro"), 1);
+		const Json *pIntro = FindingOf(Out, "intro");
+		CHECK_EQ(TextOf(pIntro, "severity"), std::string("medium"));
+		CHECK_EQ(IntegerOf(pIntro, "bar"), 1);
+		CHECK_EQ(IntegerOf(pIntro, "intro_to_bar"), 4);
+		CHECK_EQ(IntegerOf(pIntro, "main_from_bar"), 5);
+		CHECK(pIntro != 0 && pIntro->Get("pulse_jumps") != 0 && pIntro->Get("pulse_jumps")->Bool());
+		CHECK(pIntro != 0 && pIntro->Get("too_quiet") != 0 && !pIntro->Get("too_quiet")->Bool());
+		CHECK_HAS(TextOf(pIntro, "message"), "The intro (bars 1-4) doesn't lead into the main part: its notes start on 1.0 rows a bar "
+			"against 8.0 in bar 5 on");
+		CHECK_HAS(TextOf(pIntro, "message"), "make the intro 6-10 dB quieter than A, not slower");
+		CHECK_HAS(TextOf(pIntro, "message"), "Fix: copy_bars {\"from_bar\":16,\"at_bar\":4,\"channels\":[\"2A03 Noise\"]}");
+		CHECK_HAS(Run(Song, "check_song", "{\"format\": \"short\"}").Text, "The intro's pulse jumps at bar 5: the band comes in at once");
+		// The review weighs it with its call
+		const std::string Review = Run(Song, "review_arrangement", "{}").Text;
+		CHECK_HAS(Review, "doesn't lead into the main part");
+		CHECK_HAS(Review, "Fix: copy_bars {\"from_bar\":16,\"at_bar\":4,\"channels\":[\"2A03 Noise\"]}");
+		// A calm track may start from stillness: no pulse to keep
+		CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\", \"style\": \"calm\"}").Text), "intro") == 0);
+		// The call, as a model sends it: the beat comes in during the intro's last bar, and the finding goes
+		std::string Reply;
+		CHECK(pIntro != 0 && RunFix(Song, *pIntro, &Reply));
+		auto Hits = [&](int First, int End) {
+			int Count = 0;
+			for (int r = First; r < End; ++r)
+				Count += Song.Rows[3][static_cast<size_t>(r)].Note > 0 && Song.Rows[3][static_cast<size_t>(r)].Note < NOTE_RELEASE ? 1 : 0;
+			return Count;
+		};
+		CHECK(Hits(3 * 16, 4 * 16) == 8 && Hits(0, 3 * 16) == 0);
+		CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text), "intro") == 0);
+	}
+	{
+		// Made quieter (the model's fix): the jump grows, and the loudness is said too, as advice
+		FakeSong Song(4);
+		IntroSong(Song, 1);
+		const Json Out = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		const Json *pIntro = FindingOf(Out, "intro");
+		CHECK(pIntro != 0 && pIntro->Get("too_quiet") != 0 && pIntro->Get("too_quiet")->Bool());
+		CHECK(pIntro != 0 && pIntro->Get("under_db") != 0 && pIntro->Get("under_db")->Number() > 12.0);
+		CHECK_HAS(TextOf(pIntro, "message"), "; and it plays ");
+		std::string Reply;
+		CHECK(pIntro != 0 && RunFix(Song, *pIntro, &Reply));
+		// The beat leads in now; the intro is still far too quiet: advice alone, no call
+		const Json After = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		const Json *pQuiet = FindingOf(After, "intro");
+		CHECK(pQuiet != 0 && pQuiet->Get("fix") == 0 && !pQuiet->Get("pulse_jumps")->Bool());
+		CHECK_HAS(TextOf(pQuiet, "summary"), "dB under the main part");
+		CHECK_LACKS(TextOf(pQuiet, "message"), "Fix:");
+		const std::string Review = Run(Song, "review_arrangement", "{}").Text;
+		CHECK_LACKS(Review, "dB under the rest: more than 10 dB under reads as silence");	// the finding says it
+		CHECK_HAS(Review, "doesn't lead into the main part");
+	}
+	{
+		// The problems panel reads it as a kind of its own
+		FakeSong Song(4);
+		IntroSong(Song, 10);
+		ProblemList List;
+		std::string Error;
+		CHECK(List.Read(Run(Song, "check_song", "{\"format\": \"json\"}").Text, Error));
+		CHECK_EQ(List.Count(PROBLEM_INTRO), 1);
+		CHECK_EQ(std::string(ProblemKindId(PROBLEM_INTRO)), std::string("intro"));
+		CHECK_EQ(ProblemSeverity(PROBLEM_INTRO), 2);
+	}
+}
+
 // Each finding's call, run as a model sends it, takes the finding away (and only it)
 void TestDraftFixes()
 {
@@ -20019,9 +20331,14 @@ void TestWhatNextLoop()
 		const std::string Style = *K.Style ? std::string("\"style\": \"") + K.Style + "\"" : std::string();
 		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + (Style.empty() ? std::string() : ", " + Style) +
 			"}").Text);
-		const char *const CLEAN[] = { "vanishing", "click", "clash", "range" };
+		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro" };
 		for (const char *Kind : CLEAN)
 			Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(K.Asked) + " " + Kind).c_str(), __LINE__);
+		// The intro leads into A (GitHub issue #1): with drums, A's last bar of them comes in during its last bar
+		bool Fill = false;
+		for (size_t i = 0; i < Made.size(); ++i)
+			Fill = Fill || (Made[i].compare(0, 10, "copy_bars ") == 0 && Contains(Made[i], "\"channels\":[\"2A03 Noise\""));
+		Check(Fill == K.Drums, K.Asked, __LINE__);
 		const std::string Review = Run(Song, "review_arrangement", "{" + Style + "}").Text;
 		Check(ReviewScore(Review) >= 8, Review.c_str(), __LINE__);
 		// Done now, and the same after a restart (a new connection: it reads the song, not the calls before)
@@ -24256,6 +24573,44 @@ void PutHeldLine(FakeSong &Song, int Channel, int Instrument, int Transpose = 0)
 	}
 }
 
+// A local model told the user it can't actually listen to the song (GitHub issue #9): listen's description, its replies,
+// what_next's listen step (TestWhatNextListens) and the instructions say plainly that it renders the song's real audio and
+// reports what an ear would notice, and that the user's own ear has the final word; nothing says "you can't hear"
+void TestListenSaysItHears()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	PutHeldLine(Song, 0, 2);
+	ToolSet Tools(Song);
+	std::string Description;
+	for (size_t i = 0; i < Tools.List().size(); ++i) {
+		const ToolInfo &T = Tools.List()[i];
+		if (T.Name == "listen")
+			Description = T.Description;
+		Check(!Contains(T.Description, "can't hear") && !Contains(T.Description, "can't listen"), T.Name.c_str(), __LINE__);
+	}
+	CHECK_HAS(Description, "it renders the song's real audio");
+	CHECK_HAS(Description, "reports in plain words what an ear would notice");
+	CHECK_HAS(Description, "The user's own ear has the final word");
+	for (const char *Form : { "{}", "{\"format\": \"short\"}" }) {
+		const std::string Text = Run(Song, "listen", Form).Text;
+		CHECK_HAS(Text, "rendered its real audio as FamiTracker plays it");
+		CHECK_HAS(Text, "the user's own ear has the final word");
+	}
+	const std::string Core = ToolSet::CoreInstructions(), Full = ToolSet::Instructions();
+	CHECK_HAS(Core, "You can hear the song: listen renders its real audio and says what an ear would notice. The user's ear has "
+		"the final word");
+	CHECK_HAS(Full, "You can hear the song: listen renders its real audio and reports what an ear would notice");
+	CHECK_HAS(Full, "the user's own ear has the final word");
+	CHECK_LACKS(Core, "can't hear");
+	CHECK_LACKS(Full, "can't hear");
+	CHECK(Core.size() < 4200);
+	// play and compare_versions play for the user's ears and point to listen
+	const std::string Played = Run(Song, "play", "{}").Text;
+	CHECK_HAS(Played, "you hear the song with listen");
+	CHECK_LACKS(Played, "can't hear");
+}
+
 void TestListenTool()
 {
 	FakeSong Song;
@@ -26056,7 +26411,8 @@ void TestWhatNextListens()
 	Song.Info.Modified = false;
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool == "listen" && WriteJson(A.Arguments) == "{}", A.Text.c_str(), __LINE__);
-	CHECK_HAS(A.Text, "before the game's file, listen hears it as FamiTracker plays it");
+	CHECK_HAS(A.Text, "before the game's file, listen renders its real audio as FamiTracker plays it");
+	CHECK_HAS(A.Text, "the user's own ear has the final word");
 	CHECK(!Run(Song, "listen", "{}").IsError);
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool != "listen" && A.Tool != Fix, A.Text.c_str(), __LINE__);
@@ -26889,6 +27245,9 @@ int main()
 	TestGrowTaught();
 	TestDraftFindings();
 	TestDraftFixes();
+	TestIntroFindings();
+	TestListenSaysItHears();
+	TestBackups();
 	TestFindingsQuiet();
 	TestShortReplies();
 	TestMixFadersReset();

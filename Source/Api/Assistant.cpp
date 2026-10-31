@@ -110,6 +110,7 @@ const AssistantToolKind TOOL_KINDS[] = {
 	{ "review_arrangement", ASSISTANT_READS }, { "check_song", ASSISTANT_READS }, { "look_at_song", ASSISTANT_READS },
 	{ "play", ASSISTANT_READS }, { "stop", ASSISTANT_READS }, { "get_recipe", ASSISTANT_READS }, { "explain", ASSISTANT_READS },
 	{ "check_exercise", ASSISTANT_READS }, { "write_log", ASSISTANT_READS }, { "read_user_notes", ASSISTANT_READS },
+	{ "list_backups", ASSISTANT_READS },
 	// Reading or changing as their arguments say (AssistantCallChanges)
 	{ "grow_melody", ASSISTANT_DEPENDS }, { "soundtrack_notes", ASSISTANT_DEPENDS }, { "references", ASSISTANT_DEPENDS },
 	{ "study_nsf", ASSISTANT_DEPENDS }, { "study_module", ASSISTANT_DEPENDS },
@@ -130,7 +131,7 @@ const AssistantToolKind TOOL_KINDS[] = {
 	{ "copy_bars", ASSISTANT_CHANGES }, { "vary_part", ASSISTANT_CHANGES }, { "reference_sound", ASSISTANT_CHANGES },
 	{ "add_sample_drums", ASSISTANT_CHANGES }, { "import_nsf", ASSISTANT_CHANGES }, { "send_file", ASSISTANT_CHANGES },
 	{ "undo", ASSISTANT_CHANGES }, { "save_song", ASSISTANT_CHANGES }, { "new_song", ASSISTANT_CHANGES },
-	{ "open_song", ASSISTANT_CHANGES },
+	{ "open_song", ASSISTANT_CHANGES }, { "create_backup", ASSISTANT_CHANGES }, { "restore_backup", ASSISTANT_CHANGES },
 };
 
 std::string ArgText(const Json &Arguments, const char *pKey)

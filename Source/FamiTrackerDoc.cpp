@@ -4736,6 +4736,20 @@ void CFamiTrackerDoc::MakeUntitled(LPCTSTR Title)
 		pFrameWnd->OnUpdateFrameTitle(TRUE);	// the window's title
 }
 
+BOOL CFamiTrackerDoc::SaveCopy(LPCTSTR Path) const
+{
+	return m_bFileLoaded ? SaveDocument(Path) : FALSE;
+}
+
+void CFamiTrackerDoc::TakeBackPath(LPCTSTR Path)
+{
+	SetPathName(Path, FALSE);
+	SetModifiedFlag(TRUE);
+	CFrameWnd *pFrameWnd = dynamic_cast<CFrameWnd*>(theApp.m_pMainWnd);
+	if (pFrameWnd != NULL && pFrameWnd->GetActiveDocument() == this)
+		pFrameWnd->OnUpdateFrameTitle(TRUE);	// the window's title
+}
+
 #ifdef AUTOSAVE
 
 // Auto-save (experimental)

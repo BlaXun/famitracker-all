@@ -106,8 +106,8 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 40 of them:
-`what_next`, the tools its steps call, `explain` and the agent log's two. Reading and writing: `get_song`,
+clear step better than a list of eight tips. `/mcp/core` serves 43 of them:
+`what_next`, the tools its steps call, `explain`, the agent log's two and the backups' three. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
 `find_sound`, `reference_sound`, `set_instrument`; parts:
@@ -120,7 +120,8 @@ song heard as FamiTracker plays it), `finish_song` (the last of them in one
 call); and `play`, `stop`, `save_song`,
 `export_for_game`, `get_recipe` and `explain` (the glossary's words for a
 term, to explain things to you in), `write_log` and `read_user_notes` (see
-[The agent log](#the-agent-log-why-and-notes-back)). Not `set_mixer`:
+[The agent log](#the-agent-log-why-and-notes-back)), and `create_backup`,
+`list_backups` and `restore_backup` (see [Backups](#backups-going-back-in-one-step)). Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
 its mix). Its instructions are a page instead of four, built around a
 loop: ask `what_next`, make the call it gives, ask again until it says done
@@ -422,7 +423,7 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
 - **Key**: only if the server wants one (`llama-server --api-key`); it's
   kept encrypted for your Windows account (DPAPI), never as plain text.
 - **Tools**: all of them (the default, for big models with a big context)
-  or the small set (`/mcp/core`'s 40, with its short instructions and short
+  or the small set (`/mcp/core`'s 43, with its short instructions and short
   replies) for smaller models, or a context under 64K.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then
@@ -497,9 +498,12 @@ Some things to try:
 - "Repeat bars 1-8 at bar 9, but make the repeat different."
 - "Remember that I like bright leads and don't want echo on the melody."
 
-Claude can't hear the song. It checks what it wrote (notes outside the key,
-clashes, range), looks at a picture of the notes, reviews how full the
-arrangement is, and plays it for you, then asks how it sounds.
+Claude hears the song with `listen`: FamiTracker renders its real audio,
+and the tool reports what an ear would notice (warbles, notes out of tune,
+clicks, a covered melody). It also checks what it wrote (notes outside the
+key, clashes, range), looks at a picture of the notes, reviews how full the
+arrangement is, and plays it for you, then asks how it sounds: your own ear
+has the final word.
 
 Four recipes come with the connection as commands in Claude Code (type `/`
 to see them): `/mcp__famitracker__compose_track` composes a track for a
@@ -808,6 +812,25 @@ JSON as `fix`.
   section (or its first bars) after its end, as many times as it takes,
   then `set_loop` to the copy's end. Battles, chases and calm tracks often
   loop sooner by design, so other styles leave it alone.
+- **An intro that jumps into the main part** (`intro`; GitHub issue #1): the
+  intro (a section named Intro at the start, else the bars before the loop,
+  up to 16) against the bars after it. Its pulse jumps when the main part's
+  notes start on three times as many rows a bar or more and its beat (the
+  drums' hits and the bass's notes, 2 a bar or more) comes in from under a
+  quarter of that, with nothing of it in the intro's last bar: a slow,
+  sparse intro, then the whole band at once. Not on a calm track, which may
+  start from stillness. Its loudness jumps when it plays more than 12 dB
+  under the main part as heard (6-10 under is the target). Fix, for the
+  pulse: `copy_bars` of the drums (without drums, the bass) of the loop's
+  last bar, which leads back into A, into the intro's last bar: a fill brings
+  the beat in before A. The loudness is advice alone, no call: keep the main
+  part's pulse in the intro (fewer parts rather than longer notes) and make
+  it 6-10 dB quieter, not slower; quieter still only makes the jump bigger.
+  None of the 43 songs the user likes has it (44 of their 50 intros bring
+  the beat in during their last bar; the others' main parts start notes on
+  at most 1.8 times as many rows; the quietest intro plays 10.4 dB under).
+  `what_next`'s intro builds intros that way: A's chords and bass in its
+  rhythm, then, with drums, A's last bar of them in the intro's last bar.
 
 `review_arrangement` weighs them into its score (a melody in pieces most)
 and lists them among its tips, most first. Its breath check counts a rest
@@ -911,7 +934,7 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy`, `key` and `held`, notes that vanish counted by the note, then the
 arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
-`short_loop`, see [What drafts miss](#what-drafts-miss)), `style`
+`short_loop` and `intro`, see [What drafts miss](#what-drafts-miss)), `style`
 (`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
@@ -942,9 +965,13 @@ and `findings`, heard worst first as in the text. Each finding has:
   `overdrives`) for a sound; `faders`, `melody_fader`, `drums` and
   `nearest` for the faders; `section`, `repeats`, `melody_alike` and
   `parts_alike` for a repeat; `loop_seconds`, `loop_from_bar` and
-  `loop_to_bar` for a short loop;
+  `loop_to_bar` for a short loop; `intro_from_bar`, `intro_to_bar`,
+  `main_from_bar`, `main_to_bar`, `intro_starts_a_bar`, `main_starts_a_bar`,
+  `intro_beat_a_bar`, `main_beat_a_bar`, `under_db`, `pulse_jumps` and
+  `too_quiet` for an intro;
 - `fix`, for a click that can be nudged, a clash `polish` can clear and
-  every finding of the arrangement: the call that does it, `tool` (`polish`
+  every finding of the arrangement (but an intro's loudness alone, which is
+  advice): the call that does it, `tool` (`polish`
   for a click: the touch `clicks` on the note's channel and bar; for a
   clash: the touch `clashes` on its two channels and bars), `arguments` and `does`, in
   words, and `then`, the calls to make after it, each the same way (a
@@ -998,6 +1025,49 @@ the song opens again. A song not saved yet keeps its log in memory and
 writes it next to the song when it's first saved. The `.ftm` file itself
 doesn't change.
 
+## Backups: going back in one step
+
+An agent often makes a batch of changes at once, where you'd work in small
+steps, and undoing a batch that came out badly one Ctrl+Z at a time is
+cumbersome (GitHub issue #4). A backup keeps the song as it is at a moment,
+with a label saying why:
+
+```
+create_backup {"label": "before messing with the intro"}
+list_backups {}
+restore_backup {"backup": "intro"}
+```
+
+- `create_backup` (`label` required) saves a copy of the song as it is now,
+  its changes not saved yet too, into a **Backups** folder beside the song's
+  file, named with the time and the label (`Town 2026-10-31 14-05 before
+  messing with the intro.ftm`), numbered `(2)` when two would share a name.
+  The song itself doesn't change: not its file, its changes to save or its
+  Ctrl+Z history. The labels are kept exactly in a small index beside them,
+  `Town backups.txt` (a line a backup: number, time, file, label). A song
+  without a file has no folder yet: save it first.
+- `list_backups` lists them, the newest first: number, time, label
+  (`format` `json` for programs). Numbers count up and are never reused. A
+  backup file of the song the index doesn't name (copied in by hand, or the
+  index lost) is listed too, its time and label read from its name.
+- `restore_backup` (`backup`: a number, or a label or words of one; the
+  newest of a label) first keeps a backup of the song as it is, labelled
+  "before restoring ..." (so restoring loses nothing and can be taken back
+  the same way), then opens the backup in the song's place. The song keeps
+  its own file: saving writes the restored song there and never changes the
+  backup, and until then it has changes to save. Opening a file clears
+  FamiTracker's Ctrl+Z history, so undo starts afresh. It refuses while a
+  dialog is open in FamiTracker, and a backup FamiTracker can't read before
+  anything changes.
+
+In FamiTracker, **File > Backups...** lists the open song's backups (time
+and label), with **Create** (type why first), **Restore** (or a
+double-click; it asks first) and **Open folder**. It runs the same three
+tools, so a backup an agent kept shows there and one you keep is the agent's
+to restore. Every backup and restore is a line in the agent log. All three
+are in the small set; its instructions tell a local model to keep a backup
+before a batch of changes.
+
 ## What Claude can do (the tools)
 
 | Tool | What it does |
@@ -1050,7 +1120,7 @@ doesn't change.
 | `add_echo` | Copies a part onto a free channel, later and quieter (it stops at the song's end, so the loop stays where it is); on another chip it plays the part's preset there, written where it sounds at the part's pitch (an octave up on the VRC7 and the 5B), and past the bars asked for it rings on only until the target's own next note. Each echo note plays about 8 dB under its original as both sounds play (each chip's level and both instruments' envelopes counted; the mixer's faders stay the mixer's, so the volume column doesn't make up for one), and it copies only the effects its channel plays (an FDS modulator's `Hxx`-`Jxx` isn't put on a pulse). An echo note a semitone from a note another part sounds with it, or a semitone and octaves (a minor ninth, an F-4 over a pad's E-2: what `check_song` finds a clash, by the same rule), is left out or cut short; a major seventh (over the bass, or under the melody) is a chord's color and stays. With `pan` "opposite" each echo note plays on the other side of its original (or give a place: left, right, half right...) |
 | `add_vibrato` | Vibrato on the longer notes, starting just after each note begins: faint (`4x1`, the shallowest), gentle, medium or strong. A depth by word swings the notes as far as it swings a 2A03 pulse's, so on the FDS, the N163 and the VRC7, whose steps are finer or coarser, the effect's depth is another (the reply says the cents). `modulator` `off` on the FDS turns its modulator off where it plays (`H00` on each note, the `Hxx` that bring it in taken out) and brings the vibrato in where the modulator came in |
 | `change_mood` | Several changes for a mood at once: key or mode (a dominant's ninth kept natural, as `transpose` keeps it), parts up or down, new sounds, vibrato, an echo and the tempo |
-| `check_song` | Notes outside the key (a slide that takes a note outside it too; not a borrowed chord's or a secondary dominant's, which it hears as `write_notes`' warnings do, while under a quarter of the notes fall outside the key), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop), each with the call that fixes it (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
+| `check_song` | Notes outside the key (a slide that takes a note outside it too; not a borrowed chord's or a secondary dominant's, which it hears as `write_notes`' warnings do, while under a quarter of the notes fall outside the key), clashing channels (a semitone apart, or a semitone and octaves), notes out of a channel's range, busy and silent bars, notes that click on the 2A03's pulses, notes of a line that vanish between its held notes (they sound missing), unused channels. Notes count as they sound: a scoop where it lands, a slide later in a note where it goes, the triangle, the VRC7 and the 5B an octave under their written notes, the FDS two, a chord's arpeggio (an instrument's or 0xy) with all its notes, and not a fall as a note ends. N163 notes too high for the channel count are out of range: the chip plays its channels in turn, so with 4 of them a 16-sample wave skips samples (turns grainy) above A#5; so are FDS notes above G#7, where its pitch register tops out, and below A-1, which it plays under 28 Hz. With style calm (or a track named calm) it also finds a lead whose sound holds a high, steady level from attack to release (`held`); lively gives that as a tip. In the arrangement it finds what drafts miss (a melody in one-bar pieces, a thin or doubled bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a lively stage's short loop, an intro whose pulse or loudness jumps into the main part), each with the call that fixes it (the intro's loudness as advice) (see [What drafts miss](#what-drafts-miss)). `format` short gives the counts and the three findings that matter most with their calls; `json` every finding as data (see [The checks in FamiTracker, and as data](#the-checks-in-famitracker-and-as-data)) |
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds (the music's, never a sound effect's) |
@@ -1070,6 +1140,7 @@ doesn't change.
 | `undo` | Ctrl+Z, and says what it undid: the call that made the change ("write_notes: 12 notes on VRC6 Pulse 1, bars 1-4") or an edit made in FamiTracker. A call that fails leaves nothing of its own to undo (what it had changed by then is taken back, and Ctrl+Y doesn't bring it back), so undo after it undoes the change before it, and says so (direct changes only) |
 | `save_song` | Saves the song, or a copy next to it to compare versions. A song never saved goes into the Songs folder next to FamiTracker.exe, in a folder of its own named `name` (else after its track), numbered when the name is taken; it then is that file. See [Files between the computers](#files-between-the-computers) |
 | `new_song` | Starts a new song in place of the open one, as File > New does (the profile's template: its chip, tempo and sounds), with no dialog; `expansion` picks its chips as `set_expansion` takes them, and `name` is its title and its track's name. Asked over MCP, it's saved at once into the Songs folder under that name. Refuses, changing nothing, while the open song has changes that aren't saved. See [A new song, and back to an old one](#a-new-song-and-back-to-an-old-one) |
+| `create_backup`, `list_backups`, `restore_backup` | A backup of the song as it is (changes not saved yet too) with a label, in a Backups folder beside its file; the backups listed, the newest first; one opened in the song's place by number or label, after a backup of the song as it is, the song keeping its own file. See [Backups: going back in one step](#backups-going-back-in-one-step) |
 | `open_song` | Opens another song by name: one in the Songs folder or among FamiTracker's recent files (`list` names them, the newest first); from this computer, `path` opens any `.ftm` file. Refuses while the open song has changes that aren't saved |
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft
@@ -1648,8 +1719,8 @@ checks the melody against the chords alone.
 ### Listening to the song
 
 `listen` hears the selected track as FamiTracker plays it, which the notes
-alone don't say. FamiTracker renders the mix and each part alone in one
-pass (as `measure_mix` does, changing nothing), and the tool compares what
+alone don't say: FamiTracker renders the song's real audio, the mix and each
+part alone in one pass (as `measure_mix` does, changing nothing), and the tool compares what
 each part sounds like with what its notes say it should:
 
 - **Warbles and deep vibratos:** a held note whose pitch shakes faster than
@@ -1685,8 +1756,13 @@ they'd like it gone, and what would change it. `from_bar` and
 `to_bar` listen to some bars, `parts` to some channels; `format` is `text`,
 `short` (the three heard worst) or `json`. It takes a while, since
 FamiTracker renders the track first: a two-and-a-half-minute track with
-eight parts took about 40 seconds under Wine. Listen with the user too: it
-hears how the song sounds, not whether it's the music they want.
+eight parts took about 40 seconds under Wine. A local model once told the user
+it couldn't actually listen to the song (GitHub issue #9), so the tool's
+description, every reply, `what_next`'s listen step and the small set's
+instructions say it plainly: `listen` renders the real audio and reports what
+an ear would notice, and the user's own ear has the final word (it hears how
+the song sounds, not whether it's the music they want). `play` and
+`compare_versions` say they play for the user's ears and point to `listen`.
 FamiTracker's **View > Problems** has a **Listen** button (F6 in the panel)
 that runs it and lists what it hears with `check_song`'s findings, each
 with Play it; `finish_song` listens too, after its mix.

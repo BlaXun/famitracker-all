@@ -22,8 +22,8 @@
 #pragma once
 
 // The tools Claude Code calls over MCP, in musical terms: reading the song,
-// writing parts, instruments from presets, keys and moods, checks for what
-// it can't hear, and playback for the user. Changes arrive as clips unless
+// writing parts, instruments from presets, keys and moods, checks of the
+// notes, listening to the rendered song, and playback for the user. Changes arrive as clips unless
 // the user allows direct changes, which are undoable one by one.
 
 #include <string>

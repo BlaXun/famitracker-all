@@ -100,6 +100,7 @@ BEGIN
         MENUITEM "&Open...\tCtrl+O",            ID_FILE_OPEN
         MENUITEM "&Save\tCtrl+S",               ID_FILE_SAVE
         MENUITEM "Save &As...",                 ID_FILE_SAVE_AS
+        MENUITEM "&Backups...",                 ID_FILE_BACKUPS
         MENUITEM SEPARATOR
         MENUITEM "&Create NSF...\tCtrl+E",      ID_FILE_CREATE_NSF
         MENUITEM "Create WAV...",               ID_FILE_CREATEWAV
@@ -549,6 +550,7 @@ BEGIN
     ID_FILE_CLOSE           "Close the active document\nClose"
     ID_FILE_SAVE            "Save the active document\nSave"
     ID_FILE_SAVE_AS         "Save the active document with a new name\nSave As"
+    ID_FILE_BACKUPS         "Keep a backup of the song as it is, or go back to one\nBackups"
 END
 
 STRINGTABLE 
@@ -2077,6 +2079,22 @@ BEGIN
     PUSHBUTTON      "Open folder",IDC_GAME_OPEN_FOLDER,62,247,60,14,WS_DISABLED
     DEFPUSHBUTTON   "Export",IDC_GAME_EXPORT,208,247,50,14
     PUSHBUTTON      "Close",IDCANCEL,263,247,50,14
+END
+
+IDD_BACKUPS DIALOGEX 0, 0, 340, 262
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Backups"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_BACKUPS_SONG,7,7,326,18
+    CONTROL         "",IDC_BACKUPS_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,7,28,326,122
+    LTEXT           "Why keep one (like ""before messing with the intro""):",IDC_STATIC,7,156,260,8
+    EDITTEXT        IDC_BACKUPS_LABEL,7,167,268,14,ES_AUTOHSCROLL
+    PUSHBUTTON      "Create",IDC_BACKUPS_CREATE,283,167,50,14
+    EDITTEXT        IDC_BACKUPS_RESULT,7,187,326,48,ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | NOT WS_TABSTOP
+    PUSHBUTTON      "Restore",IDC_BACKUPS_RESTORE,7,241,50,14
+    PUSHBUTTON      "Open folder",IDC_BACKUPS_FOLDER,62,241,60,14
+    PUSHBUTTON      "Close",IDCANCEL,283,241,50,14
 END
 
 IDD_IMPORT_NSF DIALOGEX 0, 0, 300, 236
