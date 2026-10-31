@@ -252,7 +252,7 @@ jobs:
   publish:
     name: Publish latest build
     needs: [build, transcribe-linux]
-    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'next' || github.ref_name == 'recorder' || github.ref_name == 'api' || startsWith(github.ref_name, 'feat-'))
+    if: github.event_name == 'push' && (github.ref_name == 'beginner-friendly' || github.ref_name == 'next' || github.ref_name == 'recorder' || github.ref_name == 'api' || startsWith(github.ref_name, 'feat-') || startsWith(github.ref_name, 'fix-'))
     runs-on: ubuntu-latest
     permissions:
       contents: write

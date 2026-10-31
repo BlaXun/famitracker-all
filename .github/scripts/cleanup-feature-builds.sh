@@ -1,6 +1,7 @@
 #!/bin/bash
-# Removes what a feature branch (feat-*) leaves behind once it is merged into
-# the branch this run built: its rolling pre-release and tag (build-feat-*)
+# Removes what a feature or fix branch (feat-*, fix-*) leaves behind once it is merged into
+# the branch this run built: its rolling pre-release and tag (build-feat-*,
+# build-fix-*)
 # and the branch itself. A feature counts as merged when the branch just built
 # contains its commit. Called by the "publish" job in build.yml on next.
 #
@@ -17,7 +18,7 @@ merged() {
 	[ "$status" = "ahead" ] || [ "$status" = "identical" ]
 }
 
-gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.tag_name | startswith("build-feat-")) | .tag_name' |
+gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.tag_name | startswith("build-feat-") or startswith("build-fix-")) | .tag_name' |
 while read -r tag; do
 	branch="${tag#build-}"
 	sha=$(gh api "repos/$repo/commits/$tag" --jq '.sha' 2>/dev/null) || continue
@@ -27,7 +28,7 @@ while read -r tag; do
 	fi
 done
 
-gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[] | select(.name | startswith("feat-")) | .name + " " + .commit.sha' |
+gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[] | select(.name | startswith("feat-") or startswith("fix-")) | .name + " " + .commit.sha' |
 while read -r branch sha; do
 	if merged "$sha"; then
 		echo "$branch is merged: deleting the branch"
