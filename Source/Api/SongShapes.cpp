@@ -401,6 +401,12 @@ const SongShape &ShapeForKind(const std::string &Kind, const std::string &TrackN
 	return pNamed != 0 && pNamed->Loops && pNamed->Kind == Own.Kind ? *pNamed : Own;
 }
 
+bool IsClimaxName(const std::string &Name)
+{
+	static const char *const CLIMAX[] = { "climax", "peak", "finale" };
+	return BaseIs(SplitName(Name).Base, CLIMAX, sizeof(CLIMAX) / sizeof(CLIMAX[0]));
+}
+
 std::string PartLine(const std::string &Name, const SongShape *pShape)
 {
 	if (pShape != 0)

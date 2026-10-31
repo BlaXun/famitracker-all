@@ -79,6 +79,9 @@ const SongShape &ShapeForKind(const std::string &Kind, const std::string &TrackN
 // A2, B, Bridge, Verse, Chorus, Climax, Break, Outro...); "" when the name
 // says nothing of it
 std::string PartLine(const std::string &Name, const SongShape *pShape = 0);
+// Whether a section's name makes it the song's high point: Climax, Peak or Finale (numbered or primed too: "Climax 2"),
+// the words PartLine gives the climax's line for
+bool IsClimaxName(const std::string &Name);
 // The shape a track's sections were laid out in: their names, in order, are
 // its parts' (should two shapes share their names, pPrefer when it's one of
 // them, else a calm word in the track's name or a tempo of 90 BPM or under

@@ -260,6 +260,8 @@ bool ParseNoisePitch(const std::string &Input, int &Pitch, std::string &Drum)
 		Text = Trimmed(Text.substr(5));
 	if (Text.size() == 3 && Text[1] == '-' && Text[2] == '#')
 		Text = Text.substr(0, 1);
+	else if (Text.size() == 2 && Text[1] == '#' && std::isxdigit(static_cast<unsigned char>(Text[0])))
+		Text = Text.substr(0, 1);	// "F#": FamiTracker's "F-#" without its dash
 	if (Text.empty() || Text.size() > 2)
 		return false;
 	char *pEnd = 0;

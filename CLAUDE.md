@@ -2087,6 +2087,37 @@ bars, a channel with a few scattered notes; so Green Valley Sunrise, which
 the user called chaos, gets no finding. `TestBusyFindings` covers it on songs
 built in code, and `TestWhatNextLoop`'s walks end without one.
 
+Replies a local model misread (from `feat-tool-replies`): `read_notes`
+spells pitches in the track's key (`KeyedPitchName`, `TrackKey`: Eb4, Bb3 in
+C minor), and a note that slides into its pitch as it starts (polish's
+scoops, `Qxy` on a note written under its target) reads in steps as the
+pitch it lands on and holds (`HeldPitchOf`, from `LandedPitch`), listed
+after the line; `WriteNotesInSteps` keeps the song's note at that step by
+that pitch, so a line read and written back keeps its slide, and the list
+of notes says where it lands. The noise takes "F#" and "noise F" as F-#
+(`ParseNoisePitch`, `NoisePitchWord` in `StepNotes.cpp`), and a pitch with
+an octave ("F#3", which FamiTracker would play as A-#) is refused with the
+forms to write (`NoiseSoundError`). `ResolveInstrument` finds a song
+instrument by its name without the note in parentheses its maker added
+("Rust saw" for "Rust saw (saw)", `NameWithoutNote`), last, so presets keep
+their names, and lists the chip's names nearest first (`NameDistance`).
+`ClimaxFindings` (before `RepeatFindings`, `ARRANGE_CLIMAX`, check_song's
+kind `climax_repeats`, severity medium, after `too_busy`; `PROBLEM_CLIMAX`)
+finds a section named as the high point (`IsClimaxName` in
+`SongShapes.cpp`: Climax, Peak, Finale) whose melody plays an earlier
+section's of its length in `REPEAT_MELODY` of its bars, whatever the other
+parts add; its fix is `vary_part` `octave_up` there while the top stays
+under `CLIMAX_TOP`, else advice. On the 43 kept songs only Mud Cave names a
+Climax, its melody 0.75 alike (6 of 8 bars, 8 of 8 needed); Ironworks and
+Green Valley Sunrise play A's 8 bars note for note (`song_file_checks`
+fails a kept song with one). The short review's tips keep the bars their
+text names (`BarsNamedIn` in `ShortTip`), and "Phrases come back
+unchanged" names its bars. `CoreInstructions`, `Instructions`,
+`CoreRecipe` and `KindRecipe` say to call `finish_song` once the parts are
+written, and a client's `export_for_game` of a song not listened to as it
+is ends with a line pointing to it (`ExportListenHint`).
+`TestToolReplies` and `TestNoiseAndFlats` (`step_notes_tests`) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

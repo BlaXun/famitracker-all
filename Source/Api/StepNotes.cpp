@@ -74,6 +74,16 @@ bool AllDigits(const std::string &Word)
 	return true;
 }
 
+// A noise pitch after the word "noise": "10", "F", "F-#", "F#" (as ParseNoisePitch reads them)
+bool NoisePitchWord(const std::string &Word)
+{
+	if (AllDigits(Word))
+		return true;
+	if (Word.empty() || !std::isxdigit(static_cast<unsigned char>(Word[0])))
+		return false;
+	return Word.size() == 1 || (Word.size() == 2 && Word[1] == '#') || (Word.size() == 3 && Word[1] == '-' && Word[2] == '#');
+}
+
 std::string Number(int Value)
 {
 	char Buffer[16];
@@ -116,12 +126,12 @@ std::vector<Piece> Pieces(const std::string &Text)
 			Word += c;
 	}
 	Flush();
-	// Drum names of two words are one step: "open hihat", "low tom", "noise 10"
+	// Drum names of two words are one step: "open hihat", "low tom", "noise 10", "noise F-#"
 	std::vector<Piece> Joined;
 	for (size_t i = 0; i < Out.size(); ++i) {
 		if (Out[i].Kind == Piece::WORD && i + 1 < Out.size() && Out[i + 1].Kind == Piece::WORD && !AllOf(Out[i].Word, '-') &&
 			!AllOf(Out[i].Word, '.') && Out[i].Word.back() != ':' &&
-			(DrumPair(Out[i].Word, Out[i + 1].Word) || ((Out[i].Word == "noise" || Out[i].Word == "Noise") && AllDigits(Out[i + 1].Word)))) {
+			(DrumPair(Out[i].Word, Out[i + 1].Word) || ((Out[i].Word == "noise" || Out[i].Word == "Noise") && NoisePitchWord(Out[i + 1].Word)))) {
 			Piece P = Out[i];
 			P.Word += " " + Out[i + 1].Word;
 			Joined.push_back(P);
