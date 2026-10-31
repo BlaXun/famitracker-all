@@ -9619,9 +9619,9 @@ void TestExport()
 		float Peak = 0.0f;
 		for (size_t i = 0; i < Samples.size(); ++i)
 			Peak = std::max(Peak, std::fabs(Samples[i]));
-		CHECK_HAS(Text, "dB louder than FamiTracker plays it (its loudest peak at -1 dBFS)");
+		CHECK_HAS(Text, "dB from how loud the song plays in FamiTracker (its loudest peak at -1 dBFS)");
 		CHECK(Peak < 0.97f);
-		CHECK_HAS(Text, "12.0 dB louder");	// this quiet render: as much as it may be raised
+		CHECK_HAS(Text, "turned up 12.0 dB");	// this quiet render: as much as it may be raised
 		const std::string Plain = Tools.Call("export_for_game", Parse("{\"normalize\": false}")).Text;
 		CHECK_LACKS(Plain, "dB louder");
 		std::vector<float> Quiet;
@@ -9680,12 +9680,17 @@ void TestExport()
 		CHECK_HAS(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).Text, "loudness");	// out of its range
 		CHECK(Tools.Call("export_for_game", Parse("{\"loudness\": -3}")).IsError);
 	}
-	// The DPCM level set on the first row pops as the song starts: the file fades in over it
+	// The DPCM level set on the first row pops as the song starts: the file fades in over it, where the channel plays samples
+	// (the mix sets Zxx on every song's first row for the triangle: without samples, no word of the DPCM)
 	{
 		Song.Rows[4][0].Effect[0] = EFF_DAC;
 		Song.Rows[4][0].Param[0] = 0x30;
+		const std::string Plain = Tools.Call("export_for_game", Parse("{}")).Text;
+		CHECK_LACKS(Plain, "fading in");
+		CHECK_LACKS(Plain, "Zxx");
+		Song.Put(4, 32, "C-3");
 		const std::string Faded = Tools.Call("export_for_game", Parse("{}")).Text;
-		CHECK_HAS(Faded, "fading in over its first 40 ms (the DPCM level set as it starts pops)");
+		CHECK_HAS(Faded, "fading in over its first 40 ms (the drum samples' level, Zxx, set as it starts would click)");
 		CHECK_HAS(Faded, "the first 12.8 s once, then the loop from 12.8 s to the end.");
 		std::vector<float> Start;
 		CHECK(DecodeOgg(Song.Files["Town.ogg"], Start, Rate, Channels, Comments, Error));
@@ -9697,6 +9702,7 @@ void TestExport()
 		CHECK(Early < 0.05f && Later > 0.2f);
 		Song.Rows[4][0].Effect[0] = EFF_NONE;
 		Song.Rows[4][0].Param[0] = 0;
+		Song.Rows[4][32] = Cell();
 	}
 	// A muted channel is in the game's file all the same
 	Song.Info.Channels[2].Muted = true;
@@ -14137,7 +14143,7 @@ void TestArrangeFixes()
 		Song.Rows[5][2].Effect[0] = EFF_VIBRATO;
 		Song.Rows[5][2].Param[0] = 0x42;
 		Song.End(5, 16, NOTE_RELEASE);
-		const ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"FDS\", \"to_channel\": \"Pulse 1\", \"to_bar\": 1, \"delay_beats\": 1, "
+		const ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"FDS\", \"to_channel\": \"Pulse 1\", \"to_bar\": 1, \"delay_beats\": 1, \"instrument\": \"Square\", "
 			"\"instrument\": \"soft lead\"}");
 		CHECK(!Result.IsError);
 		bool Modulator = false;
@@ -14647,7 +14653,8 @@ void TestCalmKinds()
 	pDuty = MadeSequence(Song, Newest(Song), SEQUENCE_DUTY);
 	CHECK(pDuty != 0 && pDuty->Items == std::vector<int>({ 7 }) && MadeSequence(Song, Newest(Song), SEQUENCE_ARPEGGIO) == 0);
 	CHECK_HAS(Result.Text, "a 50% pulse that blooms from 4 to 15 12 frames in, settles to 9 over 10 frames, and fades over 24 frames "
-		"after a release (===); a faint vibrato from 24 frames (0.4 s) into each note, about 3 cents either way at A-3.");
+		"after a release (===); a faint vibrato from 24 frames (0.4 s) into each note, about 3 cents either way at A-3, 7 at A-4 and 15 "
+		"at A-5");
 	CHECK_HAS(Result.Text, "Volume a frame at a time: 4 4 5 6 7 8 9 10 11 12 13 14 15 14 13 13 12 11 11 10 10 10 9, holding 9 while the "
 		"note lasts; after a release (===): 9 8 8 8 7");
 	CHECK_HAS(Result.Text, "At 75 BPM it peaks on frame 12 (0.25 of a beat), holds 9 from frame 22 (0.46 of a beat) and fades out in 24 "
@@ -15111,7 +15118,7 @@ void TestCalmChoice()
 	Result = Run(Slow, "polish", "{\"channels\": [\"VRC6 Pulse 1\"]}");
 	CHECK_HAS(Result.Text, "Touches: accents");	// the default touches, accents and all
 	CHECK_HAS(Result.Text, "This looks calm (75 BPM, no drums): style calm leaves out accents and waits longer with a shallower vibrato.");
-	CHECK_HAS(Run(Slow, "review_arrangement", MIX).Text, "This looks calm (75 BPM, no drums): style calm reviews it as a calm track.");
+	CHECK_HAS(Run(Slow, "review_arrangement", MIX).Text, "Calm: it looks calm (75 BPM, no drums), so it's reviewed as a calm track");
 	Result = Run(Slow, "check_song", "{}");
 	CHECK_HAS(Result.Text, "This looks calm (75 BPM, no drums): style calm also warns about a lead whose sound holds a steady level.");
 	CHECK_LACKS(Result.Text, "Held lead");
@@ -28289,6 +28296,142 @@ void TestWhatNextShapeVariations()
 	CHECK_HAS(A.Text, "as the words about the place ask");
 	CHECK_HAS(A.Text, "\"about\":\"a sleepy village at night\"");	// asked again with them
 }
+
+// fix-finish-details: what six songs made by following what_next showed at their finish
+
+// An intro's note ringing into the loop's start the first time, where nothing sounds on repeat (Guard Tower's intro chord
+// on 2A03 Pulse 1 into bar 3): fix_loop ends it there, which changes nothing on repeat, and the export's loop starts after
+// the intro instead of the song's second time through
+void TestIntroNoteIntoLoop()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(5, 0, "C-4", 0, 12);
+	for (int r = 16; r < 128; r += 8)
+		Song.Put(5, r, r % 16 == 0 ? "E-4" : "G-4");
+	Song.Put(0, 48, "A#2", 2, 10);	// the intro's last chord note, held into bar 5
+	Song.Put(0, 72, "C-3");
+	Song.End(0, 120);				// the loop's end stops it
+	Song.Rows[0][127].Effect[0] = EFF_JUMP;
+	Song.Rows[0][127].Param[0] = 1;
+	ToolSet Tools(Song);
+	std::string Text = Tools.Call("check_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "2A03 Pulse 1: the first time, A#2 from the intro sounds into bar 5 beat 1; on repeat, nothing does.");
+	Text = Tools.Call("fix_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "a halt (---) on 2A03 Pulse 1 at bar 5 beat 1, where A#2 from the intro rang into the loop the first time");
+	CHECK_HAS(Text, "The seam is clean now");
+	CHECK(Song.Rows[0][64].Note == NOTE_HALT && Song.Rows[0][72].HasNote());
+	CHECK_HAS(Tools.Call("check_loop", Parse("{}")).Text, "The seam is clean");
+	const std::string Export = Tools.Call("export_for_game", Parse("{}")).Text;
+	CHECK_HAS(Export, "then the loop from 6.4 s to the end.");
+	CHECK_LACKS(Export, "second time through");
+}
+
+// add_echo's detune stays off the notes where the echo doubles another part (the Airship's P81 echo on 2A03 Pulse 2 beat
+// against the harmony voice on VRC6 Pulse 2 in bars 21-31), and listen's words for 12 cents are an eighth of a semitone
+void TestEchoInTuneWhereDoubled()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const LINE[] = { "C-4", "D-4", "E-4", "F-4", "G-4", "F-4", "E-4", "D-4" };
+	for (int r = 0; r < 128; r += 4)
+		Song.Put(5, r, LINE[(r / 4) % 8], 0, 12);
+	// A voice on VRC6 Pulse 2 playing the melody's notes a beat late in bars 1-2, as an echo would
+	for (int r = 4; r < 32; r += 4)
+		Song.Put(6, r, LINE[(r / 4 - 1) % 8], 0, 10);
+	Song.End(6, 32);
+	ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"2A03 Pulse 2\", \"delay_beats\": 1, \"instrument\": \"Square\", "
+		"\"detune\": 1}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Where the echo doubles VRC6 Pulse 2's notes, ");
+	CHECK_HAS(Result.Text, " notes play in tune (P80): detuned there, the two would beat");
+	CHECK(HasEffectAt(Song, 1, 4, EFF_PITCH, 0x80));
+	CHECK(HasEffectAt(Song, 1, 32, EFF_PITCH, 0x81));	// detuned once the doubling ends
+	// Nothing doubled: the detune from its first note, as before
+	FakeSong Alone;
+	Alone.Info.DirectChanges = true;
+	for (int r = 0; r < 64; r += 4)
+		Alone.Put(5, r, LINE[(r / 4) % 8], 0, 12);
+	Result = Run(Alone, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"2A03 Pulse 2\", \"delay_beats\": 1, \"instrument\": \"Square\", \"detune\": 1}");
+	CHECK(!Result.IsError);
+	CHECK_LACKS(Result.Text, "play in tune");
+	CHECK(HasEffectAt(Alone, 1, 4, EFF_PITCH, 0x81));
+	CHECK_EQ(ListenCentsWords(12.0), std::string("about an eighth of a semitone"));
+	CHECK_EQ(ListenCentsWords(25.0), std::string("about a quarter of a semitone"));
+}
+
+// design_instrument's vibrato is said where the lead plays: a pitch sequence moves the period in steps, which are more cents
+// the higher the note (Guard Tower's gentle lead, said as 20 cents at A-3, was heard 60 either way at E-5)
+void TestVibratoAcrossRegister()
+{
+	SoundDesign D;
+	CHECK(DesignOfKind("lead", D));
+	D.Vibrato = 1;
+	CHECK_HAS(DescribeDesign(D, 60), "about 20 cents either way at A-3, 40 at A-4 and 85 at A-5 (a pitch sequence moves the period in "
+		"steps, so higher notes swing wider)");
+	CHECK_HAS(DescribeDesign(D, 60, "triangle"), "about 40 cents either way at A-3");
+	CHECK_HAS(DescribeDesign(D, 60, "N163"), "about 20 cents either way at A-3");
+	CHECK_LACKS(DescribeDesign(D, 60, "N163"), "at A-5");
+}
+
+// The review hears the style it detects (Hut in a Field: "This looks calm", then drums, a walking bass and accents as its
+// tips) and a song laid out as a small loop is short by design (the shop: 14 bars, then "under half a minute ... 16 to 32")
+void TestReviewKeepsItsStyle()
+{
+	FakeSong Song;
+	Song.Info.Tempo = 75;
+	for (int r = 0; r < 128; r += 8)
+		Song.Put(5, r, r % 16 == 0 ? "E-4" : "G-4", 0, 12);
+	for (int r = 0; r < 128; r += 16) {
+		Song.Put(0, r, "C-3", 2, 8);
+		Song.Put(2, r, "C-2");
+	}
+	std::string Text = Run(Song, "review_arrangement", "{}").Text;
+	CHECK_HAS(Text, "Calm: it looks calm (75 BPM, no drums), so it's reviewed as a calm track");
+	CHECK_LACKS(Text, "No drums");
+	CHECK_HAS(Run(Song, "review_arrangement", "{\"style\": \"any\"}").Text, "No drums");
+
+	FakeSong Shop;
+	Shop.Info.DirectChanges = true;
+	Shop.Info.TrackName = "Odds and Ends Shop";
+	CHECK(!Run(Shop, "song_shape", "{\"shape\": \"small\"}").IsError);
+	const int Rows = Shop.Info.Frames * Shop.Info.PatternLength;
+	for (int r = 0; r < Rows; r += 8)
+		Shop.Put(5, r, r % 16 == 0 ? "E-4" : "G-4", 0, 12);
+	for (int r = 0; r < Rows; r += 16) {
+		Shop.Put(0, r, "C-3", 2, 8);
+		Shop.Put(2, r, "C-2");
+	}
+	Text = Run(Shop, "review_arrangement", "{}").Text;
+	CHECK_HAS(Text, "Length: 14 bars");
+	CHECK_LACKS(Text, "Under half a minute");
+}
+
+// read_notes spells a minor key's leading tone as the 7th degree raised: C#5 in D minor, F#4 in G minor, the key's own
+// flats still flats
+void TestMinorLeadingTone()
+{
+	Key K;
+	CHECK(ParseKey("D minor", K));
+	CHECK_EQ(NoteClassName(1, K), std::string("C#"));
+	CHECK_EQ(NoteClassName(10, K), std::string("Bb"));
+	CHECK_EQ(NoteClassName(11, K), std::string("B"));
+	CHECK(ParseKey("G minor", K));
+	CHECK_EQ(NoteClassName(6, K), std::string("F#"));
+	CHECK_EQ(NoteClassName(3, K), std::string("Eb"));
+	CHECK(ParseKey("F major", K));
+	CHECK_EQ(NoteClassName(1, K), std::string("Db"));	// a major key's chromatic notes as before
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	CHECK(!Run(Song, "set_key", "{\"key\": \"D minor\"}").IsError);
+	Song.Put(5, 0, "D-5", 0, 12);
+	Song.Put(5, 4, "C#5");
+	Song.Put(5, 8, "A#4");
+	Song.End(5, 12);
+	const std::string Text = Run(Song, "read_notes", "{\"channel\": \"VRC6 Pulse 1\", \"to_bar\": 1, \"format\": \"steps\"}").Text;
+	CHECK_HAS(Text, "D5v12 - C#5 - Bb4 -");
+	CHECK_LACKS(Text, "Db5");
+}
 
 int main()
 {
@@ -28563,6 +28706,11 @@ int main()
 	TestToolReplies();
 	TestChordDrones();
 	TestColorRubs();
+	TestIntroNoteIntoLoop();
+	TestEchoInTuneWhereDoubled();
+	TestVibratoAcrossRegister();
+	TestReviewKeepsItsStyle();
+	TestMinorLeadingTone();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

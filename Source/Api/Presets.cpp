@@ -1024,8 +1024,26 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 		static const char *const DEPTHS[] = { "", "gentle", "medium", "strong", "faint" };
 		static const int CENTS[] = { 0, 20, 40, 60, 3 };
 		const int Depth = D.Vibrato == VIBRATO_FAINT ? VIBRATO_FAINT : Clamp(D.Vibrato, 1, 3);
-		std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note, about %d cents either way at A-3",
-			DEPTHS[Depth], D.VibratoDelay, D.VibratoDelay / Rate, CENTS[Depth]);
+		const bool Periods = Wave == "sawtooth" || Wave == "triangle" || Wave == "square" || (Pulse && Wave != "noise");
+		if (Periods) {
+			// A pitch sequence moves the period by whole steps, and a step is more cents the higher the note (the period is
+			// shorter): the swing at A-3, A-4 and A-5 on this channel's divider (the triangle's period counts 32 cycles, the
+			// sawtooth's 14; Guard Tower's gentle lead was heard 60 cents either way at E-5, said as 20 at A-3)
+			const int Divider = Wave == "triangle" ? 32 : Wave == "sawtooth" ? 14 : 16;
+			int At[3];
+			for (int o = 0; o < 3; ++o) {
+				const double Period = std::floor(1789773.0 / (Divider * 440.0 * std::pow(2.0, o)) - 1.0 + 0.5);
+				const double Cents = Depth == VIBRATO_FAINT ? 600.0 * std::log2((Period + 1.0) / Period) :
+					600.0 * std::log2((Period + 3.0 * Depth) / std::max(1.0, Period - 3.0 * Depth));
+				At[o] = Cents < 10.0 ? static_cast<int>(std::floor(Cents + 0.5)) : 5 * static_cast<int>(std::floor(Cents / 5.0 + 0.5));
+			}
+			std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note, about %d cents either way at "
+				"A-3, %d at A-4 and %d at A-5 (a pitch sequence moves the period in steps, so higher notes swing wider)", DEPTHS[Depth],
+				D.VibratoDelay, D.VibratoDelay / Rate, At[0], At[1], At[2]);
+		}
+		else
+			std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note, about %d cents either way at A-3",
+				DEPTHS[Depth], D.VibratoDelay, D.VibratoDelay / Rate, CENTS[Depth]);
 		Out += Buffer;
 	}
 	if (Wave == "noise")
