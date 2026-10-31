@@ -437,7 +437,7 @@ std::string SongShapeIds()
 const SongShape &ShapeForKind(const std::string &Kind)
 {
 	const std::string Word = Lower(Trimmed(Kind));
-	const char *Id = Word == "lively" ? "stage" : Word == "calm" ? "night" : Word == "action" ? "boss" : "town";
+	const char *Id = Word == "lively" ? "stage" : Word == "calm" ? "night" : Word == "action" ? "boss" : "town";	// (cozy: town)
 	const SongShape *pShape = ShapeById(Id);
 	return pShape != 0 ? *pShape : SongShapes()[0];
 }
@@ -1212,6 +1212,7 @@ ShapeWords ReadShapeWords(const std::string &About)
 		if (!Negated(Words, i))
 			Asked += Words[i] + " ";
 	const SongShape *pShape = FindSongShape(Asked);
+	const SongShape *const pAsked = pShape;	// (before a gentle boss becomes a stage or a night)
 	std::vector<std::string> Why;
 	std::string ShapeWord;
 	if (pShape != 0) {
@@ -1244,6 +1245,41 @@ ShapeWords ReadShapeWords(const std::string &About)
 		pShape = ShapeById("stage");
 		Why.push_back("\"" + Intense + "\"");
 	}
+	// A warm place indoors (a shop, a hut, an inn, a grandmother keeping the place), not at night, not a dark one and not
+	// a fight: the cozy kind, in its shape (a small place's short loop where the words name one, a shop or an inn, else a
+	// town's, which a hut gets: 40 bars). Its words were gentle ones, which took it for a night song: "Lost n Found", a
+	// cozy, run-down hut, came out in C minor and sounded depressing
+	static const char *const COZY[] = { "cozy", "cosy", "homey", "homely", "warm", "warmth", "friendly", "hut", "cabin", "cottage",
+		"shop", "store", "inn", "tavern", "bakery", "cafe", "teahouse", "house", "kitchen", "hearth", "fireplace", "indoors", "indoor",
+		"granny", "grandma", "grandmother", "grandpa", "elderly", "shopkeeper" };
+	static const char *const NIGHT[] = { "night", "nights", "nighttime", "sleep", "sleeping", "sleepy", "asleep", "dream", "dreams",
+		"dreamy", "dreaming", "lullaby", "rest", "resting", "moon", "moonlit", "starry" };
+	static const char *const DARK[] = { "haunted", "spooky", "creepy", "scary", "eerie", "abandoned", "cursed", "dark", "sinister" };
+	std::string Cozy;
+	if (ANY(COZY, true, &Cozy) && !ANY(NIGHT, true, 0) && !ANY(DARK, true, 0) && !IsIntense &&
+		(pAsked == 0 || pAsked->Id == "night" || pAsked->Id == "town" || pAsked->Id == "small")) {
+		Out.Kind = "cozy";
+		if (pShape == 0 || pShape->Id == "night") {
+			const SongShape *pSmall = ShapeById("small");
+			const ShapeRow *pRow = pSmall != 0 ? RowOf(*pSmall) : 0;
+			const std::vector<std::string> Own = pRow != 0 ? WordsOf(pRow->Words) : std::vector<std::string>();
+			std::string Place;
+			for (size_t i = 0; i < Words.size() && Place.empty(); ++i)
+				if (!Negated(Words, i) && std::find(Own.begin(), Own.end(), Words[i]) != Own.end())
+					Place = Words[i];
+			pShape = ShapeById(Place.empty() ? "town" : "small");
+			Why.clear();
+			Why.push_back("\"" + Cozy + "\": a warm place, cozy" + (Place.empty() ? std::string() : ", \"" + Place + "\" a small one"));
+		}
+		else if (!Why.empty() && Why.back() == "\"" + Cozy + "\"")
+			Why.back() += ": a warm place, cozy";
+		else if (!ShapeWord.empty())
+			Why.back() = "\"" + Cozy + "\" and \"" + ShapeWord + "\": a warm place, cozy";
+		else
+			Why.push_back("\"" + Cozy + "\": cozy");
+	}
+	else if (pShape != 0)
+		Out.Kind = pShape->Kind;
 	Out.pShape = pShape;
 	// Parts asked for, or said not to be
 	struct PartAsk {
@@ -1327,6 +1363,9 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 		std::string Line = Trimmed(Request.Shape).empty() ? "the " + Lower(pBase->Title) + (Words.pShape != 0 ? std::string() :
 			std::string(" (no word for a shape, so the general one)")) : "the " + Lower(pBase->Title) + " asked for";
 		Out.FromWords = "From the words: " + Line + (Words.Why.empty() ? std::string(".") : " (" + Words.Why + ").");
+		Out.Kind = Words.Kind;
+		if (Words.Kind == "cozy")
+			Out.FromWords += " A cozy place: what_next with the same about (or kind cozy) follows the cozy recipe, in a major key.";
 	}
 	const std::string &Title = pBase->Title;
 	FormList Form;

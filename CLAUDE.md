@@ -2260,6 +2260,33 @@ vibrato fix reaches the last note the `4xy` stays on (`ListenCallOf`), the
 two walks `next` failed after `feat-color-rubs` met `feat-shape-variations`.
 `TestChordDrones` covers it.
 
+A cozy kind (from `feat-cozy-kind`): "Lost n Found" (a cozy, run-down hut
+an old woman keeps), asked for as calm, came out a night song in C minor and
+sounded depressing, so a warm place indoors by day is a kind of its own:
+`NEXT_COZY` (appended to `next_kind`, its row of `KINDS` in `WhatNext.cpp`:
+F, Bb or C major, 85-112.5 BPM at 100 (speed 9), the lead "Cozy lead" of
+kind falling strike, chords `broken`, bass `root_fifth` (walking when it
+moves), the `lively` groove with `intensity` light and no kit samples, mixed,
+polished and checked in calm's style (calm's places, its drums kept as
+written, no accents, the held-lead check), -20 LUFS beside the towns;
+`NextProgression` has its own major chords). `ParseNextKind` takes cozy,
+cosy, warm, homey, homely, indoors, shop, inn and house; `KindWantsMajor` is
+calm's and cozy's, and `WhatNext::Frame` puts a note first when the track's
+key is minor (`set_key`, or `transpose` `to_mode` major with notes, "or keep
+it minor if you mean it"). `WhatNext::CalmStyle` is the kind's `Style`
+(polish's due check, the "presses" tip); `Calm()` stays the night song's
+choices. `ReadShapeWords` gives `ShapeWords::Kind` (the shape's, or cozy for
+`COZY` words without `NIGHT` or `DARK` ones, a fight or intense words, over
+a night, town or small shape: the small one where the words name a shop or
+an inn, else the town, which "Lost n Found" gets: 40 bars with `bars` 40);
+`what_next` takes its kind from it and, with a kind given, the words' shape
+when their kind agrees; `ShapeChoice::Kind` and `FromWords` say so.
+`FINISH_COZY` (appended before the count), `KindPolish` (style calm),
+`grow_melody` (grows as lively), `KindRecipe` (an `Of` per kind),
+`CoreRecipe`, the style guide's `cozy` topic, the instructions and the What
+next panel's kind menu (`KIND_IDS`) have it. `TestCozyKind` and
+`TestWhatNextLoop`'s cozy walk cover it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

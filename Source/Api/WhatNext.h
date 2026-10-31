@@ -107,12 +107,12 @@ private:
 };
 
 // The kinds of song what_next follows, as get_recipe has them; general when
-// none is given and the track's name doesn't say calm
-enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION };
+// none is given and the track's name doesn't say calm (append only)
+enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION, NEXT_COZY };
 
 struct NextKind {
 	int Kind;					// next_kind
-	const char *Name;			// "calm", "lively", "action", "general"
+	const char *Name;			// "calm", "lively", "action", "cozy", "general"
 	double SlowestBpm, FastestBpm;	// the tempos it suits (0 for any)
 	double Bpm;					// set_tempo's when the song's isn't one of them
 	const char *LeadName;		// the lead's sound what_next designs for it, and design_instrument's kind
@@ -128,8 +128,11 @@ struct NextKind {
 };
 
 const NextKind &NextKindInfo(int Kind);
-// A kind as asked ("calm", "Lively"); false when it's none of the three
+// A kind as asked ("calm", "Lively", "cosy"); false when it's none of the four
 bool ParseNextKind(const std::string &Text, int &Kind);
+// Whether a kind's songs want a major key (calm and cozy, whose keys are all major), for what_next's note on a track
+// whose key is minor
+bool KindWantsMajor(int Kind);
 
 // The chords what_next gives a new song's A part (or its B part, on other
 // chords), eight bars as degrees of its key: "| I | V | vi | IV | ... |"

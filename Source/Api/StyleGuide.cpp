@@ -337,7 +337,7 @@ const Section SECTIONS[] = {
 		"peace restful",
 		"What makes a song calm rather than plain or pressing, from the calm pieces of Final Fantasy III, Castlevania III and "
 		"Punch-Out!!, modern FamiTracker music and a soundtrack whose listener loved the result. Only for songs asked to be "
-		"calm: lively stages and fights have topics of their own (lively, action).\n"
+		"calm: lively stages, warm rooms by day and fights have topics of their own (lively, cozy, action).\n"
 		"- The melody's sound never holds a high, steady level: a level held from attack to release presses like an organ key "
 		"held down, however soft the parts around it. Give the lead one of three shapes and keep it for the song. First the "
 		"one the listener liked best of the night songs: a music box (kind music box: a struck pulse that rings away to "
@@ -423,6 +423,40 @@ const Section SECTIONS[] = {
 		"- Checks: review_arrangement style lively 8 or more (it tips a climax under 2 dB over A, a lead at one volume and a "
 		"band quieter than its melody), check_song 0 clicking and 0 vanishing, measure_mix style lively with melody_channel "
 		"the lead. export_for_game at -20 LUFS." },
+	{ "cozy", "Cozy places (a shop, a hut, an inn: warm, indoors, by day)",
+		"cozy cosy warm homey homely friendly shop store inn tavern hut cabin cottage bakery cafe house kitchen hearth "
+		"fireplace indoors granny grandmother elderly shopkeeper keeper",
+		"A warm room by day, with someone friendly keeping it (a shop, a hut, an inn, a grandmother's kitchen): the player "
+		"steps in from outside and feels at home. It isn't a night song: asked for as calm, \"Lost n Found\" (a cozy, "
+		"run-down hut where an old woman keeps the lost things) came out a night song in C minor and sounded depressing. "
+		"What makes a room cozy on the NES:\n"
+		"- A major key: F, Bb, C, G or D major (F and Bb sound the warmest on the pulses). Minor makes it sad; a borrowed "
+		"minor iv for a moment of fondness is enough.\n"
+		"- A walking pace: 90-112.5 BPM at an even tempo (100 is speed 9 at tempo 150, 90 speed 10, 112.5 speed 8). A light "
+		"swing (set_swing 56-60), a waltz or a 6/8 lilt (set_meter) all suit a room where someone potters about.\n"
+		"- A tune that smiles: short phrases of two bars, question and answer, each ending on a held note or a rest; a skip "
+		"up (a third, a sixth) and steps down, a dotted or lilting rhythm, the answer coming home to the tonic. Mostly octave "
+		"3, a high point a section, never busy.\n"
+		"- A warm lead that keeps singing low: design_instrument kind falling strike (struck at 15, falling to about 6 and "
+		"holding, a faint vibrato that waits), keys, or a soft pluck that settles; on the VRC6 a pulse at 25-37.5%; on the "
+		"VRC7 the flute or piano patch. Not the night songs' music box, which rings away, and nothing that holds a high "
+		"level (check_song style calm finds a held lead).\n"
+		"- Chords plain and friendly, a chord a bar (I vi IV V, I IV ii V; a sixth, a sus2 or a maj7 for warmth where no tune "
+		"note sits a semitone from it), picked softly under the tune: add_chords_and_bass chord_style broken (a pluck in "
+		"eighths, up or alberti), the B part on IV and the relative minor.\n"
+		"- A bass that bounces but stays light: bass_style root_fifth on the triangle (walking where it moves, as in a B "
+		"part), polish touches staccato for the bounce.\n"
+		"- Soft drums or none: add_drums groove lively with intensity light (soft closed hats and a soft kick, no snare) on "
+		"the noise alone; a sampled kick thumps in a small room. A tick of a clock or a kettle's sigh in the break is "
+		"charm.\n"
+		"- Depth: a harmony a third under the tune in the repeat (add_harmony), an echo a beat behind at about 40% on the "
+		"other side, set_mixer room small room with a little Space on the chords, soft 20-40 on a pulse that should sound "
+		"warm.\n"
+		"- Form: a town's (intro 4, A, A', B, A'' its fullest, a short break) or, for a small room, a short loop (intro 2, A, "
+		"A', B: 14 bars). song_shape with about (\"a cozy hut\") picks it.\n"
+		"- Mix and checks in calm's style: polish style calm (no accents), mix style calm (the melody 2-3 dB over the chords, "
+		"soft drums kept as soft as written), review_arrangement and check_song style calm. export_for_game at -20 LUFS, "
+		"beside the towns and the stages (a night song's -22 is for the quiet scenes)." },
 	{ "action", "Action: battles, bosses and chases (punchy and driving)",
 		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
 		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"
@@ -576,8 +610,9 @@ const Section SECTIONS[] = {
 		"rest, -19 for action and bosses, -20 for the rest. Every track opens with an intro of 2-4 bars that plays once, 6-10 dB "
 		"under the loop's main part (13 dB under reads as silence in a game), and breathes before the loop comes round (a break "
 		"of 2-4 bars). measure_mix checks it, with each section's loudness and the two sides (within 2 dB of each other).\n"
-		"- Three kinds of song, each with a recipe in this guide: calm (only when a song is asked to be calm: a place to rest, a "
-		"night scene), lively (a stage to explore) and action (fights, bosses, chases). The listener found the night songs' "
+		"- Four kinds of song, each with a recipe in this guide: calm (only when a song is asked to be calm: a place to rest, a "
+		"night scene), lively (a stage to explore), cozy (a warm room by day: a shop, a hut, an inn) and action (fights, "
+		"bosses, chases). The listener found the night songs' "
 		"melodies too active and direct (a lead held at one level, 5-8 dB over the chords) where they were asked to be calm "
 		"and melancholic: calm songs answer that, and only they. The first lively stages, a lead with accents inside a band "
 		"louder than it, a sampled beat and sections that build, were liked nearly every one: lively stages keep that, and "
@@ -664,7 +699,8 @@ std::string StyleGuide(const std::string &Topic)
 	if (Asked.empty()) {
 		std::string Out = "The guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos), to dark "
 			"and melancholic music, and to the atmospheric sound of modern FamiTracker music, from studies of their "
-			"soundtracks, with recipes for calm songs, lively stages and action. Topics (references action guide with a topic):\n";
+			"soundtracks, with recipes for calm songs, lively stages, cozy places and action. Topics (references action guide "
+			"with a topic):\n";
 		for (size_t i = 0; i < SECTION_COUNT; ++i)
 			Out += std::string("- ") + SECTIONS[i].Topic + ": " + SECTIONS[i].Title + "\n";
 		return Out;

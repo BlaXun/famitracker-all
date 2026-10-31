@@ -131,7 +131,7 @@ in a style; sounds found or designed) and the rules that decide how it
 sounds: notes on a sound that's gone at once vanish, a vibrato on the
 2A03's pulses can click, and only 0.4.6's effects play. It serves no
 prompts, so a client adds no tools of its own to list them; `get_recipe`
-gives the recipes for calm, lively and action songs instead: the loop, the
+gives the recipes for calm, lively, cozy and action songs instead: the loop, the
 plan it follows in this set's tools, and a worked melody of 8 bars in
 steps over its chords. Its `check_song` and `review_arrangement` answer in
 a few lines unless a `format` is asked for (see [Short replies](#short-replies)),
@@ -526,13 +526,22 @@ work, to reuse its ideas.
   band louder than it (the bass about level with the melody), a sampled
   kick and snare, and sections that build to a climax 2-4 dB over the
   first A.
+- **cozy**, for a warm place indoors by day: a shop, a hut, an inn, someone
+  friendly keeping it. Not a night song: a major key (F, Bb or C major for a
+  new song), a walking pace (100 BPM), a lead struck warm that falls to a
+  low hold and keeps singing (`design_instrument` kind falling strike), soft
+  broken chords, a bass on root and fifth that bounces, soft drums (the
+  lively groove, light, on the noise alone) or none, short phrases of a
+  tune that smiles. It's polished, mixed and checked in calm's style (no
+  accents, the melody 2-3 dB over the chords, soft drums kept soft) and
+  exported at -20 LUFS, beside the towns and stages.
 - **action**, for fights, bosses and chases. These stay punchy: the melody
   on top, a backbeat, accents.
 
 Each recipe ends with its numbers from the built-in guide (topics `calm`,
-`lively` and `action`), so Claude reads them once instead of looking them
-up. Without a kind, the general recipe points at the three when your idea
-asks for one.
+`lively`, `cozy` and `action`), so Claude reads them once instead of looking
+them up. Without a kind, the general recipe points at the four when your
+idea asks for one.
 
 ### Arguments a tool doesn't take
 
@@ -620,8 +629,9 @@ is the recipes':
    another loudness, is `export_for_game`, with a `listen` before it when
    the song changed since it was heard (a fix too).
 
-It takes `kind` (calm, lively or action; without one, calm when the track's
-name says so, else the general recipe), `skip` (steps to leave out, like
+It takes `kind` (calm, lively, cozy or action; without one, the kind the
+words in `about` ask for, else calm when the track's name says so, else the
+general recipe), `skip` (steps to leave out, like
 `["drums"]`, or a kind of `check_song`'s finding) and `all` (every step found
 now, in order). With direct changes off it asks for them first, since each
 step works on what the one before wrote. `export_for_game` (and
@@ -1158,7 +1168,7 @@ before a batch of changes.
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28). The `lively` groove is for a gentle place, not too upbeat (a stage's beat is `basic` with `kit` samples): soft closed hi-hats on the eighths (4-6, a sixteenth pair now and then, more when busy), an open hi-hat every other bar (7), a soft kick on 1 and the "and" of 2 or 3 (10 and 8), no snare, small fills (a hi-hat roll or soft toms) and a soft splash after; with `kit` samples the kick is sampled. `intensity` light thins the kick and the snare (the kick on 1 and 3, one soft backbeat a bar) and keeps the hi-hats |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one. Over a chord from outside the key (a borrowed bVI or bVII, a secondary dominant) the voice takes the scale that chord sounds in: under Ebadd9 in G major G aeolian's notes, under F G mixolydian's, never an Eb7's Db or an F7's Eb. Of the chords the other parts play, a note outside the key that no part plays isn't the chord's (an E bass under C and E is heard as an E augmented, whose G# nobody plays) |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line holds a note a bar, rests where the melody does and answers only in rests of two beats or more, briefly (under a melody with no such rest the reply says there was no room to answer); `rests` (fill, the default, answer or leave) chooses that directly |
-| `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively or action shapes them. See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
+| `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively or action shapes them (cozy grows as lively). See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
 | `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; when asked, `clashes`: an accompaniment's note a semitone from another part moves onto the chord the others play (see [Clashes](#clashes)), and `colors`: a chord part's colors that rub the melody taken out, or with `colors` `add` plain lush chords given the rich colors that fit it (see [What drafts miss](#what-drafts-miss)); style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents. Polishing again changes nothing it did: a part accented already keeps its volumes. `staccato` cuts the bass short only where the channel plays the bass (not a sawtooth counter-melody over the triangle's) and not in bars the melody rests in, where a break's long notes hold it up |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it. A whole section copied becomes its repeat, numbered the way the song numbers it: `A 2`, or `A3` beside an `A2`, never a name that reads as another's |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start. Bars put in after a swing swing as the bars before them do (direct changes only; undoable) |
@@ -1466,7 +1476,17 @@ Examples, on a track named "Town":
 `what_next` lays out its kind's shape (with the variant the track's name
 picks) on an empty track without sections, and takes `about` too: it
 passes the words on to `song_shape` and, without a kind, takes the kind
-from the shape they pick ("a sleepy village at night" is calm). On a
+from the shape they pick ("a sleepy village at night" is calm). Words for
+a warm place indoors by day (cozy, homey, warm, friendly, a hut, a shop, an
+inn, a bakery, a grandmother keeping it) pick the cozy kind instead, in a
+small place's short loop where they name one and a town's otherwise, unless
+they say night (night, sleep, dream, lullaby, rest) or something dark
+(haunted, spooky): "A cozy, but run-down wooden hut... A single elderly
+woman is taking care of the place" is cozy in the short loop, and with
+`bars` 40 a form of 40 bars. With `kind` cozy (or calm) on a track whose key
+is minor, `what_next` adds a note: the kind wants a major key, with the
+`set_key` (or, with notes, `transpose` `to_mode` major) call, or keep it
+minor if that's meant; nothing waits on it. On a
 track already laid out, varied or from a list of parts (sections from the
 first frame without a gap, every name a part's, repeats marked with
 primes), it fills the parts in order: A's chords and melody first, a
@@ -3009,11 +3029,11 @@ on the 2A03's pulses") is exported as it is, and the reply says so:
 song as the one before left it:
 
 1. `polish` with the kind's touches, the ones `what_next`'s polish step
-   gives: polish's calm style on a calm track, its lively style on a lively
-   stage (the default touches, accents and all), and polish's own for
-   action and the general recipe.
-2. `mix` in the kind's style: `calm`, `lively`, or `soft` for action and the
-   general recipe. When the mixer's faders do the mix's work (the melody's 4
+   gives: polish's calm style on a calm or a cozy track, its lively style on
+   a lively stage (the default touches, accents and all), and polish's own
+   for action and the general recipe.
+2. `mix` in the kind's style: `calm` (calm and cozy), `lively`, or `soft` for
+   action and the general recipe. When the mixer's faders do the mix's work (the melody's 4
    dB down or more, or a part's 9 dB or more over it, as the review's finding
    has it) it mixes with `faders` `reset`, so the balance goes into the
    notes, as NSF files play it; `faders` `keep` leaves them, when you set
@@ -3026,10 +3046,10 @@ song as the one before left it:
    with their calls (`Heard:` lines), and says to export again once they're
    fixed. A listen of the song as it is already (the steps changed nothing
    since one) isn't made again. A cue and a sound effect aren't listened to.
-5. `export_for_game` at the kind's loudness: -22 LUFS calm, -20 lively and
-   the general recipe, -19 action; a cue -20, a sound effect -18.
+5. `export_for_game` at the kind's loudness: -22 LUFS calm, -20 lively, cozy
+   and the general recipe, -19 action; a cue -20, a sound effect -18.
 
-The kind is `kind` (calm, lively, action or general), or calm when the
+The kind is `kind` (calm, lively, cozy, action or general), or calm when the
 track's name says so ("Town (night)"), else the general recipe's. A cue (a
 track that halts within half a minute) and a sound effect (a row a tick)
 keep their notes as written and only get their file. The melody is the one

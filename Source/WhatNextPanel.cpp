@@ -109,12 +109,12 @@ const LPCTSTR STAGE_LABELS[ftapi::NEXT_STAGES] = {
 };
 
 // The kinds of song what_next knows ("" is its own choice: the general recipe, or calm when the track's name says so)
-const char *const KIND_IDS[] = { "", "calm", "lively", "action" };
+const char *const KIND_IDS[] = { "", "calm", "lively", "cozy", "action" };
 const LPCTSTR KIND_ITEMS[] = {
 	_T("General: the recipe for any song"), _T("Calm: a night or an ambient place"), _T("Lively: a stage"),
-	_T("Action: a boss or a battle")
+	_T("Cozy: a warm place indoors (a shop, a hut, an inn)"), _T("Action: a boss or a battle")
 };
-const int KIND_COUNT = 4;
+const int KIND_COUNT = 5;
 
 // Text from the tools (UTF-8) as FamiTracker shows it (the Windows code page), and back
 CString FromUtf8(const std::string &Text)
@@ -1434,7 +1434,7 @@ void CWhatNextPanelWnd::OnMouseMove(UINT nFlags, CPoint point)
 	else if (Index >= 0)
 		m_pImpl->Say(m_pImpl->ButtonWords(Index));
 	else if (Kind)
-		m_pImpl->Say(_T("The kind of song: what next follows its recipe (a calm night, a lively stage, an action track)"));
+		m_pImpl->Say(_T("The kind of song: what next follows its recipe (a calm night, a lively stage, a cozy room, an action track)"));
 }
 
 void CWhatNextPanelWnd::OnMouseLeave()

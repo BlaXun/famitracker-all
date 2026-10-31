@@ -50,7 +50,7 @@ struct SongShape {
 	std::string Id;		// what song_shape takes: "stage"
 	std::string Title;	// "Lively stage"
 	std::string About;	// what the song is for, a line
-	std::string Kind;	// what_next's kind for it: "lively", "calm", "action" or "general"
+	std::string Kind;	// what_next's kind for it: "lively", "calm", "action" or "general" (cozy has the town's and the small's)
 	bool Loops;			// false: it plays once and stops (a jingle)
 	int LoopPart;		// the part the loop goes back to (the one after the intro)
 	std::vector<ShapePart> Parts;
@@ -68,7 +68,8 @@ const std::vector<SongShape> &SongShapes();
 const SongShape *FindSongShape(const std::string &Words);
 // The ids, "stage, night, town, boss, small or jingle"
 std::string SongShapeIds();
-// The shape what_next lays out for one of its kinds ("lively", "calm", "action"; anything else is the general recipe's)
+// The shape what_next lays out for one of its kinds ("lively", "calm", "action"; "cozy" and anything else the town of
+// the general recipe)
 const SongShape &ShapeForKind(const std::string &Kind);
 // The same for a track of that name: the shape its name asks for when that's one of the kind's that loops (a "Shop" or
 // "A first small song" gets the general recipe's short loop instead of its town), else the kind's own
@@ -110,6 +111,7 @@ struct ShapeChoice {
 	int Variant, Variants;	// 0 of 0 for a list of parts
 	bool VariantFromName;
 	std::string FromWords;	// what the words about the place chose, a line ("" without them)
+	std::string Kind;		// what_next's kind the words ask for (ShapeWords::Kind), "" without them
 	std::vector<std::string> Changes;	// what add, drop and bars did, a sentence each
 	std::vector<std::string> Others;	// the other variants as "variant 2: Intro 4, A 8, ..."
 	ShapeChoice() : pBase(0), Variant(0), Variants(0), VariantFromName(false) {}
@@ -129,6 +131,8 @@ bool ReadShapeParts(const std::string &Text, std::vector<ShapePart> &Parts, std:
 // and a line on why
 struct ShapeWords {
 	const SongShape *pShape;
+	std::string Kind;		// what_next's kind the words ask for: the shape's, or "cozy" for a warm place indoors (a shop, a
+							// hut, an inn) by day; "" without a shape
 	std::vector<std::string> Add, Drop;
 	double Length;			// a factor on the shape's bars, 1 for none
 	std::string Why;

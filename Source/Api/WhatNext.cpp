@@ -328,7 +328,17 @@ bool DryRunHost::Save(const std::string &, std::string &Message)
 // the lead's sound, how the chords, the bass and the drums play, the mix and the export's loudness. A lively stage's
 // are the soundtrack's first lively stages' (the user liked nearly all of them): a lead that blooms in and settles, fast
 // lush arpeggios, a sampled backbeat (the basic groove with kit samples). A calm song's lead is the night songs' best (the
-// calm recipe's first choice): a music box on a VRC6 pulse at 37.5% that blooms in and rings away within a beat
+// calm recipe's first choice): a music box on a VRC6 pulse at 37.5% that blooms in and rings away within a beat. A cozy
+// place (a shop, a hut, an inn: warm, indoors, daytime, a friendly face) is neither a night song nor a stage: "Lost n
+// Found" (a run-down hut where an old woman keeps the lost things), asked for as calm, came out a night song in C minor and
+// sounded depressing. So cozy has keys of its own, all major (F and Bb are the warm ones), a walking pace between calm's
+// and a stage's (100 BPM is speed 9 at tempo 150, 90 and 112.5 the speeds either side), a lead struck warm that falls to a
+// low hold and keeps singing (falling strike: not calm's music box, which rings away, nor a stage's bloom lead, which
+// holds high), broken chords under it, a bass on root and fifth that bounces (walking when it moves), and the lively
+// groove, the soft one (hats and a soft kick, no snare), on the noise alone. It mixes and checks in calm's style: calm's
+// places were the night songs' liked balance (the melody 2-3 dB over the chords), its drums stay as soft as written, its
+// polish adds no accents and its checks find a lead that holds a high level. It exports at -20 LUFS, as most of a game's
+// music does: it plays beside the towns and the stages, where a night song's -22 is for the quiet scenes
 namespace {
 
 const NextKind KINDS[] = {
@@ -340,6 +350,8 @@ const NextKind KINDS[] = {
 		"lively", -20.0, { "G major", "D major", "A major" } },
 	{ NEXT_ACTION, "action", 135.0, 195.0, 150.0, "Action lead", "bloom lead", "stabs", "octaves", "octaves", "driving", "soft", "any",
 		-19.0, { "A minor", "D minor", "E minor" } },
+	{ NEXT_COZY, "cozy", 85.0, 112.5, 100.0, "Cozy lead", "falling strike", "broken", "root_fifth", "walking", "lively", "calm", "calm",
+		-20.0, { "F major", "Bb major", "C major" } },
 };
 
 }	// namespace
@@ -364,9 +376,17 @@ bool ParseNextKind(const std::string &Text, int &Kind)
 		Kind = NEXT_LIVELY;
 	else if (Word == "action" || Word == "battle" || Word == "boss" || Word == "fight")
 		Kind = NEXT_ACTION;
+	else if (Word == "cozy" || Word == "cosy" || Word == "warm" || Word == "homey" || Word == "homely" || Word == "indoors" ||
+		Word == "shop" || Word == "inn" || Word == "house")
+		Kind = NEXT_COZY;
 	else
 		return false;
 	return true;
+}
+
+bool KindWantsMajor(int Kind)
+{
+	return Kind == NEXT_CALM || Kind == NEXT_COZY;
 }
 
 // Eight bars each, ending open (on V, or IV for a calm song), so a repeat, a break or the loop leads back in
@@ -382,6 +402,9 @@ std::string NextProgression(int Kind, bool Minor, bool B)
 			return B ? "| iv | VI | VII | i | iv | VI | VII | V |" : "| i | VI | VII | i | i | VI | VII | V |";
 		return B ? "| vi | IV | V | I | vi | IV | V | V |" : "| I | bVII | IV | I | I | bVII | IV | V |";
 	}
+	// A cozy song's: the friendly turnaround (I vi ii V) and plain steps home; B leans on IV and the relative minor
+	if (Kind == NEXT_COZY && !Minor)
+		return B ? "| IV | I | ii | V | IV | I | vi | V |" : "| I | vi | IV | V | I | vi | ii | V |";
 	if (Minor)
 		return B ? "| iv | VI | VII | III | iv | VI | VII | V |" : "| i | VI | III | VII | i | VI | iv | V |";
 	return B ? "| IV | V | iii | vi | IV | V | ii | V |" : "| I | V | vi | IV | I | V | IV | V |";
