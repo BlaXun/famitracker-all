@@ -20281,6 +20281,67 @@ void NewSong(FakeSong &Song)
 	Song.Info.Tempo = 120;
 }
 
+// The melody's channel of a walk (the channel its first grow_melody wrote on), -1 for none
+int WalkMelody(const FakeSong &Song, const std::vector<std::string> &Made)
+{
+	for (size_t i = 0; i < Made.size(); ++i) {
+		Json Call;
+		if (Made[i].compare(0, 12, "grow_melody ") != 0 || !ParseJson(Made[i].substr(12), Call))
+			continue;
+		for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
+			if (Song.Info.Channels[c].FullName() == TextOf(&Call, "channel"))
+				return static_cast<int>(c);
+	}
+	return -1;
+}
+
+// A section's melody: the notes starting in its first two bars (rows from its start, pitches), and its highest note
+void SectionMelody(const FakeSong &Song, int Channel, const Section &Part, std::vector<std::pair<int, int> > &Opening, int &Top)
+{
+	const int From = Part.First * Song.Info.PatternLength, To = (Part.Last + 1) * Song.Info.PatternLength;
+	const int Bars2 = 2 * std::max(1, Song.Info.SecondHighlight);
+	Opening.clear();
+	Top = -1;
+	for (int r = From; r < To; ++r) {
+		const Cell &C = Song.Rows[static_cast<size_t>(Channel)][static_cast<size_t>(r)];
+		if (!C.HasNote())
+			continue;
+		Top = std::max(Top, C.Pitch());
+		if (r - From < Bars2)
+			Opening.push_back(std::make_pair(r - From, C.Pitch()));
+	}
+}
+
+// B's melody (a part of its own) doesn't open with A's first two bars, and a climax's tune climbs over A's highest note
+// (fix-melody-roles)
+void CheckMelodyContrast(const FakeSong &Song, const std::vector<std::string> &Made, const std::string &What, int Line)
+{
+	const int Melody = WalkMelody(Song, Made);
+	Check(Melody >= 0, What.c_str(), Line);
+	if (Melody < 0)
+		return;
+	const Section *pA = 0;
+	for (const Section &Part : Song.Info.Sections)
+		if (Part.Name == "A")
+			pA = &Part;
+	Check(pA != 0, What.c_str(), Line);
+	if (pA == 0)
+		return;
+	std::vector<std::pair<int, int> > AOpening, Opening;
+	int ATop = -1, Top = -1;
+	SectionMelody(Song, Melody, *pA, AOpening, ATop);
+	for (const Section &Part : Song.Info.Sections) {
+		if (Part.Name == "B" || Part.Name == "Bridge") {
+			SectionMelody(Song, Melody, Part, Opening, Top);
+			Check(!Opening.empty() && Opening != AOpening, (What + ": " + Part.Name + " opens as A does").c_str(), Line);
+		}
+		if (Part.Name == "Climax") {
+			SectionMelody(Song, Melody, Part, Opening, Top);
+			Check(Top > ATop, (What + ": the climax's top " + std::to_string(Top) + " over A's " + std::to_string(ATop)).c_str(), Line);
+		}
+	}
+}
+
 // what_next followed from an empty song to the end, for each kind: every call it gives works as given, every answer moves
 // on, the steps come in the recipe's order, and the song it leaves is clean, its file for the game made
 void TestWhatNextLoop()
@@ -20332,8 +20393,9 @@ void TestWhatNextLoop()
 			}
 			Check(Colors > CallIndex(Made, "grow_melody") && Colors < CallIndex(Made, "add_harmony"), K.Asked, __LINE__);
 		}
-		// The B part's melody (a boss's climax, on its own chords) grows from the song's own hook (A's first notes, as A's grew
-		// from its motif) where that adds no clash, else from one offered on B's chords
+		// The B part's melody (a boss's climax, on its own chords) grows from a hook of its own, offered on B's chords unlike A's
+		// (another rhythm and shape), never A's again: grown from A's, every version opened with A's first two bars (fix-melody-
+		// roles); a climax's climbs over A's highest note
 		std::map<std::string, std::string> Motifs;
 		for (size_t i = 0; i < Made.size(); ++i) {
 			Json Call;
@@ -20343,7 +20405,9 @@ void TestWhatNextLoop()
 		// (and a climax whose tune can't go an octave up grows one of its own, from feat-shape-variations)
 		const std::string Other = Motifs.count("B") == 1 ? "B" : "Climax";
 		Check(Motifs.size() >= 2 && Motifs.size() <= 3 && Motifs.count("A") == 1 && Motifs.count(Other) == 1, K.Asked, __LINE__);
+		// (a part of its own, B, from a hook unlike A's, and a climax's climbing over A's top: fix-melody-roles)
 		Reused += Motifs["A"] == Motifs[Other] ? 1 : 0;
+		CheckMelodyContrast(Song, Made, K.Asked, __LINE__);
 		CHECK(CallIndex(Made, "add_counter_melody") < 0);
 		Check(Made.size() >= 18 && Made.size() <= 30, K.Asked, __LINE__);
 		// Clean: nothing vanishes, clicks, clashes, plays out of range or is too busy for the NES (what_next's own steps, a
@@ -20385,7 +20449,7 @@ void TestWhatNextLoop()
 		CHECK(ReadOggComments(Song.Files["Town.ogg"].substr(0, 8192), Start, Error) && Start.size() == Comments.size());
 	}
 
-	CHECK(Reused >= 2);
+	CHECK_EQ(Reused, 0);
 
 	// The same on the small set (/mcp/core): every step one of its tools
 	FakeSong Song(1);
@@ -28068,6 +28132,7 @@ void FollowShapeWalk(const char *Name, const char *Shape, const char *Asked, con
 	}
 	const WhatNextAnswer Last = ReadWhatNext(Run(Song, "what_next", Asked).Text);
 	Check(Last.Done, Name, Line);
+	CheckMelodyContrast(Song, Made, Name, Line);
 }
 
 void TestWhatNextShapeVariations()
@@ -28095,6 +28160,81 @@ void TestWhatNextShapeVariations()
 	CHECK_HAS(A.Line, "Next (calm, ");
 	CHECK_HAS(A.Text, "as the words about the place ask");
 	CHECK_HAS(A.Text, "\"about\":\"a sleepy village at night\"");	// asked again with them
+}
+
+// The melody's roles on a calm VRC6 Plus song (fix-melody-roles, Night Harbor): voiced chords on the soft layer are no
+// melody, the lead what_next designed gets the tune on its own channel, and no chord voice goes there
+void TestWhatNextMelodyRoles()
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = "Night Harbor";
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	int Lead = -1;
+	for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
+		if (Song.Info.Channels[c].FullName() == "VRC6 Plus Pulse 1")
+			Lead = static_cast<int>(c);
+	CHECK(Lead >= 0);
+	bool Finished = false;
+	const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"calm\"}", 70, Finished, __LINE__);
+	CHECK(Finished);
+	// Every melody step on the lead's channel, none on a soft voice
+	int Melodies = 0;
+	for (size_t i = 0; i < Made.size(); ++i) {
+		Json Call;
+		const size_t Space = Made[i].find(' ');
+		if (Space == std::string::npos || !ParseJson(Made[i].substr(Space + 1), Call))
+			continue;
+		const std::string Tool = Made[i].substr(0, Space);
+		if (Tool == "grow_melody" || (Tool == "write_notes" && !Contains(Made[i], "lullaby bell"))) {
+			Check(TextOf(&Call, "channel") == "VRC6 Plus Pulse 1", Made[i].c_str(), __LINE__);
+			++Melodies;
+		}
+		if (Tool == "add_chords_and_bass")
+			Check(!Contains(Made[i], "VRC6 Plus Pulse 1\""), Made[i].c_str(), __LINE__);
+	}
+	CHECK(Melodies >= 3);
+	CheckMelodyContrast(Song, Made, "Night Harbor", __LINE__);
+	// The break's one small sound (song_shape's line for it): the hook's first bar as a far bell, besides the chords there
+	int Bell = -1;
+	for (size_t i = 0; i < Made.size(); ++i)
+		if (Made[i].compare(0, 12, "write_notes ") == 0 && Contains(Made[i], "lullaby bell"))
+			Bell = static_cast<int>(i);
+	CHECK(Bell >= 0 && Bell > CallIndex(Made, "copy_bars"));
+	const int BellSound = InstrumentIndex(Song, "Lullaby bell");
+	bool Rings = false;
+	for (const Section &Part : Song.Info.Sections)
+		for (size_t c = 0; c < Song.Rows.size() && Part.Name == "Break"; ++c)
+			for (int r = Part.First * Song.Info.PatternLength; r < (Part.Last + 1) * Song.Info.PatternLength; ++r)
+				Rings = Rings || (Song.Rows[c][static_cast<size_t>(r)].HasNote() && Song.Rows[c][static_cast<size_t>(r)].Instrument ==
+					BellSound);
+	CHECK(BellSound >= 0 && Rings);
+	// The lead's channel plays the lead alone, in every part of the body
+	const int Sound = InstrumentIndex(Song, "Calm lead");
+	CHECK(Sound >= 0);
+	for (size_t r = 0; r < Song.Rows[static_cast<size_t>(Lead)].size(); ++r) {
+		const Cell &C = Song.Rows[static_cast<size_t>(Lead)][r];
+		if (C.HasNote())
+			Check(C.Instrument == NO_INSTRUMENT || C.Instrument == Sound || C.Instrument == InstrumentIndex(Song, "Lullaby bell"),
+				("row " + std::to_string(r)).c_str(), __LINE__);
+	}
+	for (const Section &Part : Song.Info.Sections) {
+		if (Part.Name == "Intro" || Part.Name == "Break")
+			continue;
+		bool Notes = false;
+		for (int r = Part.First * Song.Info.PatternLength; r < (Part.Last + 1) * Song.Info.PatternLength && !Notes; ++r)
+			Notes = Song.Rows[static_cast<size_t>(Lead)][static_cast<size_t>(r)].HasNote();
+		Check(Notes, Part.Name.c_str(), __LINE__);
+	}
+	// The melody guess takes no chord voice: the soft layer's voices alone, with no tune over them
+	FakeSong Pads(1);
+	NewSong(Pads);
+	CHECK(!Run(Pads, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	CHECK(!Run(Pads, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"from_bar\": 1, \"to_bar\": 4, \"chord_style\": "
+		"\"voices\", \"bass_style\": \"roots\"}").IsError);
+	const WhatNextAnswer A = AskWhatNext(Pads, "{\"kind\": \"calm\", \"skip\": [\"tempo\", \"key\", \"shape\", \"lead\", \"sections\"]}");
+	Check(TextOf(&A.Arguments, "channel") == "VRC6 Plus Pulse 1" || TextOf(&A.Arguments, "channel") == "(none)", A.Text.c_str(), __LINE__);
+	CHECK_LACKS(A.Text, "\"channel\":\"VRC6 Plus Soft");
 }
 
 int main()
@@ -28369,6 +28509,7 @@ int main()
 	TestToolReplies();
 	TestChordDrones();
 	TestColorRubs();
+	TestWhatNextMelodyRoles();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

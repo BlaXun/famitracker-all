@@ -1942,14 +1942,49 @@ bool RunsSteadily(const Session &S, const std::vector<NoteInfo> &Notes)
 	return Most * 20 >= static_cast<int>(Notes.size() - 1) * 17 && PerBeat >= 2.0;
 }
 
+std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody, bool Every = false);
+int UsualInstrument(const std::vector<NoteInfo> &Notes);
+std::string VoiceSound(const std::string &Name);
+
+// The voices of voiced chords in [First, End) that no melody plays over: the channels ChordVoicesIn finds whose sound
+// two others play too, or one other when it's a sound for chords (VoiceSound: the soft layer's pads as one), as
+// add_chords_and_bass tells a voice from a tune over the voices (a melody on a sound of its own, struck with them, stays
+// one). Night Harbor's Soft 3, the top voice of three
+// pads, was taken for the melody, and the lead what_next designed never got its tune (fix-melody-roles)
+std::vector<int> PadVoicesIn(Session &S, int First, int End)
+{
+	const std::vector<int> Voices = ChordVoicesIn(S, First, End, -1, false);
+	std::vector<std::string> Sounds, Kinds;
+	for (size_t v = 0; v < Voices.size(); ++v) {
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, UsualInstrument(NotesIn(S.Notes(Voices[v]), First, End)));
+		Sounds.push_back(pInfo == 0 ? std::string() : VoiceSound(pInfo->Name));
+		Kinds.push_back(pInfo == 0 ? std::string() : KindOfWords(pInfo->Name));
+	}
+	// A voice: with two or more others on its sound (three voices of a chord), or with one on a sound for chords (a pad, soft
+	// chords); a harmony a third under the tune on the tune's own lead starts its notes with it too, and is no chord voice
+	std::vector<int> Out;
+	for (size_t v = 0; v < Voices.size(); ++v) {
+		int Same = 0;
+		for (size_t w = 0; w < Voices.size(); ++w)
+			Same += w != v && Sounds[v] == Sounds[w] && !Sounds[v].empty() ? 1 : 0;
+		if (Same >= 2 || (Same == 1 && Kinds[v] == "pad"))
+			Out.push_back(Voices[v]);
+	}
+	return Out;
+}
+
 int GuessMelodyChannel(Session &S, int First, int End)
 {
+	const std::vector<int> Pads = PadVoicesIn(S, First, End);
 	for (int Pass = 0; Pass < 3; ++Pass) {
 		std::vector<int> Channels, Counts, Middles, Loudness;
 		int Lowest = 1000;
 		for (int c = 0; c < S.ChannelCount(); ++c) {
 			const ChannelInfo &Info = S.Channel(c);
-			if (!IsMelodic(Info) || (Pass < 2 && IsBass(Info)))
+			// (a chord voice is never the melody, in any pass, and the bass under voiced chords isn't one either: the pads
+			// and their bass with no tune yet have none)
+			if (!IsMelodic(Info) || ((Pass < 2 || !Pads.empty()) && IsBass(Info)) ||
+				std::find(Pads.begin(), Pads.end(), c) != Pads.end())
 				continue;
 			std::vector<NoteInfo> Kept;
 			const std::vector<NoteInfo> Notes = NotesIn(PitchedNotes(S, c, Kept), First, End);	// not a 5B's noise alone
@@ -6748,7 +6783,7 @@ bool PlaysBassPart(Session &S, int Channel, int First, int End);
 // long, as HeardRoles hears a pad's voices: a song whose plucks started together in
 // some sections and a row apart in others was "another line" over the whole song and
 // the chords section by section); empty if none
-std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody, bool Every = false)
+std::vector<int> ChordVoicesIn(Session &S, int First, int End, int Melody, bool Every)
 {
 	std::vector<int> All;	// Every: the voices of every kind of channel that voices chords there
 	for (int Group = 0; Group < CHORD_GROUPS; ++Group) {
@@ -7791,7 +7826,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 				for (int c = 0; c < S.ChannelCount() && VoiceChannels.size() < 3; ++c) {
 					const ChannelInfo &Info = S.Channel(c);
 					const bool Fits = InChordGroup(Info, Group);
-					if (Fits && c != Melody && (c == OldChords || !HasNotesIn(S, c, First, End)))
+					// (nor the song's melody's channel where it rests: its tune comes there, Night Harbor's B)
+					if (Fits && c != Melody && c != Tune && (c == OldChords || !HasNotesIn(S, c, First, End)))
 						VoiceChannels.push_back(c);
 				}
 			}
@@ -28143,6 +28179,8 @@ bool TryWrite(Session &Now, const std::string &Tool, const Json &Args, int FromB
 			GrowMelodyTool(S, Args);
 		else if (Tool == "add_chords_and_bass")
 			AddBackingTool(S, Args);
+		else if (Tool == "write_notes")
+			WriteNotes(S, Args, false);
 		else
 			return false;
 	}
@@ -28227,6 +28265,7 @@ private:
 	bool Milestone(const char *Name, bool Met, const std::string &Done = std::string());
 
 	int LeadChannel() const;
+	int DesignedLeadChannel() const;
 	int FreeChannel(int First, int End, int Like, bool SameChip) const;
 	std::vector<int> BackingChannels(int First, int End) const;
 	int BodyParts(int *pBars = 0) const;
@@ -28240,6 +28279,7 @@ private:
 	void Parts();
 	void Colors();
 	void Depth();
+	void BreakSound(const FormPart &Break, const FormPart &A);
 	void Tips();
 	void Echo();
 	void Polish();
@@ -28266,6 +28306,9 @@ private:
 	bool StepsOf(const std::vector<TuneNote> &Tune, int FirstBar, int Bars, bool Numbered, std::string &Text) const;
 	std::string MelodySound() const;
 	std::string OfferedHook(int FirstBar, int Variant) const;
+	std::vector<std::string> ContrastingHooks(int FirstBar, int Variant, const std::string &Own) const;
+	std::vector<std::string> ClimbingHooks(int FirstBar, int Variant, int Over) const;
+	std::string HookText(const StepLine &Line) const;
 	std::string SongHook(const FormPart &Part) const;
 	void MelodyPlace(int FromBar, int ToBar, bool Own);
 
@@ -28388,6 +28431,10 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 				if (Notes[i].Instrument == Lead)
 					m_Melody = c;
 		}
+		// The lead designed and not played yet: its tune goes on the channel it was made for, whatever plays elsewhere (a
+		// guess took the top voice of the pads for the melody, and the lead's channel stayed empty: Night Harbor)
+		if (m_Melody < 0)
+			m_Melody = DesignedLeadChannel();
 		if (m_Melody < 0) {
 			m_Melody = GuessMelodyChannel(S, 0, Total);
 			if (m_Melody >= 0) {
@@ -28467,6 +28514,29 @@ int WhatNext::LeadChannel() const
 		if (!IsMelodic(Info) || IsBass(Info))
 			continue;
 		const int Here = (S.Notes(c).empty() ? 4 : 0) + (Info.Kind == KIND_PULSE ? 2 : 0) + (Info.Chip == "VRC6" ? 1 : 0);
+		if (Here > Score) {
+			Best = c;
+			Score = Here;
+		}
+	}
+	return Best;
+}
+
+// The channel the lead what_next designed was made for, while no channel plays it: of the channels of its chip that take
+// a melody (not a bass's), as LeadChannel picks one (a pulse, the VRC6's first), one without notes of another sound first
+// (no chord voice); -1 when the song has no such lead
+int WhatNext::DesignedLeadChannel() const
+{
+	int Best = -1, Score = -1;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const ChannelInfo &Info = S.Channel(c);
+		const int Lead = FindInstrumentNamed(Kind().LeadName, c);
+		if (Lead < 0 || !IsMelodic(Info) || IsBass(Info))
+			continue;
+		bool Others = false;
+		for (const NoteInfo &N : S.Notes(c))
+			Others = Others || (N.Instrument != Lead && N.Instrument != NO_INSTRUMENT);
+		const int Here = (Others ? 0 : 4) + (Info.Kind == KIND_PULSE ? 2 : 0) + (Info.Chip == "VRC6" ? 1 : 0);
 		if (Here > Score) {
 			Best = c;
 			Score = Here;
@@ -29025,6 +29095,168 @@ std::string WhatNext::OfferedHook(int FirstBar, int Variant) const
 	return Tune.size() >= 4 && Tune.size() <= 7 && StepsOf(Tune, FirstBar, 2, false, Text) ? Text : std::string();
 }
 
+// A hook in steps (OfferedHook's, SongHook's) read back: its notes with their pitches as written; false when it doesn't read
+bool ReadHook(const std::string &Text, StepLine &Line, std::vector<int> &Pitches)
+{
+	std::string Error;
+	Pitches.clear();
+	if (Text.empty() || !ParseStepLine(Text, 0, Line, Error))
+		return false;
+	for (size_t i = 0; i < Line.Notes.size(); ++i) {
+		int Pitch = 0;
+		if (!ParsePitch(Line.Notes[i].Pitch, Pitch))
+			return false;
+		Pitches.push_back(Pitch);
+	}
+	return !Pitches.empty();
+}
+
+// A hook's rhythm (each note's step and length) and its contour (each move up, down or the same)
+std::vector<std::pair<int, int> > HookRhythm(const StepLine &Line)
+{
+	std::vector<std::pair<int, int> > Out;
+	for (size_t i = 0; i < Line.Notes.size(); ++i)
+		Out.push_back(std::make_pair(Line.Notes[i].Step, Line.Notes[i].Steps));
+	return Out;
+}
+
+std::vector<int> HookContour(const std::vector<int> &Pitches)
+{
+	std::vector<int> Out;
+	for (size_t i = 1; i < Pitches.size(); ++i)
+		Out.push_back(Pitches[i] > Pitches[i - 1] ? 1 : Pitches[i] < Pitches[i - 1] ? -1 : 0);
+	return Out;
+}
+
+// A pitch moved Steps notes of the key up (down for fewer than 0); a pitch outside the key first goes to the key's note
+// under it
+int KeyStepsUp(int Pitch, int Steps, const Key &K)
+{
+	int P = Pitch;
+	for (int Guard = 0; Guard < 12 && !InKey(P, K); ++Guard)
+		--P;
+	for (int n = 0; n < std::abs(Steps); ++n) {
+		P += Steps > 0 ? 1 : -1;
+		for (int Guard = 0; Guard < 12 && !InKey(P, K); ++Guard)
+			P += Steps > 0 ? 1 : -1;
+	}
+	return P;
+}
+
+// A hook's line as the motif gives it: its bars on one line, " | " between them
+std::string WhatNext::HookText(const StepLine &Line) const
+{
+	std::string Text = FormatStepLine(Line);
+	for (size_t At = Text.find('\n'); At != std::string::npos; At = Text.find('\n', At))
+		Text.replace(At, 1, " | ");
+	return Text;
+}
+
+// Hooks for a part of its own after the song's first (B, a bridge), unlike the song's hook Own: those offered on its
+// chords whose rhythm differs from Own's (and whose notes and shape do), then Own turned upside down (each move the other
+// way, in the key) on Own's rhythm. grow_melody keeps a hook as written where it's first stated, so B grown from A's hook
+// opened with A's first two bars note for note in every version (fix-melody-roles)
+std::vector<std::string> WhatNext::ContrastingHooks(int FirstBar, int Variant, const std::string &Own) const
+{
+	std::vector<std::string> Out, Alike;
+	StepLine OwnLine;
+	std::vector<int> OwnPitches;
+	const bool HasOwn = ReadHook(Own, OwnLine, OwnPitches);
+	for (int v = 0; v < 8 && Out.size() < 3; ++v) {
+		const std::string Hook = OfferedHook(FirstBar, Variant ^ v);
+		StepLine Line;
+		std::vector<int> Pitches;
+		if (Hook.empty() || Hook == Own || std::find(Out.begin(), Out.end(), Hook) != Out.end() || !ReadHook(Hook, Line, Pitches))
+			continue;
+		if (!HasOwn || (HookRhythm(Line) != HookRhythm(OwnLine) && Pitches != OwnPitches))
+			Out.push_back(Hook);
+		else if (HookContour(Pitches) != HookContour(OwnPitches) && Pitches != OwnPitches &&
+			std::find(Alike.begin(), Alike.end(), Hook) == Alike.end())
+			Alike.push_back(Hook);	// another shape on the same rhythm: after those of another rhythm
+	}
+	Out.insert(Out.end(), Alike.begin(), Alike.end());
+	if (HasOwn && OwnPitches.size() >= 2) {
+		const Key K = m_HasKey ? m_Key : Key(0, MODE_MAJOR);
+		int Low = 0, High = PITCHES - 1;
+		MelodyRange(S, m_Melody, Low, High);
+		StepLine Turned = OwnLine;
+		bool Fits = true;
+		int Pitch = OwnPitches[0];
+		for (size_t i = 1; i < OwnPitches.size() && Fits; ++i) {
+			// The move's size in the key's notes, the other way
+			const int From = OwnPitches[i - 1], To = OwnPitches[i];
+			int Steps = 0;
+			for (int p = std::min(From, To) + 1; p <= std::max(From, To); ++p)
+				Steps += InKey(p, K) ? 1 : 0;
+			Pitch = KeyStepsUp(Pitch, To > From ? -Steps : Steps, K);
+			Fits = Pitch >= Low && Pitch <= High;
+			Turned.Notes[i].Pitch = StepPitch(S.Channel(m_Melody), Pitch);
+		}
+		const std::string Text = HookText(Turned);
+		if (Fits && Text != Own && std::find(Out.begin(), Out.end(), Text) == Out.end())
+			Out.push_back(Text);
+	}
+	return Out;
+}
+
+// Hooks for a climax that climb over the song's earlier tune (its highest note Over, as written): each offered on its
+// chords moved up the key, as little as takes its top a whole step or more over Over, within the lead's range and under
+// GUARD_LEAD_TOP as it sounds, the move whose notes on the beats are most often tones of the chord under them first. The
+// climax grown from a hook in A's register peaked at A's top (fix-melody-roles)
+std::vector<std::string> WhatNext::ClimbingHooks(int FirstBar, int Variant, int Over) const
+{
+	std::vector<std::string> Out;
+	if (Over < 0)
+		return Out;
+	const Key K = m_HasKey ? m_Key : Key(0, MODE_MAJOR);
+	const ChannelInfo &Info = S.Channel(m_Melody);
+	int Low = 0, High = PITCHES - 1;
+	MelodyRange(S, m_Melody, Low, High);
+	High = std::min(High, Written(Info, GUARD_LEAD_TOP));
+	const int Eighth = EighthRows();
+	std::vector<std::vector<int> > Chord, Sounding;
+	Surroundings(S.Time.BarStart(FirstBar), S.Time.BarEnd(FirstBar + 1), Chord, Sounding);
+	for (int v = 0; v < 8 && Out.size() < 3; ++v) {
+		StepLine Line;
+		std::vector<int> Pitches;
+		if (!ReadHook(OfferedHook(FirstBar, Variant ^ v), Line, Pitches) || Eighth <= 0)
+			continue;
+		const int Top = *std::max_element(Pitches.begin(), Pitches.end());
+		int Best = -1, BestTones = -1;
+		std::vector<int> BestPitches;
+		for (int Up = 0; Up <= 14; ++Up) {
+			std::vector<int> Moved;
+			for (size_t i = 0; i < Pitches.size(); ++i)
+				Moved.push_back(KeyStepsUp(Pitches[i], Up, K));
+			const int MovedTop = *std::max_element(Moved.begin(), Moved.end());
+			const int MovedLow = *std::min_element(Moved.begin(), Moved.end());
+			if (MovedTop < Over + 2 || MovedTop > High || MovedLow < Low || (Up == 0 && Top >= Over + 2 && false))
+				continue;
+			int Tones = 0;
+			for (size_t i = 0; i < Moved.size(); ++i) {
+				const size_t Row = static_cast<size_t>(Line.Notes[i].Step * Eighth);
+				const std::vector<int> *pUnder = Row < Chord.size() ? &Chord[Row] : 0;
+				Tones += pUnder != 0 && std::find(pUnder->begin(), pUnder->end(), ((Moved[i] % 12) + 12) % 12) != pUnder->end() ? 1 : 0;
+			}
+			if (Tones > BestTones) {
+				Best = Up;
+				BestTones = Tones;
+				BestPitches = Moved;
+			}
+			if (Up % 7 == 0 && Best >= 0)
+				break;	// (an octave's moves tried: the lowest that climbs enough is enough)
+		}
+		if (Best < 0)
+			continue;
+		for (size_t i = 0; i < BestPitches.size(); ++i)
+			Line.Notes[i].Pitch = StepPitch(Info, BestPitches[i]);
+		const std::string Text = HookText(Line);
+		if (std::find(Out.begin(), Out.end(), Text) == Out.end())
+			Out.push_back(Text);
+	}
+	return Out;
+}
+
 // The song's own hook: the melody's first notes in Part (up to 7 of them, in its first two bars), in steps; empty when
 // they're fewer than 4 or off the grid of eighths
 std::string WhatNext::SongHook(const FormPart &Part) const
@@ -29164,7 +29396,45 @@ void WhatNext::MelodyStep()
 			// rhythms, since A's would grow A's tune again there
 			std::vector<std::string> Hooks;
 			std::vector<bool> OfferedOf;
-			if (IsClimaxName(P.Name)) {
+			std::string Aim;	// what the first hooks offered are for, in the why
+			size_t Aimed = 0;	// how many
+			// The song's tune before: its highest note (as written), for a climax that climbs over it
+			int Over = -1;
+			for (size_t k = 0; k < i && m_HasMelody; ++k) {
+				const FormPart &Q = m_Form[k];
+				if (!Q.Named || Q.Free || Q.Empty)
+					continue;
+				for (const NoteInfo &N : NotesIn(S.Notes(m_Melody), S.Time.BarStart(Q.FirstBar), std::min(S.Time.BarEnd(Q.LastBar),
+					S.Time.TotalRows())))
+					if (N.Volume > 0)
+						Over = std::max(Over, N.Pitch);
+			}
+			// A climax climbs over the tune before it: hooks that do first (fix-melody-roles), then the others
+			if (IsClimaxName(P.Name) && Over >= 0) {
+				const std::vector<std::string> Climbing = ClimbingHooks(Missing, Variant, Over);
+				for (size_t h = 0; h < Climbing.size(); ++h) {
+					Hooks.push_back(Climbing[h]);
+					OfferedOf.push_back(true);
+				}
+				Aimed = Climbing.size();
+				if (!Climbing.empty())
+					Aim = Format(" It climbs over the tune before it (whose highest note is %s), so %s is the song's high point.",
+						StepPitch(S.Channel(m_Melody), Over).c_str(), P.Name.c_str());
+			}
+			const bool OwnPart = !IsClimaxName(P.Name) && P.Original < 0 && !Own.empty() && Source != P.Name;
+			if (OwnPart) {
+				// A part of its own after the first (B, a bridge): hooks unlike the song's, in rhythm and shape, so it isn't A again
+				const std::vector<std::string> Unlike = ContrastingHooks(Missing, Variant, Own);
+				for (size_t h = 0; h < Unlike.size(); ++h) {
+					Hooks.push_back(Unlike[h]);
+					OfferedOf.push_back(true);
+				}
+				Aimed = Unlike.size();
+				if (!Unlike.empty())
+					Aim = Format(" It's unlike %s's hook (another rhythm and shape), so %s is somewhere new.", Source.c_str(),
+						P.Name.c_str());
+			}
+			else if (IsClimaxName(P.Name)) {
 				for (int v = 0; v < 8; ++v) {
 					const std::string Hook = OfferedHook(Missing, Variant ^ v);
 					if (!Hook.empty() && Hook != Own && std::find(Hooks.begin(), Hooks.end(), Hook) == Hooks.end() && Hooks.size() < 3) {
@@ -29209,8 +29479,8 @@ void WhatNext::MelodyStep()
 						"motif, 4-7 notes in steps, a bar or two (the one given is a start, on the chords there: a token an eighth, - holds "
 						"the note, . rests, | between bars); grow_melody grows it" : P.Name + " has no melody in " + Bars + " yet: "
 						"grow_melody grows the song's hook (its first notes in " + Source + ", so it comes back)") + " over the chords "
-						"into versions, each with a sentence on its shape. Then call grow_melody again with the same arguments and pick 1, "
-						"2 or 3, the version whose shape fits (variant 2 gives others); shape it by hand if you like (read_notes with "
+						"into versions, each with a sentence on its shape." + (h < Aimed ? Aim : std::string()) + " Then call grow_melody "
+						"again with the same arguments and pick 1, 2 or 3, the version whose shape fits (variant 2 gives others); shape it by hand if you like (read_notes with "
 						"format steps, write_notes), and ask what_next again." + (m_Core ? " get_recipe shows a whole melody of 8 bars "
 						"in steps." : "")))
 						MelodyPlace(Missing, P.LastBar, Offered);
@@ -29386,11 +29656,20 @@ void WhatNext::GrowForm()
 	B.Set("to_bar", At + LaidBars - 1);
 	const NextParts Here = PartsBeside(S, m_HasMelody ? m_Melody : -1, S.Time.BarStart(First.FirstBar),
 		std::min(S.Time.BarEnd(First.LastBar), S.Time.TotalRows()));
+	const bool Voiced = Calm() && S.Song.Vrc6Plus;
 	if (Here.Chords.size() == 1)
 		B.Set("chord_channel", ChannelName(Here.Chords[0]));
+	else if (Voiced && Here.Chords.size() >= 2 && Here.Chords.size() <= 4 && std::find(Here.Chords.begin(), Here.Chords.end(),
+		m_Melody) == Here.Chords.end()) {
+		// A's voices play B's chords too: a voice left to choose its channels took the lead's, where B's tune goes (Night Harbor)
+		Json Voices = Json::MakeArray();
+		for (size_t c = 0; c < Here.Chords.size(); ++c)
+			Voices.Push(ChannelName(Here.Chords[c]));
+		B.Set("chord_channels", Voices);
+	}
 	if (Here.Bass >= 0)
 		B.Set("bass_channel", ChannelName(Here.Bass));
-	B.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : K.ChordStyle);
+	B.Set("chord_style", Voiced ? "voices" : K.ChordStyle);
 	if (std::string(K.ChordStyle) == "lush" && !(Calm() && S.Song.Vrc6Plus))
 		B.Set("arp_frames", LushFrames());
 	B.Set("color", Calm() ? "rich" : m_KindId == NEXT_LIVELY ? "plain" : "sevenths");	// (lively: Colors gives them theirs)
@@ -29798,6 +30077,12 @@ void WhatNext::Depth()
 			"drums.", P.Name.c_str(), Channels.size() == 1 ? "the chords" : "the chords and bass", Source.Name.c_str(), From,
 			From + Length - 1));
 	}
+	// A break whose part asks for one small sound while the tune rests (a calm night's: song_shape's line) gets it once its
+	// chords are there: Hut in a Field's break only had A's chords copied in (fix-melody-roles)
+	for (size_t i = 1; i < m_Form.size(); ++i)
+		if (m_Form[i].Named && m_Form[i].Free && !m_Form[i].Empty && PartLine(m_Form[i].Name, pLaid).find("one small sound") !=
+			std::string::npos)
+			BreakSound(m_Form[i], m_Form[static_cast<size_t>(A)]);
 	// The intro leads into A (GitHub issue #1, check_song's intro finding): its chords and bass keep A's pulse (copied from
 	// A's first bars above), and the beat comes in during its last bar: A's last bar of drums (where its phrase ends, with
 	// its fill) there. Not on a calm track, which has no drums to bring in
@@ -29846,6 +30131,113 @@ void WhatNext::Depth()
 		Step("loop", "set_loop", L, Intro ? Format("The intro (bars 1-%d) plays once: the loop goes from bar %d to the song's end (bar %d).",
 			WantFrom - 1, WantFrom, WantTo) : Format("The loop takes the whole song, to its last bar (%d).", WantTo));
 	}
+}
+
+// The one small sound of a break (a far-off clock, a sigh: a calm night's break, as song_shape lays it out), once the
+// chords play there: the hook's first bar again as a far bell, an octave up where it fits, softly, in the break's second
+// bar (else its third, else as written), on the melody's own channel, resting there (else a free pulse), with nothing
+// a semitone from the chords. Done once anything plays there besides the chords and the bass
+void WhatNext::BreakSound(const FormPart &Break, const FormPart &A)
+{
+	const int Total = S.Time.TotalRows();
+	const int First = S.Time.BarStart(Break.FirstBar), End = std::min(S.Time.BarEnd(Break.LastBar), Total);
+	const std::vector<int> Backing = BackingChannels(S.Time.BarStart(A.FirstBar), std::min(S.Time.BarEnd(A.LastBar), Total));
+	const std::vector<int> Here = BackingChannels(First, End);
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (NoteStartsIn(S, c, First, End) && std::find(Backing.begin(), Backing.end(), c) == Backing.end() &&
+			std::find(Here.begin(), Here.end(), c) == Here.end())
+			return;	// something of its own plays there
+	if (!Wanted("break") || !m_HasMelody)
+		return;
+	// The channel: the melody's, resting there (a free one is the echo's, which comes later), else a free pulse
+	int Channel = S.Channel(m_Melody).Kind == KIND_PULSE && !HasNotesIn(S, m_Melody, First, End) ? m_Melody : -1;
+	if (Channel < 0) {
+		Channel = FreeChannel(First, End, m_Melody, false);
+		if (Channel >= 0 && S.Channel(Channel).Kind != KIND_PULSE)
+			Channel = -1;
+	}
+	const int Eighth = EighthRows();
+	if (Channel < 0 || Eighth <= 0) {
+		m_Notes.push_back(Break.Name + " wants one small sound while the tune rests (a far-off bell, a sigh): no pulse is free there.");
+		return;
+	}
+	// The hook's first bar: the melody's notes in A's first bar, on the grid of eighths
+	const int HookFirst = S.Time.BarStart(A.FirstBar), HookEnd = std::min(S.Time.BarEnd(A.FirstBar), Total);
+	std::vector<NoteInfo> Hook;
+	for (const NoteInfo &N : NotesIn(S.Notes(m_Melody), HookFirst, HookEnd))
+		if (N.Row >= HookFirst && (N.Row - HookFirst) % Eighth == 0 && N.Volume > 0 && Hook.size() < 4)
+			Hook.push_back(N);
+	if (Hook.size() < 2)
+		return;
+	int Low = 0, High = PITCHES - 1;
+	MelodyRange(S, Channel, Low, High);
+	const ChannelInfo &Info = S.Channel(Channel);
+	const int Lift = Written(Info, 0) - Written(S.Channel(m_Melody), 0);
+	const bool Has = FindInstrumentNamed("Lullaby bell", Channel) >= 0;
+	for (int Try = 0; Try < 4; ++Try) {
+		const int Bar = Break.FirstBar + std::min(Break.LastBar - Break.FirstBar, Try < 2 ? 1 : 2);
+		const int Up = Try % 2 == 0 ? 12 : 0;
+		if (Bar > Break.LastBar || S.Time.BarLength(Bar) % Eighth != 0)
+			continue;
+		StepLine Line;
+		StepLineBar B;
+		B.First = 0;
+		B.Steps = S.Time.BarLength(Bar) / Eighth;
+		Line.FirstBar = Bar;
+		Line.Bars.push_back(B);
+		bool Fits = true;
+		for (size_t n = 0; n < Hook.size() && Fits; ++n) {
+			StepLineNote Note;
+			Note.Step = (Hook[n].Row - HookFirst) / Eighth;
+			// each rings to the next, the last to the bar's end
+			Note.Steps = (n + 1 < Hook.size() ? (Hook[n + 1].Row - HookFirst) / Eighth : B.Steps) - Note.Step;
+			const int Pitch = Hook[n].Pitch + Lift + Up;
+			Fits = Note.Step < B.Steps && Note.Steps > 0 && Pitch >= Low && Pitch <= High;
+			Note.Pitch = StepPitch(Info, Pitch);
+			Note.Volume = n == 0 ? 7 : -1;
+			Line.Notes.push_back(Note);
+		}
+		if (!Fits)
+			continue;
+		Json W = Json::MakeObject();
+		W.Set("channel", ChannelName(Channel));
+		W.Set("instrument", "lullaby bell");
+		W.Set("from_bar", Bar);
+		W.Set("to_bar", Bar);
+		W.Set("notes", FormatStepLine(Line));
+		// (a dry run adds no instrument: a sound of the channel's chip the song has stands in for the bell, else the melody's
+		// own on its channel, resting there, the same notes as it writes them)
+		Json Dry = W;
+		if (!Has) {
+			std::string Stand;
+			for (size_t k = 0; k < S.Song.Instruments.size() && Stand.empty(); ++k)
+				if (S.Song.Instruments[k].Chip == InstrumentChip(Info))
+					Stand = S.Song.Instruments[k].Name;
+			if (Stand.empty() && !HasNotesIn(S, m_Melody, S.Time.BarStart(Bar), S.Time.BarEnd(Bar))) {
+				StepLine There = Line;
+				for (size_t n = 0; n < There.Notes.size(); ++n)
+					There.Notes[n].Pitch = StepPitch(S.Channel(m_Melody), Hook[n].Pitch + Up);
+				Dry.Set("channel", ChannelName(m_Melody));
+				Dry.Set("notes", FormatStepLine(There));
+				Stand = MelodySound();
+			}
+			if (Stand.empty())
+				continue;
+			Dry.Set("instrument", Stand);
+		}
+		int Added = 0;
+		if (!TryWrite(S, "write_notes", Dry, Bar, Bar, m_Melody, Added) || Added > 0)
+			continue;
+		// (the break isn't done while its sound can come: before, its chords alone made it so)
+		m_Unmet.insert("break");
+		m_Met.erase("break");
+		Step("break", "write_notes", W, Format("%s: the tune rests while one small sound plays, as its part asks. The hook's first bar "
+			"again as a far-off bell (lullaby bell), softly%s, in bar %d: a memory of the tune before it comes back.",
+			Break.Name.c_str(), Up > 0 ? ", an octave up" : "", Bar));
+		return;
+	}
+	m_Notes.push_back(Break.Name + " wants one small sound while the tune rests: the hook's first bar as a bell would rub against "
+		"the chords there; write a few soft notes of your own (a far-off bell, a sigh).");
 }
 
 // review_arrangement's tips that suit the kind, each with its call; the rest (the melody's own shape) are the composer's

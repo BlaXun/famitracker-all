@@ -2260,6 +2260,36 @@ vibrato fix reaches the last note the `4xy` stays on (`ListenCallOf`), the
 two walks `next` failed after `feat-color-rubs` met `feat-shape-variations`.
 `TestChordDrones` covers it.
 
+Melody roles (from `fix-melody-roles`): Night Harbor (calm, VRC6 Plus) put
+A's voiced chords on Soft 1-3, then `what_next` took Soft 3, the top pad,
+for the melody, counted the melody done, and B's voices landed on the
+lead's VRC6 pulse. `GuessMelodyChannel` now leaves out pad voices
+(`PadVoicesIn`: `ChordVoicesIn`'s voices whose sound two others play, or
+one other on a sound `KindOfWords` calls a pad, by `VoiceSound`; a harmony
+on the tune's own lead starts with it too and stays out) in every pass, and
+the bass under them too; `WhatNext`'s melody is the channel the designed
+lead plays, else, while it's unplayed, the channel it was made for
+(`DesignedLeadChannel`: its chip, a pulse, one without other sounds), so
+the melody milestone wants the lead's tune; `GrowForm` gives B A's voices
+as `chord_channels`, and `AddBackingTool` keeps free voices off the song's
+melody channel (`Tune`) where it rests. B's melody no longer grows from
+A's hook (every version opened with A's first two bars):
+`ContrastingHooks` offers hooks on B's chords of another rhythm and shape
+(else A's turned upside down in the key), and a climax's grow first from
+`ClimbingHooks` (an offered hook moved up the key until its top is a whole
+step or more over the tune before it, within the lead's range and under
+`GUARD_LEAD_TOP`, the move with the most chord tones on its notes), the
+why saying so. A break whose part line asks for "one small sound" (the
+calm night's, `PartLine`) gets `BreakSound` once its chords are in: the
+hook's first bar as a soft "lullaby bell", an octave up where it fits, in
+the break's second bar (else third), on the resting melody's channel
+(else a free pulse, leaving the others to the echo), tried with
+`TryWrite` (which runs `write_notes` now, an instrument of the chip
+standing in for the bell); the break milestone waits for it only while
+one fits. `TestWhatNextMelodyRoles` walks Night
+Harbor, and `CheckMelodyContrast` checks B's opening and the climax's top in
+`TestWhatNextLoop`'s and the shape walks.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
