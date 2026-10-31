@@ -13788,10 +13788,11 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // What review_arrangement and check_song find in an arrangement besides their other checks, from a local model's first
 // stage, which was clean on all of those and missed these: a melody in one-bar pieces, a thin or doubled bass, a sound
 // its channel can't play, faders doing the mix's work, a section that repeats another note for note, a lively stage that
-// loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main part (IntroFinding); and (BusyFindings) a part too busy for the NES. Each carries the call
-// that fixes it where one does (the intro's may be advice alone: Fix null)
+// loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main
+// part (IntroFinding); and (BusyFindings) a part too busy for the NES; and (DroneFindings) held chords that drone on
+// through the song. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
 enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO, ARRANGE_BUSY,
-	ARRANGE_CLIMAX, ARRANGE_KINDS };
+	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -14912,6 +14913,199 @@ void BusyFindings(Session &S, int Melody, int From, int To, std::vector<ArrangeF
 	}
 }
 
+// Chords that drone on (from feat-chord-rests): a local model's lively VRC6 stage (Ironworks) whose lush chords on the
+// 2A03's Pulse 1 struck once a bar, every bar, at one volume, never resting, for all 40 bars ("the Pulse 1 that is
+// active the entirety of the song is annoying"). Told from the 43 songs the user keeps, whose lush parts sound in every
+// bar too, without a rest, at the same envelope (it holds 10 until a release that never comes) and as high against the
+// melody (their tops 10-19 semitones over its low notes, Ironworks' 4): what they do and it doesn't is strike their held
+// chords in rhythms that change with the section, the restrikes softer (08 Verdant Run: whole notes in the intro, tresillo
+// in A at volumes 6 4 5, half notes in B; 02-03 Lanternbrook, 13 Mirage Bazaar, 01 Skylight Overture alike). A held chord
+// part (a looping arpeggio instrument or 0xy on half its notes or more, DRONE_ATTACKS notes a bar or fewer where it sounds)
+// that sounds in DRONE_SOUNDING of the bars or more, DRONE_RUN of them or more without a rest of a beat, plays one bar's
+// rhythm in DRONE_SAME of the bars it strikes in or more and is heard within DRONE_UNDER_DB of the melody drones on.
+// Measured on the kept songs' held, unbroken chord parts (not calm): the most common bar rhythm in 0.53-0.59 of their bars
+// (11 Applefall Lane, 13 Mirage Bazaar); Ironworks' in all of them. A calm track's pad holds by design (the night songs':
+// City's "Deep night" 0.86, 51 Quiet Hours 0.84) and isn't checked
+const double DRONE_SOUNDING = 0.9, DRONE_RUN = 0.75, DRONE_SAME = 0.9, DRONE_ATTACKS = 2.0, DRONE_UNDER_DB = 6.0;
+const int DRONE_BARS = 16;
+
+// A chord part's bars as heard: the share it sounds in, its longest stretch without a rest of a beat (in bars), how many
+// notes a bar it strikes where it sounds, and the bars of its most common rhythm (the rows its notes start on in a bar)
+struct ChordRun {
+	int Bars, Sounding, FirstBar, LastBar, StruckBars, SameBars, Notes;
+	double Longest, Db;
+	std::vector<int> Rhythm;
+	ChordRun() : Bars(0), Sounding(0), FirstBar(0), LastBar(0), StruckBars(0), SameBars(0), Notes(0), Longest(0.0), Db(NO_LOUDNESS) {}
+	double SoundingShare() const { return Bars > 0 ? Sounding / static_cast<double>(Bars) : 0.0; }
+	double Attacks() const { return Sounding > 0 ? Notes / static_cast<double>(Sounding) : 0.0; }
+	double Same() const { return StruckBars > 0 ? SameBars / static_cast<double>(StruckBars) : 0.0; }
+};
+
+ChordRun ChordRunOf(Session &S, Hearing &Ears, int Channel, int From, int To)
+{
+	ChordRun Out;
+	const int Total = S.Time.TotalRows();
+	const std::vector<double> &Power = Ears.Power(Channel);
+	const int First = Ears.FrameOf(S.Time.BarStart(From)), Last = Ears.FrameOf(std::min(Total, S.Time.BarEnd(To)));
+	const int Beat = std::max(1, Ears.FrameOf(S.Time.RowsPerBeat) - Ears.FrameOf(0));
+	auto Sounds = [&](int f) { return f >= 0 && f < static_cast<int>(Power.size()) && Power[static_cast<size_t>(f)] > 1e-4; };
+	for (int Bar = From; Bar <= To; ++Bar) {
+		const int A = Ears.FrameOf(S.Time.BarStart(Bar)), Z = Ears.FrameOf(std::min(Total, S.Time.BarEnd(Bar)));
+		int On = 0;
+		for (int f = A; f < Z; ++f)
+			On += Sounds(f) ? 1 : 0;
+		++Out.Bars;
+		if (Z > A && On * 2 >= Z - A) {
+			++Out.Sounding;
+			Out.FirstBar = Out.FirstBar == 0 ? Bar : Out.FirstBar;
+			Out.LastBar = Bar;
+		}
+	}
+	int Run = 0, Gap = 0, Longest = 0;
+	for (int f = First; f < Last; ++f) {
+		if (!Sounds(f)) {
+			++Gap;
+			continue;
+		}
+		Run = Gap >= Beat ? 1 : Run + Gap + 1;
+		Gap = 0;
+		Longest = std::max(Longest, Run);
+	}
+	Out.Longest = Out.Bars > 0 && Last > First ? Longest * Out.Bars / static_cast<double>(Last - First) : 0.0;
+	const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channel), S.Time.BarStart(From), std::min(Total, S.Time.BarEnd(To)));
+	Out.Notes = static_cast<int>(Notes.size());
+	std::map<int, std::vector<int> > ByBar;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int Bar = S.Time.BarOf(Notes[i].Row);
+		ByBar[Bar].push_back(Notes[i].Row - S.Time.BarStart(Bar));
+	}
+	std::map<std::vector<int>, int> Count;
+	for (std::map<int, std::vector<int> >::const_iterator it = ByBar.begin(); it != ByBar.end(); ++it) {
+		const int Times = ++Count[it->second];
+		if (Times > Out.SameBars) {
+			Out.SameBars = Times;
+			Out.Rhythm = it->second;
+		}
+	}
+	Out.StruckBars = static_cast<int>(ByBar.size());
+	if (Out.FirstBar > 0)
+		Out.Db = Ears.Loudness(std::vector<int>(1, Channel), std::vector<std::pair<int, int> >(1, std::make_pair(S.Time.BarStart(
+			Out.FirstBar), std::min(Total, S.Time.BarEnd(Out.LastBar)))));
+	return Out;
+}
+
+// A rhythm's name as add_chords_and_bass and vary_part take it ("once a bar" for a hit on beat 1 alone)
+std::string StruckText(Session &S, const std::vector<int> &Rhythm)
+{
+	if (Rhythm.size() == 1 && Rhythm[0] == 0)
+		return "once a bar, on beat 1";
+	std::string Beats;
+	for (size_t i = 0; i < Rhythm.size(); ++i)
+		Beats += (i == 0 ? "" : i + 1 == Rhythm.size() ? " and " : ", ") + FormatNumber(1.0 + Rhythm[i] / static_cast<double>(std::max(1,
+			S.Time.RowsPerBeat)));
+	return Format("on beat%s %s", Rhythm.size() == 1 ? "" : "s", Beats.c_str());
+}
+
+bool IsFreeSectionBase(const std::string &Base);
+
+// The fix: the held chords struck again on a rhythm that changes with the section, as the soundtrack's stages play them
+// (vary_part restrike): tresillo in the song's A parts (the first body part's name: A, A', A2, and a climax, which
+// what_next makes of A again), half notes in the others (B, C, a bridge), the intro, a break and an outro left held.
+// Without named sections, tresillo over the first half of its bars and half notes over the rest
+Json DroneFix(Session &S, int Channel, const ChordRun &R)
+{
+	struct Block { int From, To; const char *Rhythm; };
+	std::vector<Block> Blocks;
+	std::string MainBase;
+	std::vector<Section> Sections = S.Song.Sections;
+	std::sort(Sections.begin(), Sections.end(), [](const Section &a, const Section &b) { return a.First < b.First; });
+	for (size_t i = 0; i < Sections.size(); ++i) {
+		const std::string Base = Lowercase(SectionBase(Sections[i].Name));
+		const int From = std::max(R.FirstBar, SectionFirstBar(S, Sections[i])), To = std::min(R.LastBar, SectionLastBar(S, Sections[i]));
+		if (IsFreeSectionBase(Base) || To < From)
+			continue;
+		if (MainBase.empty())
+			MainBase = Base;
+		const char *Rhythm = Base == MainBase || Base == "climax" ? "tresillo" : "half";
+		if (!Blocks.empty() && Blocks.back().To + 1 == From && std::string(Blocks.back().Rhythm) == Rhythm)
+			Blocks.back().To = To;
+		else
+			Blocks.push_back(Block{ From, To, Rhythm });
+	}
+	if (Blocks.empty()) {
+		const int Middle = R.FirstBar + (R.LastBar - R.FirstBar + 1) / 2 - 1;
+		Blocks.push_back(Block{ R.FirstBar, Middle, "tresillo" });
+		if (Middle < R.LastBar)
+			Blocks.push_back(Block{ Middle + 1, R.LastBar, "half" });
+	}
+	const std::string Name = S.Channel(Channel).FullName();
+	Json Fix;
+	for (size_t i = 0; i < Blocks.size(); ++i) {
+		Json Vary = Json::MakeObject();
+		Vary.Set("channel", Name);
+		Vary.Set("variation", "restrike");
+		Vary.Set("rhythm", Blocks[i].Rhythm);
+		Vary.Set("from_bar", Blocks[i].From);
+		Vary.Set("to_bar", Blocks[i].To);
+		const Json Call = ToolCall("vary_part", Vary, Format("strikes %s's held chords again %s in %s, the restrikes softer",
+			Name.c_str(), std::string(Blocks[i].Rhythm) == "tresillo" ? "on a tresillo (beats 1, 2.5 and 4)" : "every half bar",
+			RangeText(Blocks[i].From, Blocks[i].To).c_str()));
+		if (i == 0)
+			Fix = Call;
+		else
+			ThenCall(Fix, Call);
+	}
+	return Fix;
+}
+
+void DroneFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, std::vector<ArrangeFinding> &Out)
+{
+	if (Style == STYLE_CALM || Melody < 0 || !IsMelodic(S.Channel(Melody)) || To - From + 1 < DRONE_BARS)
+		return;
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+	double MelodyDb = NO_LOUDNESS;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Melody || !IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		int Chords = 0;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Chords += SoundsChord(S, Notes[i]) ? 1 : 0;
+		if (Notes.size() < 4 || Chords * 2 < static_cast<int>(Notes.size()))
+			continue;
+		const ChordRun R = ChordRunOf(S, Ears, c, From, To);
+		if (MelodyDb <= NO_LOUDNESS)
+			MelodyDb = Ears.Loudness(std::vector<int>(1, Melody), std::vector<std::pair<int, int> >(1, std::make_pair(First, End)));
+		const double Under = R.Db > NO_LOUDNESS && MelodyDb > NO_LOUDNESS ? MelodyDb - R.Db : 99.0;
+		if (R.SoundingShare() < DRONE_SOUNDING || R.Longest < DRONE_RUN * R.Bars || R.Attacks() > DRONE_ATTACKS ||
+			R.StruckBars < DRONE_BARS / 2 || R.Same() < DRONE_SAME || Under > DRONE_UNDER_DB)
+			continue;
+		const std::string Name = S.Channel(c).FullName(), Struck = StruckText(S, R.Rhythm);
+		const int Longest = static_cast<int>(std::floor(R.Longest + 0.5));
+		ArrangeFinding F;
+		F.Kind = ARRANGE_DRONE;
+		F.Channel = c;
+		F.FromBar = R.FirstBar;
+		F.ToBar = R.LastBar;
+		F.Weight = 1.0;
+		F.Text = Format("Chords that drone on: %s's held chords sound in %d of the %d bars, %d bars on end without a rest, struck "
+			"the same way (%s) in %d of the %d bars they strike in, %.0f dB under the melody, so they become a buzz the ear tires "
+			"of. The soundtrack's stages strike their held chords again inside the bar, softer, and change the rhythm with the "
+			"section (tresillo in A at volumes 6, 4 and 5, half notes in B, the intro held), so the chords move with the song.",
+			Name.c_str(), R.Sounding, R.Bars, Longest, Struck.c_str(), R.SameBars, R.StruckBars, std::max(0.0, Under));
+		F.Summary = Format("%s's chords play in nearly every bar, struck %s, without a rest: they drone on", Name.c_str(), Struck.c_str());
+		F.Details.Set("problem", "drones_on");
+		F.Details.Set("sounding_bars", R.Sounding);
+		F.Details.Set("bars", R.Bars);
+		F.Details.Set("longest_without_rest", Longest);
+		F.Details.Set("same_rhythm_bars", R.SameBars);
+		F.Details.Set("struck_bars", R.StruckBars);
+		F.Details.Set("under_melody_db", Json::NumberText(FormatNumber(std::floor(std::max(0.0, Under) * 10 + 0.5) / 10)));
+		F.Fix = DroneFix(S, c, R);
+		Out.push_back(F);
+	}
+}
+
 // Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats, the loop,
 // the intro and parts too busy for the NES
 std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const TrackUse &Use,
@@ -14930,6 +15124,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	LoopFinding(S, Style, Use, Out);
 	IntroFinding(S, Ears, Melody, From, Style, Out);
 	BusyFindings(S, Melody, From, To, Out);
+	DroneFindings(S, Ears, Melody, From, To, Style, Out);
 	return Out;
 }
 
@@ -16565,14 +16760,17 @@ std::string VaryPartTool(Session &S, const Json &Args)
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
 	const int R = S.Time.RowsPerBeat;
 	const bool AsClip = BoolArg(Args, "as_clip", false);
-	static const char *const KINDS[] = { "embellish", "simplify", "syncopate", "octave_up", "octave_down", "ending" };
+	static const char *const KINDS[] = { "embellish", "simplify", "syncopate", "octave_up", "octave_down", "ending", "restrike" };
 	const std::string Kind = Squeezed(StringArg(Args, "variation"));
 	int Variation = -1;
-	for (int i = 0; i < 6; ++i)
+	for (int i = 0; i < 7; ++i)
 		if (Kind == Squeezed(KINDS[i]))
 			Variation = i;
 	if (Variation < 0)
-		throw Problem("variation: embellish, simplify, syncopate, octave_up, octave_down or ending.");
+		throw Problem("variation: embellish, simplify, syncopate, octave_up, octave_down, ending or restrike.");
+	const int Rhythm = StyleArg(Args, "rhythm", ChordRhythms(), RHYTHM_TRESILLO);
+	if (Arg(Args, "rhythm") != 0 && Variation != 6)
+		throw Problem("rhythm is restrike's: the rhythm it strikes held notes again on.");
 	bool Found;
 	Key K = KeyArg(S, Args, "key", First, End, Found);
 	if (!Found)
@@ -16769,6 +16967,55 @@ std::string VaryPartTool(Session &S, const Json &Args)
 			Out.push_back(Notes[i]);
 		}
 		break;
+	case 6:		// restrike: a held note struck again where the rhythm strikes inside it (a bar's beat 1 too), softer off beat 1
+				// (HitSofter, as chord parts strike: tresillo plays 6, 4 and 5 at volume 6), as the soundtrack's stages strike
+				// their held chords; each note at its own volume, so the next one plays as before
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			PartNote A = Notes[i];
+			A.Volume = Old[i].Volume;
+			std::vector<int> Hits;
+			for (int Bar = S.Time.BarOf(A.Row); Bar <= S.Time.BarOf(A.Row + A.Rows - 1); ++Bar) {
+				const std::vector<int> Rows = ChordRhythmRows(Rhythm, S.Time.BarLength(Bar), R);
+				for (size_t h = 0; h < Rows.size(); ++h) {
+					const int Row = S.Time.BarStart(Bar) + Rows[h];
+					if (Row > A.Row && Row < A.Row + A.Rows)
+						Hits.push_back(Row);
+				}
+			}
+			if (Hits.empty()) {
+				Out.push_back(A);
+				continue;
+			}
+			// Its later effects go with the piece they fall in
+			const std::vector<std::pair<int, std::pair<int, int> > > Later = A.LaterEffects;
+			const int Start = A.Row, Stop = A.Row + A.Rows, Own = HitSofter(A.Row - S.Time.BarStart(S.Time.BarOf(A.Row)), R);
+			A.LaterEffects.clear();
+			std::vector<PartNote> Pieces(1, A);
+			for (size_t h = 0; h < Hits.size(); ++h) {
+				PartNote B = A;
+				B.Row = Hits[h];
+				B.Instrument = NO_INSTRUMENT;
+				B.Effects.clear();
+				B.Volume = std::max(1, A.Volume - std::max(0, HitSofter(Hits[h] - S.Time.BarStart(S.Time.BarOf(Hits[h])), R) - Own));
+				Pieces.push_back(B);
+				++Changed;
+			}
+			for (size_t p = 0; p < Pieces.size(); ++p)
+				Pieces[p].Rows = (p + 1 < Pieces.size() ? Pieces[p + 1].Row : Stop) - Pieces[p].Row;
+			for (size_t e = 0; e < Later.size(); ++e) {
+				const int Row = Start + Later[e].first;
+				for (size_t p = Pieces.size(); p-- > 0; )
+					if (Pieces[p].Row <= Row) {
+						if (Pieces[p].Row == Row)
+							Pieces[p].Effects.push_back(Later[e].second);
+						else
+							Pieces[p].LaterEffects.push_back(std::make_pair(Row - Pieces[p].Row, Later[e].second));
+						break;
+					}
+			}
+			Out.insert(Out.end(), Pieces.begin(), Pieces.end());
+		}
+		break;
 	default: {	// the last note on the key's tonic, held to the end of the bars; over a chord without the tonic (a turnaround's
 				// V7, where the tonic would clash with its third), on the chord's tone nearest the note
 		Out = Notes;
@@ -16802,15 +17049,17 @@ std::string VaryPartTool(Session &S, const Json &Args)
 	if (Changed == 0)
 		throw Problem("That variation found nothing to change in those bars (embellish needs notes of half a beat or more that run "
 			"straight into the next one a third away, into a repeat of themselves or into a long note; syncopate a long note before "
-			"a strong beat).");
+			"a strong beat; restrike a note held past a hit of its rhythm).");
 	std::vector<std::string> Warnings;
 	Change C;
 	C.Channel = Channel;
 	BuildPart(S.Cells(Channel), First, End, Out, OptionsFor(S, Channel, Direct(S, AsClip)), C.Cells, Warnings);
 	std::vector<Change> Changes(1, C);
 	static const char *const DONE[] = { "passing and neighbour notes added", "simplified to the notes on the beats",
-		"syncopated (strong-beat notes half a beat early)", "an octave up", "an octave down", "ending on the tonic" };
-	const std::string What = Info.FullName() + " " + (EndingChord.empty() ? std::string(DONE[Variation]) : "ending on " +
+		"syncopated (strong-beat notes half a beat early)", "an octave up", "an octave down", "ending on the tonic", "" };
+	const std::string Done = Variation == 6 ? std::string("struck again on the ") + ChordRhythms()[static_cast<size_t>(Rhythm)].Name +
+		" rhythm (" + ChordRhythms()[static_cast<size_t>(Rhythm)].Description + "), softer off beat 1" : std::string(DONE[Variation]);
+	const std::string What = Info.FullName() + " " + (EndingChord.empty() ? Done : "ending on " +
 		PitchName(Out.back().Pitch) + ", which " + EndingChord + " under it has (the tonic would clash with it)") + ", " +
 		RangeText(From, To);
 	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What) +
@@ -24562,19 +24811,21 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // WARBLE (from feat-listen): FDS notes held past where a fast, deep modulator comes in, heard as a fluttering echo.
 // TOO_BUSY (from feat-busy-check): the arrangement's ARRANGE_BUSY, a part too busy for the NES (BusyFindings); BUSY is a
 // bar of quick notes, the older and smaller check. CLIMAX (from feat-tool-replies): ARRANGE_CLIMAX, a section named as the
-// high point whose melody repeats an earlier one's (ClimaxFindings)
+// high point whose melody repeats an earlier one's (ClimaxFindings). CHORD_DRONE (from feat-chord-rests): ARRANGE_DRONE,
+// held chords that drone on through the song (DroneFindings)
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
 	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY,
-	FOUND_CLIMAX, FOUND_KINDS };
+	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats" };
+	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats", "chord_drone" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "medium", "high", "medium", "medium" };
+	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium" };
 
 // The check_song kind of one of ArrangeFindings' (arrange_kind)
 int ArrangeCheckKind(int Kind)
 {
 	return Kind == ARRANGE_BUSY ? static_cast<int>(FOUND_TOO_BUSY) : Kind == ARRANGE_CLIMAX ? static_cast<int>(FOUND_CLIMAX) :
+		Kind == ARRANGE_DRONE ? static_cast<int>(FOUND_CHORD_DRONE) :
 		FOUND_PHRASES + Kind;
 }
 
@@ -25083,7 +25334,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
-		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX] };
+		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX], Arranged[ARRANGE_DRONE] };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -25159,7 +25410,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind. The arrangement's few findings are all listed, after the rest
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
-		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "", "" };
+		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "", "", "", "" };
 	int Shown[FOUND_KINDS], Left = MAX_LISTED * 3;
 	bool Any = false;
 	for (int k = FOUND_PHRASES; k < FOUND_KINDS; ++k) {
@@ -28365,6 +28616,8 @@ void WhatNext::GrowForm()
 	B.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : K.ChordStyle);
 	if (std::string(K.ChordStyle) == "lush" && !(Calm() && S.Song.Vrc6Plus))
 		B.Set("arp_frames", LushFrames());
+	if (*K.OtherRhythm != 0)
+		B.Set("rhythm", K.OtherRhythm);	// a lively stage's B (and the general recipe's): half notes where A struck a tresillo
 	B.Set("color", Calm() || m_KindId == NEXT_LIVELY ? "rich" : "sevenths");
 	B.Set("bass_style", K.BassStyle);
 	if (m_KindId == NEXT_ACTION)
@@ -28462,6 +28715,10 @@ void WhatNext::Parts()
 			A.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : K.ChordStyle);
 			if (std::string(K.ChordStyle) == "lush" && !(Calm() && S.Song.Vrc6Plus))
 				A.Set("arp_frames", LushFrames());
+			// A lively stage's lush chords (the general recipe's arpeggio) struck again inside the bar, softer: held once a
+			// bar through the song they drone on
+			if (*K.ChordRhythm != 0)
+				A.Set("rhythm", K.ChordRhythm);
 			A.Set("color", Calm() || m_KindId == NEXT_LIVELY ? "rich" : "sevenths");
 		}
 		if (A.Get("bass_channel") == 0 || A.Get("bass_channel")->String() != "none") {
@@ -29634,6 +29891,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		return Where(Tool == "vary_part" ? "Simplify a part too busy for the NES" : "Clear a line that competes with the melody", true);
 	if (Id == "climax_repeats")
 		return Where("Lift the climax's melody an octave", true);
+	if (Id == "chord_drone")
+		return Where("Strike the held chords on a rhythm that changes with the section", true);
 	// The recipe's steps
 	if (Id == "tempo")
 		return "Set the tempo to " + FormatNumber(Number("bpm")) + " BPM";
@@ -30665,7 +30924,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 					std::vector<std::string>{ "plain", "sevenths", "rich" }))
 				.Add("chord_style", EnumProp("How the chords are played (default arpeggio).", StyleNames(ChordStyles())))
 				.Add("rhythm", EnumProp("When arpeggio, stabs or lush chords are struck (arpeggio and lush: bars, stabs: offbeats by "
-					"default).", StyleNames(ChordRhythms())))
+					"default; a lively stage's lush chords: tresillo in A, half in B, since held once a bar through a whole stage they "
+					"drone on).", StyleNames(ChordRhythms())))
 				.Add("pattern", EnumProp("The order of a broken chord's notes, or of a lush chord's arpeggio (default up).",
 					StyleNames(BrokenPatterns())))
 				.Add("notes_per_beat", Prop("integer", "Broken chords: notes a beat, 1-4 (default 2)."))
@@ -31444,11 +31704,14 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Changes a melodic part a little, for a repeat that shouldn't sound pasted: embellish (passing notes between notes "
 		"a third apart and a neighbour note on held ones, at most two a bar), simplify (only the notes on the beats), "
 		"syncopate (notes on the middle of a bar, and every other bar's first beat, come half a beat early), octave_up, "
-		"octave_down, ending (the last note goes to the key's tonic and holds to the end).",
+		"octave_down, ending (the last note goes to the key's tonic and holds to the end), restrike (held notes struck again "
+		"on a rhythm, softer off beat 1: held chords that drone on come alive, tresillo in A and half in B as the "
+		"soundtrack's stages play them).",
 		Schema()
 			.Add("channel", ChannelProp("Channel name or number."), true)
 			.Add("variation", EnumProp("The variation.", std::vector<std::string>{ "embellish", "simplify", "syncopate", "octave_up",
-				"octave_down", "ending" }), true)
+				"octave_down", "ending", "restrike" }), true)
+			.Add("rhythm", EnumProp("restrike: the rhythm held notes are struck again on (default tresillo).", StyleNames(ChordRhythms())))
 			.Add("from_bar", BarProp("First bar."))
 			.Add("to_bar", BarProp("Last bar (default: the song's end)."))
 			.Add("section", SectionProp())
@@ -32820,7 +33083,8 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"break. Or chord_style lush (arp_frames 3-4; chord_instrument a pad you designed, which each chord copies) under "
 		"the melody, and a bass of few long notes kept out of the intro and the break" : Lively ? "colored (a chord a bar: sevenths, "
 		"add9, sus; bVI and bVII for a lift): in a bright place chord_style lush with arp_frames 2 or 3 (fast lush arpeggios on a "
-		"pulse at volume 4-7, the soundtrack's own chord sound), else broken or stabs, and a bass_style that bounces (root and "
+		"pulse at volume 4-7, the soundtrack's own chord sound) and rhythm tresillo, half in B (held once a bar they drone on), "
+		"else broken or stabs, and a bass_style that bounces (root and "
 		"fifth, walking, octaves) on the triangle" : "with tension (minor, phrygian or harmonic minor; "
 		"bVI-bVII-i), a driving chord_style and bass_style (octaves, a gallop; bass_instrument \"thump bass\" for punch)") +
 		". Other chords for the B part.\n";
@@ -32930,8 +33194,9 @@ static std::string CoreRecipe(const std::string &Kind)
 		"2. The lead's sound first: design_instrument, kind bloom lead with restrike_beats 0 (a duty click, a bloom, settling "
 		"to 12, a vibrato after 24 frames). Read its volume sequence in the reply.\n"
 		"3. add_chords_and_bass with colored chords you choose (a chord a bar: sevenths, add9, sus; bVI and bVII for a lift), "
-		"chord_style lush with arp_frames 2 (fast lush arpeggios, for a bright place) or broken, bass_style arpeggio or "
-		"root_fifth (a walking bass rubs against broken chords).\n"
+		"chord_style lush with arp_frames 2 (fast lush arpeggios, for a bright place) and rhythm tresillo (half in B: struck "
+		"again inside the bar, softer, as the soundtrack's stages play them; held once a bar through a whole stage they drone "
+		"on) or broken, bass_style arpeggio or root_fifth (a walking bass rubs against broken chords).\n"
 		"4. The melody: write only the hook, a motif a player would hum, 4-7 notes in steps (\"D4 G4 A4 B4 - A4 G4 -\"), and "
 		"grow_melody with kind lively and the section grows it over the chords: pick the version whose shape fits (variant 2 "
 		"for others), then shape it by hand (read_notes with format steps, write_notes). It wants phrases of 2 or 4 bars "

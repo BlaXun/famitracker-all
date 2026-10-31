@@ -1532,7 +1532,8 @@ struct CProblemsPanelWnd::Impl {
 			{ _T("repeat that copies"), _T("repeats that copy") }, { _T("short loop"), _T("short loops") },
 			{ _T("intro that jumps"), _T("intros that jump") },
 			{ _T("detail to hear"), _T("details to hear") }, { _T("clash maybe meant"), _T("clashes maybe meant") },
-			{ _T("part too busy"), _T("parts too busy") }, { _T("climax that repeats"), _T("climaxes that repeat") }
+			{ _T("part too busy"), _T("parts too busy") }, { _T("climax that repeats"), _T("climaxes that repeat") },
+			{ _T("chord part that drones"), _T("chord parts that drone") }
 		};
 		CString Text;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {

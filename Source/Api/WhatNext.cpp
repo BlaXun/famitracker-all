@@ -327,19 +327,21 @@ bool DryRunHost::Save(const std::string &, std::string &Message)
 // The kinds of song, as the recipes (get_recipe, compose_track) and the style guide's topics have them: their tempos,
 // the lead's sound, how the chords, the bass and the drums play, the mix and the export's loudness. A lively stage's
 // are the soundtrack's first lively stages' (the user liked nearly all of them): a lead that blooms in and settles, fast
-// lush arpeggios, a sampled backbeat (the basic groove with kit samples). A calm song's lead is the night songs' best (the
-// calm recipe's first choice): a music box on a VRC6 pulse at 37.5% that blooms in and rings away within a beat
+// lush arpeggios struck again inside the bar (tresillo in A, half notes in B, as 08 Verdant Run's: held once a bar for
+// a whole stage they drone on, check_song's chord_drone), a sampled backbeat (the basic groove with kit samples). A calm
+// song's lead is the night songs' best (the calm recipe's first choice): a music box on a VRC6 pulse at 37.5% that blooms
+// in and rings away within a beat
 namespace {
 
 const NextKind KINDS[] = {
 	{ NEXT_GENERAL, "general", 0.0, 0.0, 150.0, "Melody lead", "lead", "arpeggio", "arpeggio", "arpeggio", "basic", "soft", "any",
-		-20.0, { "C major", "G major", "D major" } },
+		-20.0, { "C major", "G major", "D major" }, "tresillo", "half" },
 	{ NEXT_CALM, "calm", 60.0, 90.0, 75.0, "Calm lead", "music box", "lush", "roots", "half", "", "calm", "calm", -22.0,
-		{ "F major", "D major", "G major" } },
+		{ "F major", "D major", "G major" }, "", "" },
 	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "bloom lead", "lush", "arpeggio", "arpeggio", "basic", "lively",
-		"lively", -20.0, { "G major", "D major", "A major" } },
+		"lively", -20.0, { "G major", "D major", "A major" }, "tresillo", "half" },
 	{ NEXT_ACTION, "action", 135.0, 195.0, 150.0, "Action lead", "bloom lead", "stabs", "octaves", "octaves", "driving", "soft", "any",
-		-19.0, { "A minor", "D minor", "E minor" } },
+		-19.0, { "A minor", "D minor", "E minor" }, "", "" },
 };
 
 }	// namespace

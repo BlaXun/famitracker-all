@@ -841,6 +841,25 @@ JSON as `fix`.
   scored 7.6 (8 notes a bar, 31 of 33 bars new); none of the 43 songs the
   user keeps reaches 5.2, and `review_arrangement` then leaves out its tips
   that would add to the part.
+- **A climax that repeats** (`climax_repeats`): a section named as the
+  high point (Climax, Peak, Finale) whose melody plays an earlier section's
+  of its length note for note in nearly every bar, whatever the other parts
+  add. Fix: `vary_part` with `octave_up` on the melody there while its top
+  stays low enough, else advice: give the climax a higher phrase of its own.
+- **Chords that drone on** (`chord_drone`): held chords (a looping
+  arpeggio instrument or `0xy` on half the notes or more, two notes a bar
+  or fewer) that sound in 90% of the bars or more, three quarters of them
+  on end without a rest of a beat, struck the same way in 90% of the bars
+  they strike in, within 6 dB of the melody, on a track that isn't calm (a
+  night song's pad holds by design). Fix: `vary_part` with `restrike` and a
+  `rhythm`, section by section: `tresillo` in the A parts, `half` in the
+  others, the intro and a break left held. A local model's lively stage
+  struck its lush chords once a bar, every bar, for 40 bars at one volume,
+  and the user found them annoying; the lush parts of the 43 songs the user
+  keeps sound in every bar too, but play their most common bar rhythm in
+  at most 59% of their bars (08 Verdant Run: whole notes in the intro, a
+  tresillo at volumes 6, 4 and 5 in A, half notes in B). `what_next`'s
+  lively recipe now strikes its lush chords that way.
 
 `review_arrangement` weighs them into its score (a melody in pieces most)
 and lists them among its tips, most first. Its breath check counts a rest
@@ -944,14 +963,14 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy`, `key` and `held`, notes that vanish counted by the note, then the
 arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
-`short_loop`, `intro` and `too_busy`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
+`short_loop`, `intro`, `too_busy`, `climax_repeats` and `chord_drone`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
 (`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
 - `kind` (as in `counts`) and `severity`: `high` for notes that vanish,
   clicks and clashes (`low` for a clash that's a detail), `medium` out of range, for a held lead, a melody in
-  pieces, the bass, a sound its channel can't play and a part too busy
-  for the NES, `low` for the rest;
+  pieces, the bass, a sound its channel can't play, a part too busy
+  for the NES and chords that drone on, `low` for the rest;
 - `channel` (numbered from 1, as the tools take them; `null` for a silent
   bar) and `channel_name`;
 - where it starts: `frame` and `row` (from 0, as the pattern editor shows
@@ -1112,7 +1131,7 @@ before a batch of changes.
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
-| `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic. `ending` lands on the tonic, or over a chord without it (a turnaround's A7 in D major) on the chord's tone nearest the note. `embellish` works on a lively melody of short notes too: a passing note between notes a third apart, a neighbour between repeated ones, a note from beside into a long note (or a turn before it), at most two a bar, each taking a note's last sixteenth (the second half of a note of a beat or more); an ornament a semitone (or a semitone and octaves) from what another part sounds there is left out, as `check_song` would hear a clash |
+| `vary_part` | Changes a repeat a little: passing notes, only the notes on the beats, syncopation, an octave up or down, an ending on the tonic, held notes struck again on a rhythm (`restrike` with `rhythm`, default `tresillo`; softer off beat 1 as chord parts strike, so tresillo plays 6, 4 and 5 at volume 6). `ending` lands on the tonic, or over a chord without it (a turnaround's A7 in D major) on the chord's tone nearest the note. `embellish` works on a lively melody of short notes too: a passing note between notes a third apart, a neighbour between repeated ones, a note from beside into a long note (or a turn before it), at most two a bar, each taking a note's last sixteenth (the second half of a note of a beat or more); an ornament a semitone (or a semitone and octaves) from what another part sounds there is left out, as `check_song` would hear a clash |
 | `review_arrangement` | How full the arrangement sounds, scored out of 10, and what would help most: missing layers, thin bars, plain or looping chords, a bass on roots, drums without fills, a melody without rests or one that hardly pauses (a rest of a beat or more, or a note held two beats, as it sounds, in under 45% of the two-bar spans it plays in, 75% on a calm track: a held note counts in the span it starts in, and a break without the melody isn't counted; the bars that run on named, and a busy part taken for the melody left out), melody notes on a sound that's gone within a few frames (they sound missing), sections pasted unchanged, flat dynamics, the stereo picture (an echo on its melody's side, a bass or drums off the middle), a melody buried under another part (counted as each chip plays, each note's instrument envelope in), parts crowding the melody's register while it sounds (a part doubling it, or trading notes with it in a hocket, doesn't), a song that keeps one loudness throughout (estimated bar by bar, each note as its instrument's envelope plays it frame by frame, so plucks die away and pads swell, the drums by how many hits they play and the DPCM level softening the triangle and the noise). The mixer's starting pans count, and an intro more than 10 dB under the rest is tipped (in a game it reads as silence). With style calm (or a track named calm, a night version) it isn't asked for drums, fills, accents, more notes or shorter ones; it hears the balance as the stems would and tips a melody more than 4 dB over the chords, and warns about a lead whose sound holds a high, steady level; lively hears a stage's balance (3-4 dB). A cue or a jingle (a track that halts within half a minute) is judged as one: the tips for looping stages (the length, variety, fills and a sampled kit, a bass that moves, chord colors, a beat, a lead's steady level) are left out, those about notes that vanish, clashing parts and the balance stay; a sound effect gets a short check of its own, without a score. It also finds what drafts miss, each with the call that fixes it (see [What drafts miss](#what-drafts-miss)), and a rest before a bar line breathes only where it ends a phrase of two bars or more. `format` short gives the score, the numbers that matter and the three tips that matter most (see [Short replies](#short-replies)). See [Measuring the mix](#measuring-the-mix) for how it tells an echo, a sparkle and a soft bass |
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
