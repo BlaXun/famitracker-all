@@ -4796,7 +4796,7 @@ BEGIN_MESSAGE_MAP(CPianoRollWnd, CWnd)
 	ON_WM_DESTROY()
 END_MESSAGE_MAP()
 
-CPianoRollWnd::CPianoRollWnd() : m_pImpl(new Impl(this))
+CPianoRollWnd::CPianoRollWnd() : m_pImpl(new Impl(this)), m_bAltChord(false)
 {
 }
 
@@ -4956,9 +4956,20 @@ BOOL CPianoRollWnd::PreTranslateMessage(MSG *pMsg)
 {
 	// Keys for the notes come here before FamiTracker's shortcuts see them
 	if ((pMsg->message == WM_KEYDOWN || pMsg->message == WM_SYSKEYDOWN) && pMsg->hwnd == GetSafeHwnd()) {
+		if (pMsg->wParam == VK_MENU)
+			m_bAltChord = false;
 		const bool Ctrl = ::GetKeyState(VK_CONTROL) < 0, Shift = ::GetKeyState(VK_SHIFT) < 0, Alt = ::GetKeyState(VK_MENU) < 0;
-		if (m_pImpl->KeyDown(static_cast<UINT>(pMsg->wParam), Ctrl, Shift, Alt))
+		if (m_pImpl->KeyDown(static_cast<UINT>(pMsg->wParam), Ctrl, Shift, Alt)) {
+			if (pMsg->message == WM_SYSKEYDOWN)
+				m_bAltChord = true;
 			return TRUE;
+		}
+	}
+	// The default window procedure opens the menu bar when Alt is let go and the last key it saw go down was Alt, as
+	// it was after an Alt+Up taken here when Alt went up before the arrow: that Alt goes no further
+	if ((pMsg->message == WM_SYSKEYUP || pMsg->message == WM_KEYUP) && pMsg->wParam == VK_MENU && m_bAltChord) {
+		m_bAltChord = false;
+		return TRUE;
 	}
 	return CWnd::PreTranslateMessage(pMsg);
 }

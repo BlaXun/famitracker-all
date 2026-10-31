@@ -915,7 +915,10 @@ triangle's and the samples' notes are left alone with a word why. Ctrl+Up/Down
 stay the instrument list's, Up/Down the transpose, and Alt and the arrows are
 no note keys, so they work with the pattern editor hidden too (the pattern
 editor's own Alt+Up/Down, `ID_CMD_STEP_UP`, no longer reach it from the
-piano roll). Effects >
+piano roll). Under Wine an Alt let go before the arrow opened the menu bar
+(the default window procedure's last key down was Alt, since the arrow's was
+taken), so the next arrow opened File: `CPianoRollWnd::PreTranslateMessage`
+keeps that Alt from it (`m_bAltChord`, from `feat-wine-fixes`). Effects >
 Volume has Louder and Softer (`FX_VOLUME_STEP`) over every volume 15-0
 (`Soft (6)` keeps its name for the exercises' texts), the one all the
 selected notes play at checked (`SelectedVolume`). The menu was for one

@@ -142,6 +142,7 @@ protected:
 private:
 	struct Impl;	// the notes, the view, editing and the drawing surface
 	Impl *m_pImpl;
+	bool m_bAltChord;	// an Alt+key went to the notes: the Alt let go after it opens no menu
 
 	CPianoRollWnd(const CPianoRollWnd &);
 	CPianoRollWnd &operator=(const CPianoRollWnd &);
