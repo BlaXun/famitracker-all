@@ -1645,6 +1645,31 @@ already scrolled sideways (`OnMouseWheel`). `RollHint` ends every tool's
 idle hint with both (`PAN_HINT`, `TestHints`), and the glossary's piano
 roll says the middle button moves around in it (`TestNewcomerTerms`).
 
+Channels in the piano roll (from `feat-roll-channels`, issue #10): beside
+the channel's name a button per channel (`BUTTON_CHIP` + channel, group 0
+of `FlowRollButtons`, so they flow and go under More as "Edit <name>"),
+its short name (`ShortChannelName` in `PianoRollUi.cpp`: P1, Tri, FM3) and
+a light in its notes' colour (`ChannelColor`). A click on the name edits
+the channel (`EditChannel`, from the cursor's row as the name's menu does);
+a click on the light (`CHIP_LIGHT` wide, `OnLight`) mutes or unmutes it and
+a double-click hears it alone, with the pattern editor's own mutes
+(`CFamiTrackerView::ToggleChannel` and `SoloChannel`, as a click and a
+double-click on its channel header), so the header, the mixer, Alt+F9/F10
+and the lights agree (`Poll` compares `MutedNow` with `MutedSeen`). A
+right-click on a button or on the name opens `ChannelMenu`: edit, hear,
+hear only it, hear every channel, and show its faint notes or not
+(`HiddenNotes`, per channel, not saved; `ShowsNotes` skips them in drawing
+and in `HitNote`, the bright channel always shows); a muted channel's faint
+notes are drawn fainter. Tab and Shift+Tab go to the next and the previous
+channel, round (`StepChannel`, `StepRollChannel`; the pattern editor's own
+Tab keys, no note key, so they work in its place too; Left/Right and
+Alt+Left/Right move selected notes, Ctrl+Left/Right change frames), as does the wheel over the buttons
+or the name (`OnMouseWheel`, without Ctrl or Shift); the status line says
+where they went (`ChannelSwitchText`) and over a button what its parts do
+(`ChannelButtonHint`, `HoverButton`, `HoverLight`). `RollHint` names Tab
+(`PAN_HINT`) and the glossary's piano roll the buttons;
+`TestChannelButtons` covers the portable part.
+
 Asking your own model (from `feat-ask-panel`): View > Ask (`ID_VIEW_ASK`,
 `Source/AskPanel.cpp`, a bar in `PlaceBottomPanel`'s row or on the right,
 after What next in `ArrangeBars`) asks the user's own model, any

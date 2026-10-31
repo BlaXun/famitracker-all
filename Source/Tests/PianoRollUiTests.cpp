@@ -328,6 +328,70 @@ void TestFaintHints()
 	CHECK(FaintNoteHint(ROLL_TOOL_SELECT, "Noise", "Pulse 1") == "Double-click to edit Noise");
 }
 
+// The channel buttons along the top (feat-roll-channels): short names, Tab going round, solo as the pattern editor's, and
+// what the status line says over each part of a button
+void TestChannelButtons()
+{
+	CHECK(ShortChannelName("Pulse 1") == "P1");
+	CHECK(ShortChannelName("Pulse 2") == "P2");
+	CHECK(ShortChannelName("Triangle") == "Tri");
+	CHECK(ShortChannelName("Noise") == "Noise");
+	CHECK(ShortChannelName("DPCM") == "DPCM");
+	CHECK(ShortChannelName("Sawtooth") == "Saw");
+	CHECK(ShortChannelName("FM Channel 3") == "FM3");
+	CHECK(ShortChannelName("Namco 8") == "N8");
+	CHECK(ShortChannelName("Square 3") == "S3");
+	CHECK(ShortChannelName("FDS") == "FDS");
+	CHECK(ShortChannelName("Soft 2") == "S2");		// the VRC6 Plus's soft layer
+	CHECK(ShortChannelName("") == "");
+	CHECK(ShortChannelName("  Pulse   1 ") == "P1");
+
+	CHECK(StepRollChannel(0, 5, 1) == 1);
+	CHECK(StepRollChannel(4, 5, 1) == 0);			// round from the last to the first
+	CHECK(StepRollChannel(0, 5, -1) == 4);			// and back
+	CHECK(StepRollChannel(2, 5, -7) == 0);
+	CHECK(StepRollChannel(3, 0, 1) == 0);
+	CHECK(StepRollChannel(0, 1, 1) == 0);
+
+	std::vector<bool> Muted(5, false);
+	CHECK(!HeardAlone(Muted, 0));
+	Muted[1] = Muted[2] = Muted[3] = Muted[4] = true;
+	CHECK(HeardAlone(Muted, 0));
+	CHECK(!HeardAlone(Muted, 1));					// muted itself
+	CHECK(!HeardAlone(Muted, -1) && !HeardAlone(Muted, 5));
+	CHECK(!HeardAlone(std::vector<bool>(1, false), 0));	// one channel is no solo
+
+	roll_channel_button_t B;
+	B.Name = "Pulse 2";
+	CHECK(Has(ChannelButtonHint(B), "Click to edit Pulse 2.") && Has(ChannelButtonHint(B), "Tab / Shift+Tab or the wheel here"));
+	CHECK(Has(ChannelButtonHint(B), "Right-click: mute, solo, hide its notes"));
+	B.Hidden = true;
+	CHECK(Has(ChannelButtonHint(B), "Its notes are hidden here."));
+	B.Edited = true;
+	CHECK(Has(ChannelButtonHint(B), "Editing Pulse 2.") && !Has(ChannelButtonHint(B), "hidden here"));	// the bright one shows
+	B.Muted = true;
+	CHECK(Has(ChannelButtonHint(B), "It's muted"));
+	B.OnLight = true;
+	CHECK(Has(ChannelButtonHint(B), "Pulse 2 is muted: click to hear it again, double-click to hear it alone."));
+	B.Muted = false;
+	CHECK(Has(ChannelButtonHint(B), "Click to mute Pulse 2 and hear the song without it, double-click to hear it alone."));
+	B.Alone = true;
+	CHECK(Has(ChannelButtonHint(B), "Pulse 2 plays alone") && Has(ChannelButtonHint(B), "hear every channel again"));
+	CHECK(Has(ChannelButtonHint(B), "Right-click for more."));
+
+	CHECK(ChannelSwitchText("2A03 Triangle", false) == "Editing 2A03 Triangle. Tab / Shift+Tab: next / previous channel.");
+	CHECK(Has(ChannelSwitchText("2A03 Noise", true), "(muted: you won't hear it)"));
+
+	// Every tool's idle hint names Tab, which is no note key: it works in the pattern editor's place too
+	for (int Typing = 0; Typing < 2; ++Typing)
+		for (int Tool = ROLL_TOOL_DRAW; Tool <= ROLL_TOOL_SELECT; ++Tool) {
+			roll_hint_t S;
+			S.TypesNotes = Typing != 0;
+			S.Tool = Tool;
+			CHECK(Has(RollHint(S), "Tab / Shift+Tab: next / previous channel."));
+		}
+}
+
 int main()
 {
 	TestFlow();
@@ -337,6 +401,7 @@ int main()
 	TestVolumeStepText();
 	TestStrongNotesRow();
 	TestFaintHints();
+	TestChannelButtons();
 	std::printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
 }

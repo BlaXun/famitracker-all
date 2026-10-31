@@ -126,6 +126,8 @@ const int KEY_SCALE_COUNT = sizeof(KEY_SCALES) / sizeof(KEY_SCALES[0]);
 // The buttons along the top (and an empty song's "Start from a groove" in the middle)
 enum button_t { BUTTON_CHANNEL, BUTTON_DRAW, BUTTON_PAINT, BUTTON_SELECT, BUTTON_GRID, BUTTON_KEY, BUTTON_SNAP, BUTTON_INSTRUMENT, BUTTON_EFFECTS,
 	BUTTON_CHORDS, BUTTON_GROOVE, BUTTON_CLIPS, BUTTON_CLOSE, BUTTON_GROOVE_HINT, BUTTON_MORE };
+const int BUTTON_CHIP = 100;			// + channel: a channel's button (its light mutes it, its name edits it)
+const int CHIP_LIGHT = 20;				// a channel button's light: its left end, this wide
 const int BUTTON_GAP = 4, GROUP_GAP = 12;	// between buttons, and between their groups
 const int MIN_GRID_HEIGHT = 48;			// the notes keep this much room: buttons past the rows that leave it go under More
 const TCHAR MORE_TEXT[] = _T("More");
@@ -160,6 +162,13 @@ const UINT MENU_GROOVE_MORE = 6200;		// Start from a groove's dialog
 const UINT MENU_MORE = 7000;			// + button_t: a button with no room along the top
 const UINT MENU_ROLES = 8000;			// chords with roles: on or off
 const UINT MENU_STRONG = 8001;			// strong notes on the beat: on or off
+const UINT MENU_CH_EDIT = 9000;			// a channel button's right-click menu: edit it...
+const UINT MENU_CH_HEAR = 9001;			// ...mute it or not...
+const UINT MENU_CH_ALONE = 9002;		// ...hear it alone...
+const UINT MENU_CH_HEAR_ALL = 9003;		// ...hear every channel...
+const UINT MENU_CH_SHOW = 9004;			// ...show its notes or not...
+const UINT MENU_CH_ONLY = 9005;			// ...the edited channel's notes only...
+const UINT MENU_CH_SHOW_ALL = 9006;		// ...every channel's notes
 
 // Chords with roles and strong notes on the beat (Api/ChordRoles.h), each a toggle kept for each profile (Profile.h): on at
 // first in the game music profile, off in Everything ([0] Everything's, [1] the game music profile's)
@@ -629,6 +638,8 @@ struct CPianoRollWnd::Impl {
 	int ScrollX;		// pixels
 	int ScrollY;
 	int Channel;		// the bright one, edited: the pattern editor cursor's
+	std::vector<bool> HiddenNotes;	// per channel: its faint notes aren't drawn (the channel buttons' right-click menu)
+	std::vector<bool> MutedSeen;	// per channel: muted (CFamiTrackerView::IsChannelMuted) at the last look
 	bool Placed;		// scrolled to the notes once
 	bool Shown;
 	bool Focused;
@@ -641,6 +652,8 @@ struct CPianoRollWnd::Impl {
 
 	// The mouse
 	int HoverChannel, HoverNote;
+	int HoverButton;					// BUTTON_CHANNEL or a channel's button (BUTTON_CHIP + channel) under the mouse, -1: none...
+	bool HoverLight;					// ...on a channel button's light
 	int PreviewChannel, PreviewPitch;	// a note being played, -1: none
 	DWORD PreviewUntil;					// when a note played by the keys stops, 0: when told
 	bool Panning;						// the middle button holds the view (StartPan)...
@@ -762,7 +775,7 @@ struct CPianoRollWnd::Impl {
 		HarmonyTrack(static_cast<unsigned int>(-1)), HarmonyStale(true), HarmonyDue(0), HoverChord(-1), MouseRow(-1), GameMusicShown(false),
 		Zoom(DEFAULT_ZOOM), ScrollX(0), ScrollY(0), Channel(0), Placed(false), Shown(false), Focused(false),
 		CursorFrame(-1), CursorRow(-1), CursorChannel(-1), Playing(false), PlayRow(-1),
-		HoverChannel(-1), HoverNote(-1), PreviewChannel(-1), PreviewPitch(-1), PreviewUntil(0), Panning(false),
+		HoverChannel(-1), HoverNote(-1), HoverButton(-1), HoverLight(false), PreviewChannel(-1), PreviewPitch(-1), PreviewUntil(0), Panning(false),
 		Tool(TOOL_DRAW), GridChoice(GRID_BEAT), Snap(false), LinkedClips(false), MessageTime(0), MessageMs(MESSAGE_MS),
 		Drag(DRAG_NONE), DragMoved(false), DragShift(false), DragAlt(false), EditKind(EDIT_NONE), SongRows(0), Previewing(false), PreviewRows(0),
 		EditStart(0), EditEnd(0), EditPitch(0), EditInstrument(-1), GrabStart(0), GrabRow(0.0), GrabPitch(0), GrabWasSelected(false),
@@ -870,6 +883,12 @@ struct CPianoRollWnd::Impl {
 			Groups.push_back(Group);
 		};
 		Add(BUTTON_CHANNEL, RecordingChannelName(pDoc, Channel), false, true, 0, ChannelColor(ChanIDs[static_cast<size_t>(Channel)], Channel));
+		// A button per channel beside it, in its notes' colour: its name edits it, its light mutes it (PianoRollUi.h)
+		for (size_t c = 0; c < ChanIDs.size(); ++c) {
+			const std::string Short = ShortChannelName(std::string(static_cast<LPCTSTR>(pDoc->GetChannel(static_cast<int>(c))->GetChannelName())));
+			Add(BUTTON_CHIP + static_cast<int>(c), CString(Short.c_str()), static_cast<int>(c) == Channel, false, 0,
+				ChannelColor(ChanIDs[c], static_cast<int>(c)));
+		}
 		Add(BUTTON_DRAW, _T("Draw"), Tool == TOOL_DRAW, false, 1, CLR_INVALID);
 		Add(BUTTON_PAINT, _T("Paint melody"), Tool == TOOL_PAINT, false, 1, CLR_INVALID);
 		Add(BUTTON_SELECT, _T("Select"), Tool == TOOL_SELECT, false, 1, CLR_INVALID);
@@ -1230,6 +1249,8 @@ struct CPianoRollWnd::Impl {
 		}
 		if (Channel >= Channels)
 			Channel = std::max(0, Channels - 1);
+		HiddenNotes.resize(static_cast<size_t>(Channels), false);
+		MutedSeen = MutedNow();
 
 		// Selected notes that are gone aren't selected any more
 		std::vector<int> Still;
@@ -1324,7 +1345,7 @@ struct CPianoRollWnd::Impl {
 		const int Row = RowAt(Point.x), Pitch = PitchAt(Point.y);
 		for (int Pass = 0; Pass < 2; ++Pass) {	// the bright channel first
 			for (size_t c = 0; c < Notes.size(); ++c) {
-				if ((static_cast<int>(c) == Channel) != (Pass == 0))
+				if ((static_cast<int>(c) == Channel) != (Pass == 0) || !ShowsNotes(static_cast<int>(c)))
 					continue;
 				const std::vector<RollNote> &List = Visible(static_cast<int>(c));
 				const int Index = NoteAt(List, Row);
@@ -1514,6 +1535,13 @@ struct CPianoRollWnd::Impl {
 				RangeKept = false;
 			Read();
 			UpdateScrollBars();
+			Changed = true;
+		}
+
+		// Channels muted or heard again elsewhere (the pattern editor's header, the mixer, Alt+F9): the buttons' lights
+		const std::vector<bool> Muted = MutedNow();
+		if (Muted != MutedSeen) {
+			MutedSeen = Muted;
 			Changed = true;
 		}
 
@@ -2125,12 +2153,21 @@ struct CPianoRollWnd::Impl {
 		DragShift = Shift;
 		DragAlt = AltHeld();
 
-		if (!Right) {
-			const int Id = HitButton(Point);
-			if (Id >= 0) {
-				Press(Id);
-				return;
-			}
+		const int Id = HitButton(Point);
+		if (Id >= BUTTON_CHIP && !Right && OnLight(Id, Point)) {
+			ToggleHeard(Id - BUTTON_CHIP, false);	// a channel button's light: on or off
+			return;
+		}
+		if (!Right && Id >= 0) {
+			Press(Id);
+			return;
+		}
+		if (Right && (Id >= BUTTON_CHIP || Id == BUTTON_CHANNEL)) {
+			// A channel's button or name: edit, mute, solo, hide its notes
+			CPoint Screen = Point;
+			pWnd->ClientToScreen(&Screen);
+			ChannelMenu(Id == BUTTON_CHANNEL ? Channel : Id - BUTTON_CHIP, Screen);
+			return;
 		}
 		if (Notes.empty())
 			return;
@@ -2464,6 +2501,11 @@ struct CPianoRollWnd::Impl {
 		// notes: the Effects menu for it
 		int HitChannel = -1, HitIndex = -1;
 		Layout();
+		const int Id = HitButton(Point);
+		if (Id >= BUTTON_CHIP && OnLight(Id, Point)) {
+			ToggleHeard(Id - BUTTON_CHIP, true);	// its first click turned it off or on: now it alone, as the pattern editor does
+			return;
+		}
 		const bool Free = Drag == DRAG_NONE && PlacingClip < 0;
 		if (Free && Faint.Channel >= 0 && Faint.Channel < static_cast<int>(Notes.size())) {
 			const FaintClick Click = Faint;
@@ -2523,6 +2565,14 @@ struct CPianoRollWnd::Impl {
 		if (HoverCh != HoverChannel || Note != HoverNote) {
 			HoverChannel = HoverCh;
 			HoverNote = Note;
+			pWnd->Invalidate(FALSE);
+		}
+		const int Id = HitButton(Point);
+		const int Over = (Id >= BUTTON_CHIP || Id == BUTTON_CHANNEL) ? Id : -1;
+		const bool Light = Over >= BUTTON_CHIP && OnLight(Over, Point);
+		if (Over != HoverButton || Light != HoverLight) {
+			HoverButton = Over;
+			HoverLight = Light;
 			pWnd->Invalidate(FALSE);
 		}
 		const int Section = !Ruler.PtInRect(Point) ? -1 : Sections.empty() ? -2 :
@@ -2694,6 +2744,14 @@ struct CPianoRollWnd::Impl {
 		case VK_RIGHT:
 			if (!Selection.empty() && !Ctrl) {
 				Nudge(Key == VK_RIGHT ? 1 : -1, Alt);
+				Done = true;
+			}
+			break;
+		case VK_TAB:
+			// The next channel (Shift: the previous), as Tab goes through them in the pattern editor; no note key, so it
+			// works in the pattern editor's place too
+			if (!Ctrl && !Alt) {
+				StepChannel(Shift ? -1 : 1);
 				Done = true;
 			}
 			break;
@@ -3618,6 +3676,130 @@ struct CPianoRollWnd::Impl {
 		Say(Text);
 	}
 
+	// The channels: which is edited, which are heard (the pattern editor's mutes) and whose notes show
+
+	bool IsMuted(int Which) const
+	{
+		const CFamiTrackerView *pView = View();
+		return pView != NULL && Which >= 0 && Which < MAX_CHANNELS && pView->IsChannelMuted(static_cast<unsigned int>(Which));
+	}
+
+	std::vector<bool> MutedNow() const
+	{
+		std::vector<bool> Muted;
+		for (size_t c = 0; c < Notes.size(); ++c)
+			Muted.push_back(IsMuted(static_cast<int>(c)));
+		return Muted;
+	}
+
+	// Another channel's notes are drawn (faint) and answer the mouse unless they're hidden; the bright one's always are
+	bool ShowsNotes(int Which) const
+	{
+		return Which == Channel || Which < 0 || static_cast<size_t>(Which) >= HiddenNotes.size() || !HiddenNotes[static_cast<size_t>(Which)];
+	}
+
+	// Edits Which from the cursor's row on, as the channel menu does
+	void EditChannel(int Which)
+	{
+		if (Which < 0 || Which >= static_cast<int>(Notes.size()) || Which == Channel || Drag != DRAG_NONE)
+			return;
+		GoTo(Which, std::max(0, CursorFrame) * static_cast<int>(Length) + std::max(0, CursorRow));
+	}
+
+	// Tab, Shift+Tab and the wheel over the channel buttons: the next or the previous channel, round
+	void StepChannel(int Step)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL || Notes.empty() || Drag != DRAG_NONE)
+			return;
+		EditChannel(StepRollChannel(Channel, static_cast<int>(Notes.size()), Step));
+		Say(CString(ChannelSwitchText(std::string(static_cast<LPCTSTR>(RecordingChannelName(pDoc, Channel))), IsMuted(Channel)).c_str()));
+		pWnd->Invalidate(FALSE);
+	}
+
+	// A channel button's light: on and off, as a click on the pattern editor's channel header (a double-click: alone)
+	void ToggleHeard(int Which, bool Alone)
+	{
+		CFamiTrackerView *pView = View();
+		if (pView == NULL || Which < 0 || Which >= static_cast<int>(Notes.size()))
+			return;
+		if (Alone)
+			pView->SoloChannel(static_cast<unsigned int>(Which));
+		else
+			pView->ToggleChannel(static_cast<unsigned int>(Which));
+		MutedSeen = MutedNow();
+		pWnd->Invalidate(FALSE);
+	}
+
+	// On a channel button's light?
+	bool OnLight(int Id, CPoint Point) const
+	{
+		for (size_t i = 0; i < Buttons.size(); ++i)
+			if (Buttons[i].Id == Id && Id >= BUTTON_CHIP)
+				return Point.x < Buttons[i].Rect.left + SX(CHIP_LIGHT);
+		return false;
+	}
+
+	// A right-click on a channel's button (or the channel's name): edit it, hear it or not, alone, show its notes or not
+	void ChannelMenu(int Which, CPoint Screen)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL || Which < 0 || Which >= static_cast<int>(Notes.size()))
+			return;
+		const CString Name = RecordingChannelName(pDoc, Which);
+		const std::vector<bool> Muted = MutedNow();
+		bool AnyMuted = false, AnyHidden = false;
+		for (size_t c = 0; c < Muted.size(); ++c) {
+			AnyMuted = AnyMuted || Muted[c];
+			AnyHidden = AnyHidden || (c < HiddenNotes.size() && HiddenNotes[c]);
+		}
+		const bool Edited = Which == Channel;
+		CMenu Menu;
+		Menu.CreatePopupMenu();
+		Menu.AppendMenu(MF_STRING | (Edited ? MF_CHECKED | MF_GRAYED : 0), MENU_CH_EDIT, Edited ? _T("Editing ") + Name : _T("Edit ") + Name);
+		Menu.AppendMenu(MF_SEPARATOR);
+		Menu.AppendMenu(MF_STRING | (Muted[static_cast<size_t>(Which)] ? 0 : MF_CHECKED), MENU_CH_HEAR, _T("Hear ") + Name);
+		Menu.AppendMenu(MF_STRING | (HeardAlone(Muted, Which) ? MF_CHECKED : 0) | (Muted.size() < 2 ? MF_GRAYED : 0), MENU_CH_ALONE,
+			_T("Hear only ") + Name);
+		Menu.AppendMenu(MF_STRING | (AnyMuted ? 0 : MF_GRAYED), MENU_CH_HEAR_ALL, _T("Hear every channel"));
+		Menu.AppendMenu(MF_SEPARATOR);
+		Menu.AppendMenu(MF_STRING | (ShowsNotes(Which) || Edited ? MF_CHECKED : 0) | (Edited ? MF_GRAYED : 0), MENU_CH_SHOW,
+			Edited ? _T("Show its notes here (the channel you edit always shows)") : _T("Show its notes here"));
+		Menu.AppendMenu(MF_STRING, MENU_CH_ONLY, _T("Show only the notes of the channel you edit"));
+		Menu.AppendMenu(MF_STRING | (AnyHidden ? 0 : MF_GRAYED), MENU_CH_SHOW_ALL, _T("Show every channel's notes"));
+		const UINT Choice = Menu.TrackPopupMenu(TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+			Screen.x, Screen.y, pWnd);
+		HiddenNotes.resize(Notes.size(), false);
+		CFamiTrackerView *pView = View();
+		switch (Choice) {
+		case MENU_CH_EDIT:
+			EditChannel(Which);
+			break;
+		case MENU_CH_HEAR:
+			ToggleHeard(Which, false);
+			break;
+		case MENU_CH_ALONE:
+			ToggleHeard(Which, true);
+			break;
+		case MENU_CH_HEAR_ALL:
+			if (pView != NULL)
+				pView->UnmuteAllChannels();
+			MutedSeen = MutedNow();
+			break;
+		case MENU_CH_SHOW:
+			HiddenNotes[static_cast<size_t>(Which)] = !HiddenNotes[static_cast<size_t>(Which)];
+			break;
+		case MENU_CH_ONLY:
+			HiddenNotes.assign(Notes.size(), true);
+			break;
+		case MENU_CH_SHOW_ALL:
+			HiddenNotes.assign(Notes.size(), false);
+			break;
+		}
+		HoverChannel = HoverNote = -1;
+		pWnd->Invalidate(FALSE);
+	}
+
 	// The buttons along the top
 
 	CPoint Below(int Id) const
@@ -3644,12 +3826,18 @@ struct CPianoRollWnd::Impl {
 	{
 		CMenu Menu;
 		Menu.CreatePopupMenu();
-		for (size_t i = 0; i < Overflow.size(); ++i)
-			Menu.AppendMenu(MF_STRING | (Overflow[i].Pressed ? MF_CHECKED : 0), MENU_MORE + Overflow[i].Id, Overflow[i].Text);
+		CFamiTrackerDoc *pDoc = Doc();
+		for (size_t i = 0; i < Overflow.size(); ++i) {
+			// A channel's button: edit it, by its full name
+			const int Chip = Overflow[i].Id - BUTTON_CHIP;
+			const CString Text = (Chip >= 0 && Chip < static_cast<int>(ChanIDs.size()) && pDoc != NULL) ?
+				_T("Edit ") + RecordingChannelName(pDoc, Chip) + (IsMuted(Chip) ? _T(" (muted)") : _T("")) : Overflow[i].Text;
+			Menu.AppendMenu(MF_STRING | (Overflow[i].Pressed ? MF_CHECKED : 0), MENU_MORE + Overflow[i].Id, Text);
+		}
 		Menu.AppendMenu(MF_SEPARATOR);
 		Menu.AppendMenu(MF_STRING | MF_GRAYED, 0, _T("A taller piano roll has room for them along its top"));
 		const int Choice = PopUp(Menu, BUTTON_MORE);
-		if (Choice >= static_cast<int>(MENU_MORE) && Choice < static_cast<int>(MENU_MORE) + BUTTON_MORE)
+		if (Choice >= static_cast<int>(MENU_MORE) && Choice < static_cast<int>(MENU_MORE) + BUTTON_CHIP + MAX_CHANNELS)
 			Press(Choice - static_cast<int>(MENU_MORE));
 	}
 
@@ -3665,13 +3853,18 @@ struct CPianoRollWnd::Impl {
 		CFamiTrackerDoc *pDoc = Doc();
 		if (pDoc == NULL)
 			return;
+		if (Id >= BUTTON_CHIP && Id < BUTTON_CHIP + static_cast<int>(ChanIDs.size())) {
+			EditChannel(Id - BUTTON_CHIP);
+			pWnd->Invalidate(FALSE);
+			return;
+		}
 		switch (Id) {
 		case BUTTON_CHANNEL: {
 			CMenu Menu;
 			Menu.CreatePopupMenu();
 			for (size_t c = 0; c < ChanIDs.size(); ++c)
 				Menu.AppendMenu(MF_STRING | (static_cast<int>(c) == Channel ? MF_CHECKED : 0), MENU_CHANNEL + c,
-					RecordingChannelName(pDoc, static_cast<int>(c)));
+					RecordingChannelName(pDoc, static_cast<int>(c)) + (IsMuted(static_cast<int>(c)) ? _T(" (muted)") : _T("")));
 			const int Choice = PopUp(Menu, Id);
 			if (Choice >= static_cast<int>(MENU_CHANNEL) && Choice < static_cast<int>(MENU_CHANNEL + ChanIDs.size()))
 				GoTo(Choice - static_cast<int>(MENU_CHANNEL), CursorFrame * static_cast<int>(Length) + CursorRow);
@@ -3950,6 +4143,18 @@ struct CPianoRollWnd::Impl {
 	{
 		// (and the line of the section it pointed at on the ruler goes from the status line: SongShapeDlg.h)
 		bool Left = false;
+		if (HoverButton != -1) {
+			// (and a channel button's line, when the mouse left the buttons)
+			CPoint Point;
+			::GetCursorPos(&Point);
+			const bool Here = ::WindowFromPoint(Point) == pWnd->GetSafeHwnd();
+			pWnd->ScreenToClient(&Point);
+			if (!Here || HitButton(Point) != HoverButton) {
+				HoverButton = -1;
+				HoverLight = false;
+				Left = true;
+			}
+		}
 		if (HoverSection != -1 && Drag == DRAG_NONE) {
 			CPoint Point;
 			::GetCursorPos(&Point);
@@ -4098,6 +4303,21 @@ struct CPianoRollWnd::Impl {
 		default:
 			break;
 		}
+		if (HoverButton == BUTTON_CHANNEL)
+			return _T("Editing ") + RecordingChannelName(pDoc, Channel) + _T(". Click for the list of channels; Tab / Shift+Tab or the wheel ")
+				_T("here: next / previous channel. Right-click: mute, solo, hide notes.");
+		if (HoverButton >= BUTTON_CHIP && HoverButton - BUTTON_CHIP < static_cast<int>(Notes.size())) {
+			// A channel's button (PianoRollUi.h)
+			const int Which = HoverButton - BUTTON_CHIP;
+			roll_channel_button_t Chip;
+			Chip.Name = std::string(static_cast<LPCTSTR>(RecordingChannelName(pDoc, Which)));
+			Chip.Edited = Which == Channel;
+			Chip.Muted = IsMuted(Which);
+			Chip.Alone = HeardAlone(MutedNow(), Which);
+			Chip.Hidden = static_cast<size_t>(Which) < HiddenNotes.size() && HiddenNotes[static_cast<size_t>(Which)];
+			Chip.OnLight = HoverLight;
+			return CString(ChannelButtonHint(Chip).c_str());
+		}
 		if (HoverSection >= 0 && HoverSection < static_cast<int>(Sections.size()))
 			return SectionHoverLine(pDoc, Track, HoverSection);
 		if (HoverSection == -2)
@@ -4178,8 +4398,54 @@ struct CPianoRollWnd::Impl {
 
 	// Drawing
 
+	// A channel's button: its light at the left, lit in its notes' colour while it's heard, dark with a line across while
+	// it's muted; the edited channel's pressed; a channel whose notes are hidden has its name dimmed and struck through
+	void DrawChannelButton(CDC &dc, const Button &Which)
+	{
+		const CSettings *pSettings = theApp.GetSettings();
+		const COLORREF Back_ = pSettings->Appearance.iColBackground, TextColor = pSettings->Appearance.iColPatternText;
+		const CRect &Rect = Which.Rect;
+		const int Chan = Which.Id - BUTTON_CHIP;
+		const bool Muted = IsMuted(Chan), Hidden = !ShowsNotes(Chan);
+		const bool Hot = HoverButton == Which.Id;
+		COLORREF Face = Which.Pressed ? Mix(Back_, pSettings->Appearance.iColCursor, 0.45) : Mix(Back_, TextColor, Muted ? 0.10 : 0.20);
+		if (Hot && !Which.Pressed)
+			Face = Mix(Face, TextColor, 0.08);
+		dc.FillSolidRect(&Rect, Face);
+		Outline(dc, Rect, Which.Pressed ? Which.Swatch : Mix(Back_, TextColor, 0.42));
+		// The light
+		const int Size_ = SY(10), LightX = Rect.left + (SX(CHIP_LIGHT) - Size_) / 2 + 1, LightY = Rect.top + (Rect.Height() - Size_) / 2;
+		const CRect Light(LightX, LightY, LightX + Size_, LightY + Size_);
+		if (Hot && HoverLight)
+			Outline(dc, CRect(Light.left - 2, Light.top - 2, Light.right + 2, Light.bottom + 2), TextColor);
+		if (Muted) {
+			dc.FillSolidRect(&Light, Mix(Back_, RGB(0, 0, 0), 0.3));
+			Outline(dc, Light, Mix(Back_, Which.Swatch, 0.6));
+			CPen Pen(PS_SOLID, std::max(1, SX(1)), Mix(Back_, TextColor, 0.75));
+			CPen *pOldPen = dc.SelectObject(&Pen);
+			dc.MoveTo(Light.left - 1, Light.bottom);
+			dc.LineTo(Light.right + 1, Light.top - 2);
+			dc.SelectObject(pOldPen);
+		}
+		else
+			dc.FillSolidRect(&Light, Which.Swatch);
+		// The name
+		dc.SetTextColor(Muted || Hidden ? Mix(Face, TextColor, 0.55) : TextColor);
+		CRect Label(Rect.left + SX(CHIP_LIGHT) + SX(1), Rect.top, Rect.right - SX(4), Rect.bottom);
+		dc.DrawText(Which.Text, &Label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		if (Hidden) {
+			const CSize Wide = dc.GetTextExtent(Which.Text);
+			dc.FillSolidRect(Label.left, Rect.top + Rect.Height() / 2, std::min(static_cast<int>(Wide.cx), Label.Width()), 1,
+				Mix(Face, TextColor, 0.55));
+		}
+	}
+
 	void DrawButton(CDC &dc, const Button &Which)
 	{
+		if (Which.Id >= BUTTON_CHIP) {
+			DrawChannelButton(dc, Which);
+			return;
+		}
 		const CSettings *pSettings = theApp.GetSettings();
 		const COLORREF Back_ = pSettings->Appearance.iColBackground, TextColor = pSettings->Appearance.iColPatternText;
 		const CRect &Rect = Which.Rect;
@@ -4568,11 +4834,13 @@ struct CPianoRollWnd::Impl {
 		for (int Pass = 0; Pass < 2; ++Pass) {
 			for (size_t c = 0; c < Notes.size(); ++c) {
 				const bool Bright = static_cast<int>(c) == Channel;
-				if (Bright != (Pass == 1))
+				if (Bright != (Pass == 1) || !ShowsNotes(static_cast<int>(c)))
 					continue;
+				// (a muted channel's faint notes fainter still)
+				const bool Quiet = !Bright && IsMuted(static_cast<int>(c));
 				const COLORREF Full = ChannelColor(ChanIDs[c], static_cast<int>(c));
-				const COLORREF Fill = Bright ? Full : Mix(Back_, Full, 0.38);
-				const COLORREF Edge = Bright ? Mix(Full, RGB(0, 0, 0), 0.45) : Mix(Back_, Full, 0.55);
+				const COLORREF Fill = Bright ? Full : Mix(Back_, Full, Quiet ? 0.20 : 0.38);
+				const COLORREF Edge = Bright ? Mix(Full, RGB(0, 0, 0), 0.45) : Mix(Back_, Full, Quiet ? 0.32 : 0.55);
 				CPen EffectPen(PS_SOLID, 1, Edge);
 				CPen *pOldPen = dc.SelectObject(&EffectPen);
 				const std::vector<RollNote> &List = Visible(static_cast<int>(c));
@@ -5070,6 +5338,14 @@ BOOL CPianoRollWnd::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 	int Notches = zDelta / WHEEL_DELTA;
 	if (Notches == 0)
 		Notches = zDelta > 0 ? 1 : -1;
+	CPoint Inside = pt;
+	ScreenToClient(&Inside);
+	const int Over = d.HitButton(Inside);
+	if ((Over >= BUTTON_CHIP || Over == BUTTON_CHANNEL) && (nFlags & (MK_CONTROL | MK_SHIFT)) == 0) {
+		// Over the channel's name or the channel buttons: the previous channel (up) or the next (down)
+		d.StepChannel(Notches > 0 ? -1 : 1);
+		return TRUE;
+	}
 	if (nFlags & MK_CONTROL) {
 		// Zoom in or out around the row under the mouse
 		ScreenToClient(&pt);
