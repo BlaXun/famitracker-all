@@ -2343,6 +2343,23 @@ festive, mysterious, floating, playful, cozy, adventure; a fight's words
 stay action, and "market day", "the ending" count as pairs (`Pairs`).
 `TestLaterKinds` tests the order.
 
+Melancholic and atmospheric (from `feat-cozy-kind`, its fourth commit):
+melancholic is openly sad (grief, loneliness, rain: minor or dorian, 75
+BPM, a breath lead, lush chords, calm's style, -22; it may stay minor), and
+chosen only by sadness's own words (`KIND_WORDS`: sad, grief, lonely, tears,
+the pairs "abandoned home", "rainy day"...), never by a place's neglect (a
+cozy, run-down hut stays cozy). Atmospheric is texture over tune (drones,
+slow pads, sparse motifs: a pedal bass, lush chords, 75 BPM, the night's
+shape, -22) with a style of its own: `atmospheric` (`StyleArg` gives calm's,
+`TextureArg` and `Session::Texture` leave out what asks for a lead:
+`PhrasesFinding` in `ArrangeFindings`, the review's breath tips and
+`listen`'s covered melody, as a cue's checks leave out a loop's); what_next
+passes it to check_song, the review, polish and its listen step, and
+finish_song to its listen. A pair of words counts twice in `KIND_WORDS`
+("eerie silence" is atmospheric, "eerie" alone mysterious); the order on a
+tie is tense, bittersweet, melancholic, festive, mysterious, atmospheric,
+floating, playful, cozy, adventure.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

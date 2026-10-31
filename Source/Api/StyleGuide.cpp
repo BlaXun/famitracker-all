@@ -545,6 +545,32 @@ const Section SECTIONS[] = {
 		"then steps down (kind stepped lead).\n"
 		"- Soft drums or ticking hats: add_drums groove calm with intensity light.\n"
 		"- polish and mix style soft. export_for_game at -20 LUFS." },
+	{ "melancholic", "Melancholic (grief, loneliness, rain, an abandoned home: openly sad, when asked for)",
+		"melancholic sad sorrow grief mourning lonely loneliness tears rain abandoned lost lament",
+		"Openly sad, only when sadness is asked for (a run-down place isn't sad by itself: a cozy, run-down hut stays cozy). "
+		"The melancholy topic has the classic laments' figures; this is the recipe:\n"
+		"- Minor, natural or dorian (A minor, D dorian, E minor); it may stay minor all through, unlike bittersweet, which "
+		"borrows its sadness from a major key. i-III-VII-v, a bass that steps down.\n"
+		"- Slow: 60-80 BPM (75 is speed 12, 69.2 speed 13, at tempo 150).\n"
+		"- A singing tune: long notes, sighs (a falling second, the upper note on the beat) at the phrases' ends, a slow climb "
+		"to one high note a section, 1-3 notes a bar; a lead that breathes in (design_instrument kind breath).\n"
+		"- Sparse soft chords: lush at arp_frames 3, color plain, a bass of held roots or half bars.\n"
+		"- No drums, or a very soft tick in one section; an echo far behind in the repeat.\n"
+		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -22 LUFS." },
+	{ "atmospheric", "Atmospheric (texture over tune: vast, empty, alien places, the deep)",
+		"atmospheric atmosphere ambient ambience texture vast empty void alien abyss deep drone metroid",
+		"Texture over tune, as Metroid's caverns are: the place is the music.\n"
+		"- Minor, modal or ambiguous: E minor, D dorian, A minor; chords that change slowly (a chord for two bars), a drone "
+		"under them (bass_style pedal).\n"
+		"- 60-90 BPM (75 is speed 12 at tempo 150); long sections, a loose form (the night shape's variants, song_shape "
+		"with add or bars).\n"
+		"- Slow-changing pads (chord_style lush, arp_frames 3-4, color plain), sparse motifs of 2-4 notes far apart (a bar or "
+		"two of rests between them) rather than a tune to hum; a lead that breathes in (kind breath).\n"
+		"- An echo a beat or two behind, Space on the pads and the motifs (set_mixer room cave or hall).\n"
+		"- Quiet, irregular percussion or none: a soft tick now and then on the noise, a low thump.\n"
+		"- Its own style, atmospheric: calm's polish, mix and checks without the ones that ask for a lead (check_song's "
+		"phrases, the review's breaths, listen's covered melody), as a cue's checks leave out a loop's. export_for_game at "
+		"-22 LUFS." },
 	{ "action", "Action: battles, bosses and chases (punchy and driving)",
 		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
 		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"

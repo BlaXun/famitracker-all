@@ -109,7 +109,8 @@ private:
 // The kinds of song what_next follows, as get_recipe has them; general when
 // none is given and the track's name doesn't say calm (append only)
 enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION, NEXT_COZY, NEXT_MYSTERIOUS, NEXT_ADVENTURE, NEXT_FLOATING,
-	NEXT_PLAYFUL, NEXT_FESTIVE, NEXT_BITTERSWEET, NEXT_TENSE, NEXT_KIND_COUNT };
+	NEXT_PLAYFUL, NEXT_FESTIVE, NEXT_BITTERSWEET, NEXT_TENSE, NEXT_MELANCHOLIC,
+	NEXT_ATMOSPHERIC, NEXT_KIND_COUNT };
 
 struct NextKind {
 	int Kind;					// next_kind
@@ -123,7 +124,8 @@ struct NextKind {
 	const char *MovingBass;
 	const char *Groove;			// add_drums's; "" for none (calm)
 	const char *MixStyle;		// mix's
-	const char *Style;			// check_song's, review_arrangement's and polish's: "calm", "lively" or "any"
+	const char *Style;			// check_song's, review_arrangement's and polish's: "calm", "lively", "any" or "atmospheric"
+								// (calm's, the checks asking for no lead: TextureArg in Tools.cpp)
 	double Loudness;			// export_for_game's, in LUFS
 	const char *Keys[3];		// a new song's key, one of these (by its name)
 	// The kinds after cozy (feat-cozy-kind) say the rest here, so what_next, finish_song and the recipes need no code of

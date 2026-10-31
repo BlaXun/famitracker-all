@@ -448,7 +448,7 @@ const SongShape &ShapeForKind(const std::string &Kind)
 	const std::string Word = Lower(Trimmed(Kind));
 	// (the later kinds: their words' own shape, KIND_WORDS' first)
 	const char *Id = Word == "lively" || Word == "adventure" || Word == "festive" ? "stage" : Word == "calm" || Word == "mysterious" ||
-		Word == "floating" || Word == "bittersweet" ? "night" : Word == "action" ? "boss" : Word == "playful" ? "small" :
+		Word == "floating" || Word == "bittersweet" || Word == "melancholic" || Word == "atmospheric" ? "night" : Word == "action" ? "boss" : Word == "playful" ? "small" :
 		"town";	// (cozy, tense: town)
 	const SongShape *pShape = ShapeById(Id);
 	return pShape != 0 ? *pShape : SongShapes()[0];
@@ -1208,18 +1208,24 @@ struct KindWordRow {
 };
 
 // Their order on a tie, documented in CLAUDE.md: tense (sneaking outweighs the place it happens in), bittersweet (a
-// farewell anywhere), festive (a festival in a town), mysterious, floating ("Waiting for the Airship"), cozy ("Hut in a
-// Field"), adventure; playful before cozy ("a toy shop") and after floating
+// farewell anywhere), melancholic (only sadness's own words, never neglect's: a run-down hut stays cozy), festive (a
+// festival in a town), mysterious, atmospheric (after it: "eerie" alone is a cave's, "eerie silence" a pair, which counts
+// twice), floating ("Waiting for the Airship"), playful ("a toy shop"), cozy ("Hut in a Field"), adventure
 const KindWordRow KIND_WORDS[] = {
 	{ "tense", "tense", "tense tension sneak sneaks sneaking sneaky stealth stealthy guard guards guarded prison prisons jail "
 		"lurk lurking lurks watched spy spies infiltrate infiltration hiding", 0, 0, "town night", false, 0 },
 	{ "bittersweet", "bittersweet", "bittersweet farewell farewells goodbye goodbyes memory memories memorial sunset sunsets "
 		"endings grave graves parting nostalgia nostalgic", " the ending, an ending, game ending,", 0, "night town", true, 0 },
+	{ "melancholic", "melancholic", "sad sadness sorrow sorrowful grief grieving mourning mourn mournful lonely loneliness "
+		"tears tearful weeping crying melancholy melancholic heartbroken lament", " abandoned home, abandoned house, lost friend, "
+		"rain soaked, rainy day,", 0, "night town", true, 0 },
 	{ "festive", "festive", "festive festival festivals fair fairs fairground celebration celebrations celebrate party parties "
 		"holiday holidays carnival parade feast", " market day,", 0, "stage town", false, 0 },
 	{ "mysterious", "mysterious", "mystery mysteries mysterious mystic cave caves cavern caverns sewer sewers ruin ruins crypt "
 		"crypts catacomb catacombs tomb tombs mine mines eerie hidden secret secrets forgotten labyrinth underground grotto", 0, 0,
 		"night town", true, 0 },
+	{ "atmospheric", "atmospheric", "ambient atmosphere atmospheric ambience vast empty void alien abyss deep", " eerie silence,",
+		0, "night town", true, 0 },
 	{ "floating", "floating", "float floats floating floaty afloat sky skies cloud clouds underwater drift drifting waiting wait "
 		"dock docks pier lagoon dawn", 0, 0, "night town", true, 0 },
 	{ "playful", "playful", "playful minigame minigames game games toy toys silly funny clown clowns goofy cheeky circus prank "
@@ -1311,6 +1317,7 @@ ShapeWords ReadShapeWords(const std::string &About, bool Name)
 	const bool Fight = pAsked != 0 && ((pAsked->Id == "boss" && !IsGentle) || pAsked->Id == "jingle");
 	const KindWordRow *pBest = 0;
 	std::vector<std::string> Said;
+	int Best = 0;
 	for (size_t k = 0; k < sizeof(KIND_WORDS) / sizeof(KIND_WORDS[0]) && !Fight; ++k) {
 		const KindWordRow &Row = KIND_WORDS[k];
 		const std::string Kind = Row.Kind;
@@ -1329,7 +1336,12 @@ ShapeWords ReadShapeWords(const std::string &About, bool Name)
 			if ((std::string(" ") + Row.Pairs + ",").find(Pair) != std::string::npos && !Negated(Words, i))
 				Found.push_back(Words[i] + " " + Words[i + 1]);
 		}
-		if (Found.size() > Said.size()) {
+		// (a pair counts twice: it says more than either word)
+		int Score = static_cast<int>(Found.size());
+		for (size_t f = 0; f < Found.size(); ++f)
+			Score += Found[f].find(' ') != std::string::npos ? 1 : 0;
+		if (Score > Best) {
+			Best = Score;
 			Said = Found;
 			pBest = &Row;
 		}

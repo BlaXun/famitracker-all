@@ -379,6 +379,7 @@ public:
 	SongInfo Song;
 	Timing Time;
 	std::vector<std::string> Remarks;	// told along with the result
+	bool Texture = false;	// style atmospheric (TextureArg): a track of texture over tune, whose checks don't ask for a lead
 
 private:
 	void Unhide()
@@ -2094,7 +2095,18 @@ int StyleArg(const Json &Args)
 		return STYLE_LIVELY;
 	if (Word == "any" || Word == "none" || Word == "normal")
 		return STYLE_ANY;
-	throw Problem("style should be any or calm (also \"ambient\"), or lively.");
+	if (Word == "atmospheric" || Word == "texture")
+		return STYLE_CALM;	// (calm's, and TextureArg: the checks that expect a lead leave it alone)
+	throw Problem("style should be any or calm (also \"ambient\"), lively, or atmospheric (calm's, without asking for a lead).");
+}
+
+// style atmospheric: a track of texture over tune (Metroid's ambience: drones, slow pads, sparse motifs), checked as calm
+// but without what asks for a lead: the melody's phrases (check_song's phrases), its breaths (the review's tip) and the
+// melody covered (listen), as a cue's or a sound effect's checks leave out what music asks for
+bool TextureArg(const Json &Args)
+{
+	const std::string Word = Arg(Args, "style") != 0 ? Squeezed(StringArg(Args, "style")) : std::string();
+	return Word == "atmospheric" || Word == "texture";
 }
 
 // Changes go into the song, or become a clip
@@ -15686,7 +15698,8 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	if (Use.Use != TRACK_MUSIC || S.Song.Speed == 1)
 		return Out;	// a cue, a sound effect, or ambience written a row a tick
 	const bool Calm = Style == STYLE_CALM;
-	PhrasesFinding(S, Melody, From, To, Out);
+	if (!S.Texture)
+		PhrasesFinding(S, Melody, From, To, Out);
 	BassFindings(S, Melody, From, To, Calm, K, Out);
 	SoundFindings(S, From, To, Out);
 	FadersFinding(S, Ears, Melody, From, To, Calm, Out);
@@ -15929,6 +15942,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 	// lively stage's are heard as stages that bounce without pressing want them. Calm when asked, or when the track's
 	// name says so
 	const TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "reviews it as a calm track", "any");
+	S.Texture = TextureArg(Args);
 	const bool Calm = Chosen.Style == STYLE_CALM, Lively = Chosen.Style == STYLE_LIVELY;
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
 	if (Form != "text" && Form != "short")
@@ -16402,7 +16416,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 		if (Lengths.size() <= 2 && Tune.size() >= 8 && !Calm)
 			Tip(1.0, "The melody keeps one or two note lengths: mix long and short notes (a dotted rhythm, a held note "
 				"at each phrase end, a run of quick notes) with write_notes.");
-		if (Rests == 0 && BarCount >= 8)
+		if (S.Texture)
+			;	// (style atmospheric: a texture's motifs, not a sung line, so no tip about its breaths)
+		else if (Rests == 0 && BarCount >= 8)
 			Tip(1.0, "The melody never rests: a breath of a beat or two between phrases (every 2 or 4 bars) helps it "
 				"sound sung, and leaves room for a counter-melody to answer.");
 		else if (Phrases && Breaths.Breaths < (Calm ? CALM_BREATHING_SHARE : BREATHING_SHARE) * Breaths.Spans && !PiecesFound) {
@@ -23448,6 +23464,8 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 		else {
 			Json A = Json::MakeObject();
 			A.Set("format", "json");
+			if (std::string(Recipe.Style) == "atmospheric")
+				A.Set("style", "atmospheric");
 			WithMelody(A);
 			try {
 				ListenTool(Step, A, &Heard);
@@ -25383,7 +25401,11 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 	if (Form != "text" && Form != "short" && Form != "json")
 		throw Problem("format: text (the default: every finding with what's heard and its fix), short (the counts and the three "
 			"findings heard worst, with their calls) or json.");
-	const ListenReport R = ListenToTrack(S, Args);
+	ListenReport R = ListenToTrack(S, Args);
+	// style atmospheric: a texture's motifs aren't a tune to keep clear, so the melody covered isn't a finding
+	if (TextureArg(Args))
+		R.Findings.erase(std::remove_if(R.Findings.begin(), R.Findings.end(), [](const ListenFinding &F) {
+			return F.Kind == LISTEN_COVERED; }), R.Findings.end());
 	std::vector<Json> Fixes;
 	std::vector<std::string> Advices;
 	int Counts[LISTEN_KINDS] = { 0 };
@@ -25622,6 +25644,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	// A calm track also hears its lead's sound: one that holds a high, steady level presses (calm when asked, or when the
 	// track's name says so)
 	const TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "also warns about a lead whose sound holds a steady level", "any");
+	S.Texture = TextureArg(Args);
 	std::vector<CheckFinding> Findings[FOUND_KINDS];
 	auto Report = [&](int Kind, int Channel, int Row, int Rows, const std::string &Line, const std::string &Summary) -> CheckFinding & {
 		CheckFinding F;
@@ -28242,7 +28265,7 @@ private:
 	bool Looking() const { return m_Steps.empty() || m_All; }
 	bool Calm() const { return m_KindId == NEXT_CALM; }
 	// Polished, mixed and checked in calm's style: a calm song, and a cozy one (calm's places, soft drums kept soft, no accents)
-	bool CalmStyle() const { return std::string(Kind().Style) == "calm"; }
+	bool CalmStyle() const { return std::string(Kind().Style) == "calm" || std::string(Kind().Style) == "atmospheric"; }
 	// Lush chords' frames a note: a calm song's slow shimmer, a lively stage's fast arpeggios (the soundtrack's first
 	// stages looped their chords at 2-3 frames a note)
 	int LushFrames() const { return CalmStyle() ? 3 : 2; }
@@ -30493,7 +30516,10 @@ bool WhatNext::Listened()
 	Json Heard;
 	if (!KeptHeard(Heard)) {
 		Milestone("listened", false);
-		Step("listen", "listen", Json::MakeObject(), "The song changed since it was last heard: before the game's file, listen renders "
+		Json L = Json::MakeObject();
+		if (std::string(Kind().Style) == "atmospheric")
+			L.Set("style", "atmospheric");
+		Step("listen", "listen", L, "The song changed since it was last heard: before the game's file, listen renders "
 			"its real audio as FamiTracker plays it (the mix and each part alone) and reports what an ear would notice that the notes "
 			"can't show: a warble, notes out of tune, "
 			"clicks, a sound that drones on, a covered melody. It changes nothing; the user's own ear has the final word.");
@@ -31525,8 +31551,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"ask what_next, make the call it gives, ask again. A melody step comes with a phrase on the chords to start from: put your "
 		"own tune in its place.",
 		Schema()
-			.Add("kind", Prop("string", "The kind of song, as get_recipe has them (default: about's, else the track name's, else "
-				"general). Give the same kind every time."))
+			.Add("kind", Prop("string", "A kind of get_recipe's (default: about's, the track name's, else general). The same "
+				"every time."))
 			.Add("skip", WordListProp("Steps to leave out, like [\"drums\"] when the user wants none: tempo, key, lead, chords, "
 				"sections, melody, form, drums, second_line, variation, break, intro, loop, tips, colors, echo, polish, mix, seam, save, "
 				"export, "
@@ -32557,6 +32583,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema().Range()
 			.Add("parts", ChannelListProp("Channels to hear alone (default: each with notes there)."))
 			.Add("melody_channel", ChannelProp("The melody (default: guessed), or \"none\"."))
+			.Add("style", Prop("string", "atmospheric: no melody to keep clear."))
 			.Add("format", EnumProp("text (the default), short (the three heard worst) or json.",
 				std::vector<std::string>{ "text", "short", "json" })),
 		true, false, true);

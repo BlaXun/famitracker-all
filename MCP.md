@@ -554,6 +554,14 @@ work, to reuse its ideas.
   minor (a minor key gets a note: it would be a lament).
 - **tense**, for sneaking, a guarded place, slow danger: minor, an ostinato
   bass, sparse stabs, a close tune, ticking hats. A fight is action.
+- **melancholic**, only when sadness is asked for (grief, loneliness, rain,
+  an abandoned home): minor, slow, a singing tune with sighs, sparse soft
+  chords, no drums. A run-down place isn't sad by itself.
+- **atmospheric**, texture over tune (vast, empty, alien places, the deep):
+  drones, slow pads, sparse motifs, an echo. Its style `atmospheric` (for
+  `check_song`, `review_arrangement`, `polish` and `listen`) is calm's
+  without the checks that ask for a lead: the melody's phrases, its breaths
+  and a covered melody.
 
 Each recipe ends with its numbers from the built-in guide (a topic of each
 kind's name), so Claude reads them once instead of looking them up. Without
@@ -564,8 +572,9 @@ which: "Kind: mysterious (from the words hidden, cave). Pass kind
 `song_shape` say the same when their `about` picks a kind, and `what_next`
 without `about` or a kind takes one from the track's name ("The Caves",
 "Flying the airship", "Waiting for the Airship", "Hut in a Field"). On a
-tie the words' kinds go tense, bittersweet, festive, mysterious, floating,
-playful, cozy, adventure; a fight's words stay action.
+tie the words' kinds go tense, bittersweet, melancholic, festive,
+mysterious, atmospheric, floating, playful, cozy, adventure (two words that
+belong together, "eerie silence", count twice); a fight's words stay action.
 
 ### Arguments a tool doesn't take
 

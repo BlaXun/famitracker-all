@@ -112,14 +112,15 @@ const LPCTSTR STAGE_LABELS[ftapi::NEXT_STAGES] = {
 // The kinds of song what_next knows ("" is its own choice: the general recipe, or calm when the track's name says so)
 // (what_next's kinds, NextKindInfo in Api/WhatNext.cpp, in the order of next_kind but general first)
 const char *const KIND_IDS[] = { "", "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful",
-	"festive", "bittersweet", "tense" };
+	"festive", "bittersweet", "tense", "melancholic", "atmospheric" };
 const LPCTSTR KIND_ITEMS[] = {
 	_T("General: the recipe for any song"), _T("Calm: a night or an ambient place"), _T("Lively: a stage"),
 	_T("Cozy: a warm place indoors (a shop, a hut, an inn)"), _T("Action: a boss or a battle"),
 	_T("Mysterious: caves, sewers, ruins, forgotten places"), _T("Adventure: open fields, travel, an airship flight"),
 	_T("Floating: the sky, clouds, underwater, waiting at a dock"), _T("Playful: minigames, funny characters, a toy shop"),
 	_T("Festive: a market day, a festival, a holiday town"), _T("Bittersweet: a farewell, a memorial, a sunset, an ending"),
-	_T("Tense: sneaking, a guarded place, slow danger")
+	_T("Tense: sneaking, a guarded place, slow danger"), _T("Melancholic: grief, loneliness, rain (only when it's asked for)"),
+	_T("Atmospheric: texture over tune, vast and empty places")
 };
 const int KIND_COUNT = sizeof(KIND_IDS) / sizeof(KIND_IDS[0]);
 

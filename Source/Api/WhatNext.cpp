@@ -446,6 +446,33 @@ const NextKind KINDS[] = {
 		"close tune without big leaps, ticking hats; not a fight (that's action)",
 		"close: steps and repeated notes, a semitone's lean, no leap past a fourth, rests where a guard might look up",
 		"the repeat a step higher or with the ostinato doubled, a second voice a third under in long notes" },
+	// Openly sad (grief, loneliness, rain, an abandoned home, a lost friend): minor (natural or dorian; it may stay minor,
+	// unlike bittersweet), slow (75 BPM, speed 12), a singing lead with long notes and sighs, sparse soft chords, no drums;
+	// calm's style, -22 LUFS. Only when sadness is asked for: its words are sadness's own, never neglect's (run-down, old)
+	{ NEXT_MELANCHOLIC, "melancholic", 60.0, 80.0, 75.0, "Melancholic lead", "breath", "lush", "roots", "half", "", "calm", "calm",
+		-22.0, { "A minor", "D dorian", "E minor" }, "melancholy sad sorrow sorrowful grief lament mournful lonely", -1, "plain", "",
+		false, 1, "a melancholic track", "the tune singing alone over the soft chords, its sighs falling, nothing hurrying it",
+		"a melancholic lead breathes in and sings (kind breath): long notes that sigh.", { 0, 0 },
+		{ "| i | III | VII | v | i | III | VII | VII |", "| III | VII | v | i | III | VII | v | v |" },
+		"grief, loneliness, rain, an abandoned home, a lost friend", "openly sad: a slow, singing tune with long notes and "
+		"sighs over sparse soft chords, no drums; it may stay minor (unlike bittersweet, which borrows its sadness)",
+		"singing: long notes, sighs (a falling second, the upper note on the beat) at the phrases' ends, a slow climb to one "
+		"high note a section, 1-3 notes a bar",
+		"the tune alone for a phrase, an echo far behind in the repeat, a second voice in long notes, the chords thinning" },
+	// Texture over tune (Metroid's ambience): drones, slow pads, sparse motifs rather than a tune to hum, an echo, no
+	// drums, minor or modal, 60-90 BPM, loose long sections (the night's shape). Its style, atmospheric, is calm's with the
+	// checks that ask for a lead (phrases, breaths, a covered melody) left out, as a cue's checks leave out a loop's
+	{ NEXT_ATMOSPHERIC, "atmospheric", 60.0, 90.0, 75.0, "Texture lead", "breath", "lush", "pedal", "roots", "", "calm",
+		"atmospheric", -22.0, { "E minor", "D dorian", "A minor" }, "atmosphere ambience texture vast void abyss", 0, "plain", "",
+		false, 1, "an atmospheric track", "the drone and the pads changing slowly, the motifs few and far apart, the echo wide",
+		"an atmospheric track's motifs breathe in and hold (kind breath): sparse, a texture's figures rather than a tune.",
+		{ 0, 0 }, { "| i | i | VII | VII | i | i | III | VII |", "| III | III | VII | VII | v | v | VII | VII |" },
+		"vast, empty, alien places, the deep, an abyss", "texture over tune: a drone, slow-changing pads, sparse motifs rather "
+		"than a melody to hum, an echo, quiet or no percussion, the form loose",
+		"sparse motifs of 2-4 notes, far apart (a bar or two of rests between them), long notes, intervals of a fourth or a "
+		"fifth, no hook to hum",
+		"the pads changing chord slowly, the motif answered by its echo, a part dropping out; drums none, or a soft, "
+		"irregular tick" },
 };
 
 }	// namespace
