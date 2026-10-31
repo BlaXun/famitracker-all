@@ -60,6 +60,8 @@
 #include "../StepNotes.h"
 #include "../Tools.h"
 #include "../Vrc6Plus.h"
+#include "../SongSeed.h"
+#include <cstdint>
 #include "../Wavetables.h"
 #include "../WhatNext.h"
 #include "../NextSteps.h"
@@ -194,6 +196,8 @@ public:
 	};
 
 	SongInfo Info;
+	// Seeds (SongSeed.h) as FamiTracker makes them for new songs, only when a test asks (the rest keep the kinds' own picks)
+	bool GivesSeeds = false;
 	std::vector<std::vector<Cell> > Rows;	// per channel, the selected track's
 	std::vector<StoredTrack> Tracks;
 	int Current;
@@ -1037,6 +1041,15 @@ public:
 
 	// The row highlights, and the pattern length (0 keeps it): the frames stay, each as long as the new length; one
 	// undoable step (CMcpMeterAction)
+	bool MakeSongSeed() override
+	{
+		if (!GivesSeeds || Info.Seed != 0)
+			return false;
+		// (from the track's name, so a test's walks are the same whatever runs before them)
+		Info.Seed = SeededHash("fake song", Info.TrackName, static_cast<unsigned int>(SongSerial)) | 1u;
+		return true;
+	}
+
 	bool SetMeter(int RowsPerBeat, int RowsPerBar, int PatternLength, std::string &) override
 	{
 		Remember();
@@ -1444,6 +1457,8 @@ public:
 			{ "kick", "2A03" }, { "snare", "2A03" }, { "hi-hat", "2A03" }, { "warm pad", "VRC6" }, { "bass", "VRC6" } };
 		for (int i = 0; i < 8; ++i)
 			AddInstrumentInfo(i, SOUNDS[i][0], SOUNDS[i][1], true);
+		if (GivesSeeds)	// (File > New's, as OnNewDocument makes one)
+			Info.Seed = NewSongSeed(static_cast<unsigned long long>(SongSerial) * 104729u);	// (a counter in it: each its own)
 		Rows = Fresh.Rows;
 		Tracks.assign(1, StoredTrack());
 		Tracks[0].Name = Info.TrackName;
@@ -5104,12 +5119,12 @@ void TestProtocol()
 		CHECK_LACKS(Text, "style lively");
 		Arguments.Set("kind", "sleepy");
 		CHECK(!ToolSet::PromptText("compose_track", Arguments, Text, Error));
-		CHECK_HAS(Error, "kind should be calm, lively or action");
+		CHECK_HAS(Error, "kind should be calm, lively, action, cozy, ");
 		// The general recipe points at the kinds without choosing one
 		Json General = Json::MakeObject();
 		General.Set("idea", "a calm lake");
 		CHECK(ToolSet::PromptText("compose_track", General, Text, Error));
-		CHECK_HAS(Text, "follow that kind's recipe instead: references action guide topic calm, lively or action");
+		CHECK_HAS(Text, "follow that kind's recipe instead: references action guide topic calm, lively, action, cozy, ");
 		CHECK_LACKS(Text, "style calm");
 		// The guide's topics come up by the words a composer uses
 		CHECK_HAS(StyleGuide("peaceful"), "Calm songs (a place to rest");
@@ -5474,7 +5489,7 @@ void TestNetwork()
 	}
 	{
 		// get_recipe on the small set: each kind's steps name only the set's own tools (2026-10-24)
-		const char *const KINDS[] = { "calm", "lively", "action", "" };
+		const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric", "" };
 		for (const char *Kind : KINDS) {
 			HttpRequest Ask = Post(std::string("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_recipe\","
 				"\"arguments\":{") + (*Kind ? std::string("\"kind\":\"") + Kind + "\"" : std::string()) + "}}}");
@@ -5486,7 +5501,7 @@ void TestNetwork()
 			for (size_t i = 0; i < Words.size(); ++i)
 				Check(ToolSet::IsCoreTool(Words[i]) || Words[i] == "chord_style" || Words[i] == "bass_style" ||
 					Words[i] == "arp_frames" || Words[i] == "delay_beats" || Words[i] == "bass_instrument" || Words[i] == "root_fifth" ||
-					Words[i] == "restrike_beats",
+					Words[i] == "restrike_beats" || Words[i] == "four_on_floor",
 					("a core tool in the recipe: " + Words[i]).c_str(), __LINE__);
 			if (std::string(Kind) == "calm") {
 				CHECK_HAS(Text, "kind breath");
@@ -5501,6 +5516,13 @@ void TestNetwork()
 			}
 			else if (std::string(Kind) == "action")
 				CHECK_HAS(Text, "-19 LUFS");
+			else if (std::string(Kind) == "cozy") {
+				CHECK_HAS(Text, "finish_song with kind cozy");
+				CHECK_HAS(Text, "kind falling strike");
+				CHECK_HAS(Text, "-20 LUFS");
+			}
+			else if (*Kind)
+				Check(Contains(Text, ("When the parts are written: finish_song with kind " + std::string(Kind) + ".").c_str()), Kind, __LINE__);
 			else
 				CHECK_HAS(Text, "then ask get_recipe for it");
 		}
@@ -5514,9 +5536,9 @@ void TestNetwork()
 		CHECK(!Got.IsError);
 		CHECK_HAS(Got.Text, "for this: the song the user asked for.");
 		CHECK_HAS(Got.Text, "follow that kind's recipe instead");
-		Got = Tools.Call("get_recipe", Parse("{\"kind\": \"sad\"}"));
+		Got = Tools.Call("get_recipe", Parse("{\"kind\": \"jazzy\"}"));
 		CHECK(Got.IsError);
-		CHECK_HAS(Got.Text, "kind should be calm, lively or action");
+		CHECK_HAS(Got.Text, "kind should be calm, lively, action, cozy, ");
 	}
 	// The full instructions tell of send_file, and name only tools there are
 	CHECK_HAS(ToolSet::Instructions(), "send_file puts your files");
@@ -17962,9 +17984,9 @@ void TestStepsTaught()
 	CHECK_HAS(ToolSet::CoreInstructions(), "D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -");
 	CHECK_HAS(ToolSet::Instructions(), "not at every bar line");
 	CHECK_HAS(ToolSet::CoreInstructions(), "not at every bar line");
-	const char *const KINDS[] = { "calm", "lively", "action" };
+	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric" };
 	for (int Core = 0; Core < 2; ++Core)
-		for (int k = 0; k < 3; ++k) {
+		for (int k = 0; k < static_cast<int>(sizeof(KINDS) / sizeof(KINDS[0])); ++k) {
 			Caller Who;
 			Who.Core = Core == 1;
 			const ToolResult Recipe = Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + KINDS[k] + "\"}"), Who);
@@ -18457,9 +18479,9 @@ void TestGrowTaught()
 	CHECK(ToolSet::IsCoreTool("grow_melody"));
 	CHECK_HAS(ToolSet::Instructions(), "grow_melody");
 	CHECK_HAS(ToolSet::CoreInstructions(), "grow_melody");
-	const char *const KINDS[] = { "calm", "lively", "action" };
+	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric" };
 	for (int Core = 0; Core < 2; ++Core)
-		for (int k = 0; k < 3; ++k) {
+		for (int k = 0; k < static_cast<int>(sizeof(KINDS) / sizeof(KINDS[0])); ++k) {
 			Caller Who;
 			Who.Core = Core == 1;
 			const ToolResult Recipe = Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + KINDS[k] + "\"}"), Who);
@@ -20260,8 +20282,10 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 		if (!Did.IsError && N.Tool == "read_notes" && Contains(N.Text, "; then write_notes")) {
 			const Json Asking = Parse(Asked);
 			const std::string Kind = Asking.Get("kind") != 0 ? Asking.Get("kind")->String() : std::string();
-			const Json Report = Parse(Tools.Call("check_song", Parse(std::string("{\"format\": \"json\"") + (Kind == "calm" ||
-				Kind == "lively" ? ", \"style\": \"" + Kind + "\"" : std::string()) + "}")).Text);
+			int Parsed = NEXT_GENERAL;	// (cozy and the later kinds are checked in their kind's style)
+			const std::string Style = ParseNextKind(Kind, Parsed) ? std::string(NextKindInfo(Parsed).Style) : Kind;
+			const Json Report = Parse(Tools.Call("check_song", Parse(std::string("{\"format\": \"json\"") + (Style == "calm" ||
+				Style == "lively" ? ", \"style\": \"" + Style + "\"" : std::string()) + "}")).Text);
 			const std::vector<const Json *> Found = FindingsOf(Report, "phrases");
 			Check(!Found.empty() && HoldBarEnds(Song, *Found[0]), "the melody held over its bar lines", Line);
 			Made.push_back("write_notes (the line read, held over its bar lines)");
@@ -20316,7 +20340,12 @@ void TestWhatNextLoop()
 		bool Drums;
 	};
 	const Kind KINDS[] = { { "{\"kind\": \"lively\"}", "lively", "-20", true }, { "{\"kind\": \"calm\"}", "calm", "-22", false },
-		{ "{\"kind\": \"action\"}", "", "-19", true }, { "{}", "", "-20", true } };
+		{ "{\"kind\": \"action\"}", "", "-19", true }, { "{}", "", "-20", true }, { "{\"kind\": \"cozy\"}", "calm", "-20", true },
+		{ "{\"kind\": \"mysterious\"}", "calm", "-21", false }, { "{\"kind\": \"adventure\"}", "lively", "-20", true },
+		{ "{\"kind\": \"floating\"}", "calm", "-21", false }, { "{\"kind\": \"playful\"}", "", "-20", true },
+		{ "{\"kind\": \"festive\"}", "lively", "-19", true }, { "{\"kind\": \"bittersweet\"}", "calm", "-22", false },
+		{ "{\"kind\": \"tense\"}", "", "-20", true }, { "{\"kind\": \"melancholic\"}", "calm", "-22", false },
+		{ "{\"kind\": \"atmospheric\"}", "atmospheric", "-22", false } };
 	int Reused = 0;
 	for (const Kind &K : KINDS) {
 		FakeSong Song(1);
@@ -20346,7 +20375,7 @@ void TestWhatNextLoop()
 				Check(!Contains(Made[i], "\"rhythm\""), (std::string(K.Asked) + " " + Made[i]).c_str(), __LINE__);
 		// A lively stage's chords plain before the melody (feat-color-rubs), their colors given once it's there, before the
 		// harmony: rich colors written first rubbed Ironworks2's tune
-		if (std::string(K.Style) == "lively") {
+		if (std::string(K.Asked) == "{\"kind\": \"lively\"}") {
 			int Colors = -1;
 			for (size_t i = 0; i < Made.size(); ++i) {
 				if (Made[i].compare(0, 20, "add_chords_and_bass ") == 0 && !Contains(Made[i], "\"melody_channel\""))
@@ -20376,8 +20405,13 @@ void TestWhatNextLoop()
 		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + (Style.empty() ? std::string() : ", " + Style) +
 			"}").Text);
 		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone" };
-		for (const char *Kind : CLEAN)
+		bool Clean = true;
+		for (const char *Kind : CLEAN) {
 			Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(K.Asked) + " " + Kind).c_str(), __LINE__);
+			Clean = Clean && IntegerOf(Found.Get("counts"), Kind) == 0;
+		}
+		if (!Clean)
+			std::printf("%s\n%s\n", K.Asked, Run(Song, "check_song", "{" + Style + "}").Text.c_str());
 		// The intro leads into A (GitHub issue #1): with drums, A's last bar of them comes in during its last bar
 		bool Fill = false;
 		for (size_t i = 0; i < Made.size(); ++i)
@@ -20631,7 +20665,7 @@ void TestWhatNextChoices()
 	CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"Stage\"}").Text, "Next (lively, ");
 	const ToolResult Bad = Run(Song, "what_next", "{\"kind\": \"jazz\"}");
 	CHECK(Bad.IsError);
-	CHECK_HAS(Bad.Text, "kind should be calm, lively or action");
+	CHECK_HAS(Bad.Text, "kind should be calm, lively, action, cozy, ");
 	// No kind: calm when the track's name says so, else the general recipe
 	const std::string General = Run(Song, "what_next", "{}").Text;
 	CHECK_HAS(General, "Next (general, ");
@@ -20749,7 +20783,7 @@ void TestWhatNextCore()
 	// get_recipe on the small set: the loop, and a worked melody of 8 bars in steps, which write_notes takes as it is
 	const std::string Example = "1: E3 - G3 - C4 - - B3 | 2: A3 - - - E3 - . . | 3: F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | "
 		"5: E3 - G3 - C4 - - E4 | 6: D4 - C4 - A3 - - - | 7: A3 - C4 - B3 - D4 - | 8: C4 - - - - - . .";
-	const char *const KINDS[] = { "calm", "lively", "action", "" };
+	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric", "" };
 	FakeSong Song(1);
 	ToolSet Tools(Song);
 	Caller Who;
@@ -21413,7 +21447,8 @@ void TestFinishSong()
 		CHECK_HAS(Text, "at -19.0 LUFS");
 		FakeSong General = FinishTestSong();
 		Text = Run(General, "finish_song", "{}").Text;
-		CHECK_HAS(Text, "as a track of the general recipe (no kind given: kind lively for a stage, action for a fight)");
+		CHECK_HAS(Text, "as a track of the general recipe (no kind given: kind lively for a stage, cozy for a warm place indoors, action for "
+			"a fight)");
 		CHECK_HAS(Text, "at -20.0 LUFS");
 		FakeSong Cue = CueSong(true);
 		Cue.Info.DirectChanges = true;
@@ -23407,7 +23442,7 @@ void TestUnknownArguments()
 	std::vector<std::pair<std::string, std::string> > Texts;
 	Texts.push_back(std::make_pair(std::string("instructions"), ToolSet::Instructions()));
 	Texts.push_back(std::make_pair(std::string("core instructions"), ToolSet::CoreInstructions()));
-	for (const char *Kind : { "", "calm", "lively", "action" }) {
+	for (const char *Kind : { "", "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric" }) {
 		Json Asked = Json::MakeObject();
 		if (*Kind)
 			Asked.Set("kind", Kind);
@@ -23416,7 +23451,7 @@ void TestUnknownArguments()
 	}
 	for (size_t p = 0; p < ToolSet::Prompts().size(); ++p) {
 		const PromptInfo &Prompt = ToolSet::Prompts()[p];
-		for (const char *Kind : { "calm", "lively", "action" }) {
+		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric" }) {
 			Json Filled = Json::MakeObject();
 			for (size_t a = 0; a < Prompt.Arguments.size(); ++a) {
 				const std::string &Name = Prompt.Arguments[a].Name;
@@ -23470,7 +23505,7 @@ void TestUnknownArguments()
 		CheckFixCalls(ClickTools, Parse(ClickTools.Call("check_song", Parse("{\"format\": \"json\"}")).Text), "click", __LINE__);
 		FakeSong Empty;
 		ToolSet EmptyTools(Empty);
-		for (const char *Kind : { "calm", "lively", "action" }) {
+		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric" }) {
 			const std::string First = EmptyTools.Call("what_next", Parse(std::string("{\"kind\": \"") + Kind + "\"}")).Text;
 			Check(UnknownInText(EmptyTools, First).empty(), First.c_str(), __LINE__);
 		}
@@ -27594,7 +27629,7 @@ void TestToolReplies()
 		Caller Core;
 		Core.Core = true;
 		Core.Client = true;
-		for (const char *Kind : { "calm", "lively", "action" }) {
+		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "melancholic", "atmospheric" }) {
 			const std::string Recipe = Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + Kind + "\"}"), Core).Text;
 			CHECK_HAS(Recipe, "When the parts are written: finish_song with kind");
 			CHECK_HAS(Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + Kind + "\"}")).Text, "finish_song with kind");
@@ -28433,6 +28468,433 @@ void TestMinorLeadingTone()
 	CHECK_LACKS(Text, "Db5");
 }
 
+// The cozy kind (feat-cozy-kind): a warm place indoors by day. "Lost n Found" (a cozy, run-down hut kept by an old woman),
+// asked for as calm, came out a night song in C minor and sounded depressing. Its words pick the cozy kind and a small
+// place's or a town's form (never the night's), what_next follows its recipe from an empty song to done (on the small set
+// too), a minor key gets a note that doesn't block, and the recipes and the guide have it
+void TestCozyKind()
+{
+	const std::string LostAndFound = "A cozy, but run-down wooden hut. Items are placed on shelves for players to pick up. A "
+		"single elderly woman is taking care of the place.";
+	int Kind = -1;
+	CHECK(ParseNextKind("Cosy", Kind) && Kind == NEXT_COZY && ParseNextKind("cozy", Kind) && Kind == NEXT_COZY);
+	CHECK(KindWantsMajor(NEXT_COZY) && KindWantsMajor(NEXT_CALM) && !KindWantsMajor(NEXT_LIVELY));
+	CHECK_EQ(std::string(NextKindInfo(NEXT_COZY).Name), std::string("cozy"));
+	CHECK_EQ(ShapeForKind("cozy").Id, std::string("town"));
+
+	// The words: cozy, with a town's form of 40 bars (a hut isn't a shop's short loop)
+	const ShapeWords W = ReadShapeWords(LostAndFound);
+	Check(W.Kind == "cozy" && W.pShape == FindSongShape("town"), W.Why.c_str(), __LINE__);
+	CHECK_EQ(W.Why, std::string("\"cozy\", \"hut\", \"elderly\": a warm place, cozy"));
+	ShapeRequest R;
+	R.TrackName = "Lost n Found";
+	R.About = LostAndFound;
+	R.Bars = 40;
+	ShapeChoice C;
+	std::string Error;
+	Check(MakeSongShape(R, C, Error) && C.Kind == "cozy" && C.Shape.Bars() == 40, (C.Shape.PartsText() + " " + Error).c_str(),
+		__LINE__);
+	CHECK_HAS(C.FromWords, "Kind: cozy (from the words cozy, hut, elderly). Pass kind \"cozy\" to get_recipe, what_next and "
+		"finish_song.");
+	struct Asked {
+		const char *About, *Kind, *Shape;
+	};
+	const Asked WORDS[] = { { "a cozy village", "cozy", "town" }, { "grandma's bakery", "cozy", "town" },
+		{ "a warm and friendly inn", "cozy", "small" }, { "a homey place", "cozy", "town" }, { "a cozy cabin at night", "calm", "night" },
+		{ "a sleepy hut, a lullaby", "calm", "night" }, { "a haunted house", "general", "small" }, { "a calm, quiet place", "calm", "night" },
+		{ "a village square", "general", "town" }, { "a cozy forest", "lively", "stage" }, { "a cozy boss fight", "calm", "night" },
+		{ "a calm cozy shop", "cozy", "small" } };
+	for (const Asked &A : WORDS) {
+		const ShapeWords Got = ReadShapeWords(A.About);
+		Check(Got.Kind == A.Kind && Got.pShape != 0 && Got.pShape->Id == A.Shape, (std::string(A.About) + ": " + Got.Kind + " " +
+			(Got.pShape != 0 ? Got.pShape->Id : std::string("none")) + " (" + Got.Why + ")").c_str(), __LINE__);
+	}
+	// song_shape with the description and 40 bars
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.TrackName = Song.Tracks[0].Name = "Lost n Found";
+		Json A = Json::MakeObject();
+		A.Set("about", LostAndFound);
+		A.Set("bars", 40);
+		const ToolResult Laid = Run(Song, "song_shape", WriteJson(A));
+		Check(!Laid.IsError && Contains(Laid.Text, ", 40 bars in ") && Contains(Laid.Text, "Kind: cozy (from the words"), Laid.Text.c_str(), __LINE__);
+	}
+	// what_next with the words and no kind: cozy, the small place's shape
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.TrackName = Song.Tracks[0].Name = "Lost n Found";
+		Json Ask = Json::MakeObject();
+		Ask.Set("about", LostAndFound);
+		const WhatNextAnswer First = AskWhatNext(Song, WriteJson(Ask));
+		CHECK_HAS(First.Line, "Next (cozy, ");
+		Check(First.Tool == "set_tempo" && Contains(First.Line, "set_tempo {\"bpm\":100}"), First.Text.c_str(), __LINE__);
+		CHECK_HAS(First.Text, "Kind: cozy (from the words cozy, hut, elderly). Pass kind \"cozy\"");
+		Ask.Set("skip", Parse("[\"tempo\", \"key\"]"));
+		const WhatNextAnswer Shape = AskWhatNext(Song, WriteJson(Ask));
+		Check(Shape.Tool == "song_shape" && TextOf(&Shape.Arguments, "shape") == "town" && TextOf(&Shape.Arguments, "about") ==
+			LostAndFound, Shape.Text.c_str(), __LINE__);
+		CHECK_HAS(Shape.Text, "Why: A new song starts from its shape: a town of ");
+		// With kind cozy given too, the words' form (an inn's short loop) rather than the kind's town
+		Ask.Set("about", "a warm and friendly inn");
+		Ask.Set("kind", "cozy");
+		const WhatNextAnswer Given = AskWhatNext(Song, WriteJson(Ask));
+		Check(Given.Tool == "song_shape" && TextOf(&Given.Arguments, "shape") == "small", Given.Text.c_str(), __LINE__);
+	}
+	// A minor key on a cozy (or calm) song: a note, once, and the step goes on
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		CHECK(!Run(Song, "set_key", "{\"key\": \"C minor\"}").IsError);
+		const std::string Cozy = Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text;
+		CHECK_HAS(Cozy, "\nNote: A cozy song wants a major key, and this one is in C minor (minor sounds sad here): set_key "
+			"{\"key\":\"C major\"}, or keep it minor if you mean it.");
+		CHECK(Cozy.find("wants a major key") == Cozy.rfind("wants a major key"));
+		CHECK(ReadWhatNext(Cozy).Tool == "set_tempo");
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"calm\"}").Text, "Note: A calm song wants a major key");
+		CHECK_LACKS(Run(Song, "what_next", "{\"kind\": \"lively\"}").Text, "wants a major key");
+		CHECK(!Run(Song, "set_key", "{\"key\": \"F major\"}").IsError);
+		CHECK_LACKS(Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text, "wants a major key");
+	}
+	// The walk: a major key of the kind's, 100 BPM, the warm lead, broken chords on root and fifth, the soft groove, polished
+	// and mixed in calm's style; on the small set too
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		bool Finished = false;
+		const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"cozy\"}", 60, Finished, __LINE__);
+		CHECK(Finished);
+		auto Call = [&](const char *Tool) {
+			const int At = CallIndex(Made, Tool);
+			return At >= 0 ? Made[static_cast<size_t>(At)] : std::string();
+		};
+		// (the picks of cozy's pools for this song: TestKindPools)
+		const NextPicks P = NextPicksOf(NEXT_COZY, Song.Info.TrackName, 0);
+		Check(Contains(Call("set_tempo"), ("\"bpm\":" + P.Tempo.Value).c_str()), Call("set_tempo").c_str(), __LINE__);
+		Check(Contains(Call("set_key"), " major\""), Call("set_key").c_str(), __LINE__);
+		Check(Contains(Call("design_instrument"), ("\"kind\":\"" + P.Lead.Value + "\"").c_str()), P.Lead.Value.c_str(), __LINE__);
+		Check(Contains(Call("add_chords_and_bass"), ("\"chord_style\":\"" + P.ChordStyle.Value + "\"").c_str()), __func__, __LINE__);
+		Check(Contains(Call("add_chords_and_bass"), ("\"bass_style\":\"" + P.BassStyle.Value + "\"").c_str()), __func__, __LINE__);
+		Check(P.Groove.Value.empty() ? CallIndex(Made, "add_drums") < 0 : Contains(Call("add_drums"), ("\"groove\":\"" +
+			P.Groove.Value + "\"").c_str()) && Contains(Call("add_drums"), "\"intensity\":\"light\"") && !Contains(Call("add_drums"),
+			"\"kit\""), P.Groove.Value.c_str(), __LINE__);
+		CHECK_HAS(Call("finish_song"), "\"kind\":\"cozy\"");
+		FakeSong Small(1);
+		NewSong(Small);
+		FollowWhatNext(Small, "{\"kind\": \"cozy\"}", 60, Finished, __LINE__, true);
+		CHECK(Finished);
+	}
+	// The recipes and the guide
+	FakeSong Song(1);
+	ToolSet Tools(Song);
+	const std::string Recipe = Tools.Call("get_recipe", Parse("{\"kind\": \"cozy\"}")).Text;
+	CHECK_HAS(Recipe, "Compose a cozy track in FamiTracker");
+	CHECK_HAS(Recipe, "finish_song with kind cozy");
+	CHECK_HAS(Recipe, "Cozy places (a shop, a hut, an inn");
+	CHECK_HAS(Recipe, "export_for_game at -20 LUFS");
+	CHECK_EQ(Tools.Call("get_recipe", Parse("{\"kind\": \"cosy\"}")).Text, Recipe);
+	CHECK_HAS(Tools.Call("get_recipe", Parse("{}")).Text, "cozy");
+	CHECK(!StyleGuideTopic("cozy").empty());
+	CHECK_HAS(ToolSet::CoreInstructions(), "get_recipe lists more (about picks one)");
+	CHECK_HAS(ToolSet::CoreInstructions(), "a warm room by day (a shop, an inn) is cozy;");
+	CHECK_HAS(ToolSet::Instructions(), "Cozy (a warm place indoors by day");
+}
+
+// The kinds after cozy (feat-cozy-kind): each from its row of KINDS, picked by its words and by a track's name (the
+// user's board: "The Sewers - Depth", "The Caves", "Flying the airship", "Waiting for the Airship", "Hut in a Field"),
+// followed to done on the small set too (TestWhatNextLoop walks the full set), its key's note, its recipes
+void TestLaterKinds()
+{
+	struct Named {
+		const char *Words, *Kind;
+	};
+	const Named NAMES[] = { { "The Sewers - Depth", "mysterious" }, { "The Caves", "mysterious" }, { "Flying the airship", "adventure" },
+		{ "Waiting for the Airship", "floating" }, { "Hut in a Field", "cozy" } };
+	for (const Named &N : NAMES) {
+		const ShapeWords W = ReadShapeWords(N.Words, true);
+		Check(W.Kind == N.Kind && !W.KindWords.empty(), (std::string(N.Words) + ": " + W.Kind).c_str(), __LINE__);
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.TrackName = Song.Tracks[0].Name = N.Words;
+		const std::string Text = Run(Song, "what_next", "{}").Text;
+		Check(Contains(Text, (std::string("Next (") + N.Kind + ", ").c_str()) && Contains(Text, "(from the track's name: ") &&
+			Contains(Text, (std::string("Pass kind \"") + N.Kind + "\" to get_recipe, what_next and finish_song.").c_str()), Text.c_str(), __LINE__);
+	}
+	// A track named for a shop alone stays the general recipe's (its noun names the small place's shape only)
+	CHECK(ReadShapeWords("Shop", true).KindWords.empty());
+	const Named WORDS[] = { { "the sewers under the town", "mysterious" }, { "a cave full of crystals", "mysterious" },
+		{ "flying the airship over the clouds", "adventure" }, { "waiting for the airship at the dock", "floating" },
+		{ "a hut in a field", "cozy" }, { "a long road through the fields", "adventure" }, { "drifting underwater", "floating" },
+		{ "a frantic run through the caves", "lively" }, { "the boss of the ruins", "action" },
+		// The order on a tie, and the kinds of feat-cozy-kind's third commit
+		{ "sneaking past the guards in the ruins", "tense" }, { "a farewell at sunset by the harbor", "bittersweet" },
+		{ "market day in the village", "festive" }, { "a festival in the caves", "festive" }, { "a silly minigame", "playful" },
+		{ "a toy shop", "playful" }, { "a cozy toy shop", "cozy" }, { "a grave in the ruins", "bittersweet" },
+		{ "a quiet prison at night", "tense" }, { "a funny fair", "festive" },
+		// Melancholic only for sadness's own words, never a place's neglect (feat-cozy-kind's fourth commit); atmospheric
+		{ "an abandoned home in the rain", "melancholic" }, { "grief and loneliness", "melancholic" },
+		{ "A cozy, but run-down wooden hut", "cozy" }, { "a dusty old house", "cozy" }, { "a worn road through the fields",
+		"adventure" }, { "a lonely cave", "melancholic" }, { "a vast, empty void", "atmospheric" },
+		{ "an eerie silence in the deep", "atmospheric" }, { "an eerie cave", "mysterious" }, { "alien ruins", "mysterious" } };
+	for (const Named &N : WORDS) {
+		const ShapeWords W = ReadShapeWords(N.Words);
+		Check(W.Kind == N.Kind, (std::string(N.Words) + ": " + W.Kind + " (" + W.Why + ")").c_str(), __LINE__);
+	}
+	// The words' kind said plainly, in what_next, song_shape and get_recipe
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		const std::string Text = Run(Song, "what_next", "{\"about\": \"a hidden cave\"}").Text;
+		CHECK_HAS(Text, "\nKind: mysterious (from the words hidden, cave). Pass kind \"mysterious\" to get_recipe, what_next and "
+			"finish_song.");
+		CHECK_HAS(Text, "\"kind\":\"mysterious\"");	// asked again with it
+		const ToolResult Laid = Run(Song, "song_shape", "{\"about\": \"a hidden cave\"}");
+		Check(!Laid.IsError && Contains(Laid.Text, "Kind: mysterious (from the words hidden, cave)."), Laid.Text.c_str(), __LINE__);
+		ToolSet Tools(Song);
+		const std::string Recipe = Tools.Call("get_recipe", Parse("{\"about\": \"a hidden cave\"}")).Text;
+		CHECK(Recipe.compare(0, 40, "Kind: mysterious (from the words hidden,") == 0);
+		CHECK_HAS(Recipe, "Compose a mysterious track in FamiTracker for this: a hidden cave.");
+		Caller Core;
+		Core.Core = true;
+		CHECK_HAS(Tools.Call("get_recipe", Parse("{\"about\": \"waiting at the dock\"}"), Core).Text, "what_next with kind floating");
+		CHECK_HAS(Tools.Call("get_recipe", Parse("{\"about\": \"a quiet night\"}")).Text, "Compose a calm track");
+		CHECK_HAS(Tools.Call("get_recipe", Parse("{\"about\": \"something\"}")).Text, "Kind: none of the kinds from those words");
+	}
+	// A mysterious song in a major key: a note
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		CHECK(!Run(Song, "set_key", "{\"key\": \"C major\"}").IsError);
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text, "\nNote: A mysterious song wants a minor key (or dorian), "
+			"and this one is in C major");
+		CHECK(!Run(Song, "set_key", "{\"key\": \"D dorian\"}").IsError);
+		CHECK_LACKS(Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text, "wants a minor key");
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"floating\"}").Text, "A floating song wants a major key");
+		// A bittersweet song stays major (a minor key makes it a lament), a tense one minor
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"bittersweet\"}").Text, "A bittersweet song wants a major key");
+		CHECK(!Run(Song, "set_key", "{\"key\": \"G major\"}").IsError);
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"tense\"}").Text, "A tense song wants a minor key (or dorian)");
+		CHECK_HAS(Run(Song, "get_recipe", "{\"kind\": \"bittersweet\"}").Text, "a plain minor key turns it into a lament");
+	}
+	// Style atmospheric: calm's checks without what asks for a lead (a draft's phrases finding is gone, the rest stays)
+	{
+		FakeSong Draft(8);
+		DraftSong(Draft);
+		const Json Calm = Parse(Run(Draft, "check_song", "{\"style\": \"calm\", \"format\": \"json\"}").Text);
+		const Json Texture = Parse(Run(Draft, "check_song", "{\"style\": \"atmospheric\", \"format\": \"json\"}").Text);
+		CHECK(IntegerOf(Calm.Get("counts"), "phrases") > 0 && IntegerOf(Texture.Get("counts"), "phrases") == 0);
+		CHECK(IntegerOf(Calm.Get("counts"), "bass") == IntegerOf(Texture.Get("counts"), "bass"));
+		CHECK(!Run(Draft, "review_arrangement", "{\"style\": \"atmospheric\"}").IsError);
+		CHECK_LACKS(Run(Draft, "review_arrangement", "{\"style\": \"atmospheric\"}").Text, "The melody hardly pauses");
+	}
+	// Each walked to done on the small set
+	for (int k = NEXT_MYSTERIOUS; k < NEXT_KIND_COUNT; ++k) {
+		FakeSong Song(1);
+		NewSong(Song);
+		bool Finished = false;
+		const std::string Asked = std::string("{\"kind\": \"") + NextKindInfo(k).Name + "\"}";
+		const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 60, Finished, __LINE__, true);
+		Check(Finished, Asked.c_str(), __LINE__);
+		Check(CallIndex(Made, "finish_song") >= 0 && Contains(Made[static_cast<size_t>(CallIndex(Made, "finish_song"))],
+			(std::string("\"kind\":\"") + NextKindInfo(k).Name + "\"").c_str()), Asked.c_str(), __LINE__);
+		CHECK(!StyleGuideTopic(NextKindInfo(k).Name).empty());
+	}
+}
+
+// Kinds are guidance, not presets: what_next picks from each kind's pools by the track's name and the song's seed
+// (feat-cozy-kind's fifth commit). The same song gets the same picks; songs of other names or other seeds other ones,
+// each pool on its own; a song without a seed the kind's own (as before seeds); walks stay clean whatever the picks
+// The picks a what_next reply with all true shows: its design, chords, key and tempo calls
+std::string PicksShown(const std::string &Text)
+{
+	std::string Out;
+	size_t At = Text.find("Every step found now");
+	while (At != std::string::npos) {
+		const size_t End = Text.find('\n', At + 1);
+		const std::string Line = Text.substr(At, End == std::string::npos ? std::string::npos : End - At);
+		for (const char *Tool : { "design_instrument", "add_chords_and_bass", "set_key", "set_tempo", "add_drums" })
+			if (Line.find(std::string(". ") + Tool + " ") != std::string::npos)
+				Out += Line.substr(0, Line.find(": ")) + "\n";
+		At = End;
+	}
+	return Out;
+}
+
+void TestKindPools()
+{
+	const char *const NAMES[] = { "Town", "Lantern Row", "Old Mill", "Brook", "Crossing", "Hollow", "Mossy Steps", "Kettle",
+		"Harbor Light", "Pine Gate", "Copper Lane", "Quiet Bend" };
+	const unsigned int SEED = 0x5EED1234u;
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k) {
+		const NextKind &K = NextKindInfo(k);
+		std::set<std::string> Leads, Chords, Basses, Grooves, Tempos, Keys;
+		bool Apart = false;	// two names with the same lead but other chords: the pools don't move together
+		std::map<std::string, std::string> ChordsOfLead;
+		// No seed: the kind's own values, whatever the name
+		const NextPicks Own = NextPicksOf(k, "Anything", 0);
+		Check(Own.Lead.Value == K.LeadKind && Own.ChordStyle.Value == K.ChordStyle && Own.BassStyle.Value == K.BassStyle &&
+			Own.Groove.Value == K.Groove, K.Name, __LINE__);
+		for (const char *Name : NAMES) {
+			const NextPicks P = NextPicksOf(k, Name, SEED), Again = NextPicksOf(k, Name, SEED);
+			CHECK(P.Lead.Value == Again.Lead.Value && P.ChordStyle.Value == Again.ChordStyle.Value && P.Key.Value == Again.Key.Value &&
+				P.Tempo.Value == Again.Tempo.Value && P.Groove.Value == Again.Groove.Value && P.BassStyle.Value == Again.BassStyle.Value);
+			Leads.insert(P.Lead.Value);
+			Chords.insert(P.ChordStyle.Value);
+			Basses.insert(P.BassStyle.Value);
+			Grooves.insert(P.Groove.Value);
+			Tempos.insert(P.Tempo.Value);
+			Keys.insert(P.Key.Value);
+			if (ChordsOfLead.count(P.Lead.Value) != 0 && ChordsOfLead[P.Lead.Value] != P.ChordStyle.Value)
+				Apart = true;
+			ChordsOfLead[P.Lead.Value] = P.ChordStyle.Value;
+			const std::vector<std::string> Pool = PoolEntries(K.Leads);
+			CHECK(std::find(Pool.begin(), Pool.end(), P.Lead.Value) != Pool.end());
+			Check(K.SlowestBpm <= 0.0 || (P.Bpm() >= K.SlowestBpm - 0.05 && P.Bpm() <= K.FastestBpm + 0.05), K.Name, __LINE__);
+		}
+		Check(Leads.size() >= 2 && Chords.size() >= 2 && Basses.size() >= 2 && Apart, K.Name, __LINE__);
+		Check(K.KeyPool == 0 || Keys.size() >= 3, K.Name, __LINE__);
+		Check(PoolEntries(K.Tempos).size() < 2 || Tempos.size() >= 2, K.Name, __LINE__);
+		Check(PoolEntries(K.Grooves).size() < 2 || Grooves.size() >= 2, K.Name, __LINE__);
+		// The same name, another seed: other picks somewhere
+		int Other = 0;
+		for (unsigned int s = 1; s <= 8; ++s) {
+			const NextPicks P = NextPicksOf(k, "Town", SEED + s), Q = NextPicksOf(k, "Town", SEED);
+			Other += P.Lead.Value != Q.Lead.Value || P.ChordStyle.Value != Q.ChordStyle.Value || P.BassStyle.Value != Q.BassStyle.Value ? 1 : 0;
+		}
+		Check(Other >= 3, K.Name, __LINE__);
+	}
+
+	// The seed's block: read back, cut short at every byte, damaged, another version
+	{
+		const std::vector<unsigned char> Data = SongSeedMark::Write(0xCAFE1234u);
+		CHECK(Data.size() == 4u && SongSeedMark::Read(&Data[0], Data.size(), 1) == 0xCAFE1234u);
+		for (size_t n = 0; n < Data.size(); ++n)
+			CHECK(SongSeedMark::Read(n == 0 ? 0 : &Data[0], n, 1) == 0);
+		std::vector<unsigned char> Long = Data;
+		Long.push_back(7);
+		CHECK(SongSeedMark::Read(&Long[0], Long.size(), 1) == 0);
+		CHECK(SongSeedMark::Read(&Data[0], Data.size(), 2) == 0);
+		CHECK(std::string(SongSeedMark::BLOCK_ID) == "BF SEED");
+		CHECK(NewSongSeed(0) != 0 && NewSongSeed(0) != NewSongSeed(0));
+		CHECK(RolledSeed(77, 1) == 77 && RolledSeed(77, 2) != 77 && RolledSeed(77, 2) == RolledSeed(77, 2) && RolledSeed(0, 2) != 0);
+	}
+
+	// Two new songs alike in name and steps get seeds of their own and so other picks; a song keeps its own, saved and
+	// opened again
+	{
+		std::set<std::string> Firsts;
+		std::string Path;
+		std::string FirstCalls;
+		for (int i = 0; i < 6; ++i) {
+			FakeSong Song(1);
+			Song.GivesSeeds = true;
+			Song.Info.DirectChanges = true;
+			CHECK(!Run(Song, "new_song", "{\"name\": \"Lantern Row\"}").IsError);
+			CHECK(Song.Info.Seed != 0);
+			const std::string Asked = "{\"kind\": \"cozy\", \"all\": true}";
+			const std::string Steps = Run(Song, "what_next", Asked).Text;
+			Firsts.insert(PicksShown(Steps));
+			if (i == 0) {
+				// saved and opened again: the same seed, the same steps
+				const unsigned int Seed = Song.Info.Seed;
+				CHECK(!Run(Song, "save_song", "{\"name\": \"Lantern Row\"}").IsError);
+				Path = Song.OpenPath;
+				FirstCalls = PicksShown(Steps);
+				CHECK(!Run(Song, "new_song", "{\"name\": \"Other\"}").IsError);
+				CHECK(Song.Info.Seed != Seed);
+				CHECK(!Run(Song, "open_song", "{\"name\": \"Lantern Row\"}").IsError);
+				CHECK(Song.Info.Seed == Seed);
+				CHECK_EQ(PicksShown(Run(Song, "what_next", Asked).Text), FirstCalls);
+				CHECK(!FirstCalls.empty());
+			}
+		}
+		Check(Firsts.size() >= 3, std::to_string(Firsts.size()).c_str(), __LINE__);
+		// An empty song without a seed gets one from what_next
+		FakeSong Old(1);
+		Old.GivesSeeds = true;
+		NewSong(Old);
+		CHECK(Old.Info.Seed == 0);
+		Run(Old, "what_next", "{}");
+		CHECK(Old.Info.Seed != 0);
+		// A song with notes and no seed keeps the kinds' own picks (made before seeds, it stays as it was made)
+		FakeSong Made(1);
+		Made.GivesSeeds = true;
+		NewSong(Made);
+		Made.Put(0, 0, "C-4", 0);
+		Run(Made, "what_next", "{}");
+		CHECK(Made.Info.Seed == 0);
+	}
+
+	// seed rolls other picks, says how, and is asked again with them; song_shape's variant follows the seed too
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.Seed = 4242;
+		const std::string One = Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text;
+		CHECK_HAS(One, "and what_next with seed 2 gives another choice)");
+		CHECK_LACKS(One, "\"seed\"");
+		std::set<std::string> Rolls;
+		for (int r = 1; r <= 6; ++r) {
+			const std::string Text = Run(Song, "what_next", "{\"kind\": \"cozy\", \"seed\": " + std::to_string(r) + ", \"all\": true}").Text;
+			Rolls.insert(PicksShown(Text));
+			if (r == 3) {
+				CHECK_HAS(Text, "what_next with seed 4 gives another choice)");
+				CHECK_HAS(Text, "\"seed\":3");
+			}
+		}
+		CHECK(Rolls.size() >= 3);
+		std::set<int> Variants;
+		for (int r = 1; r <= 8; ++r) {
+			ShapeRequest R;
+			R.Shape = "town";
+			R.TrackName = "Lantern Row";
+			R.Seed = RolledSeed(4242, r);
+			R.Roll = r;
+			ShapeChoice C;
+			std::string Error;
+			CHECK(MakeSongShape(R, C, Error));
+			Variants.insert(C.Variant);
+		}
+		CHECK(Variants.size() >= 2);
+		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"town\", \"seed\": 2}");
+		Check(!Laid.IsError && Contains(Laid.Text, "song's seed pick it, the same for this song every time; seed 3 gives another "
+			"choice"), Laid.Text.c_str(), __LINE__);
+	}
+
+	// Walks stay clean whatever the picks: each kind on seeded songs of three names, on the full set
+	const char *const WALKS[] = { "Old Mill", "Brook", "Hollow" };
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k)
+		for (const char *Name : WALKS) {
+			FakeSong Song(1);
+			NewSong(Song);
+			Song.GivesSeeds = true;
+			Song.Info.TrackName = Song.Tracks[0].Name = Name;
+			bool Finished = false;
+			const std::string Asked = k == NEXT_GENERAL ? std::string("{}") : std::string("{\"kind\": \"") + NextKindInfo(k).Name +
+				"\"}";
+			FollowWhatNext(Song, Asked, 60, Finished, __LINE__);
+			Check(Finished && Song.Info.Seed != 0, (Asked + " " + Name).c_str(), __LINE__);
+			const std::string Style = std::string(NextKindInfo(k).Style) == "any" ? std::string() : std::string(", \"style\": \"") +
+				NextKindInfo(k).Style + "\"";
+			const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + Style + "}").Text);
+			bool Clean = true;
+			for (const char *Kind : { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone" }) {
+				// (a clash that's a detail, a passing note or a chord's color, may be meant: the finished soundtrack has 239)
+				int Count = 0;
+				for (const Json *pFound : FindingsOf(Found, Kind))
+					Count += std::string(Kind) != "clash" || TextOf(pFound, "severity") != "low" ? 1 : 0;
+				Check(Count == 0, (Asked + " " + Name + " " + Kind).c_str(), __LINE__);
+				Clean = Clean && Count == 0;
+			}
+			if (!Clean)
+				std::printf("%s %s\n%s\n", Asked.c_str(), Name, Run(Song, "check_song", "{" + (Style.empty() ? std::string() :
+					Style.substr(2)) + "}").Text.c_str());
+			const std::string Review = Run(Song, "review_arrangement", "{" + (Style.empty() ? std::string() : Style.substr(2)) + "}").Text;
+			Check(ReviewScore(Review) >= 8, (Asked + " " + Name + ": " + Review).c_str(), __LINE__);
+		}
+}
+
 int main()
 {
 	TestJson();
@@ -28691,6 +29153,9 @@ int main()
 	TestShapeVariations();
 	TestSongShapeOptions();
 	TestWhatNextShapeVariations();
+	TestCozyKind();
+	TestLaterKinds();
+	TestKindPools();
 	TestWhatNextSavesForClient();
 	TestListenLowAsAdvice();
 	TestEchoKeepsItsChipsEffects();

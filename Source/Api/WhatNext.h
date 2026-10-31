@@ -107,12 +107,14 @@ private:
 };
 
 // The kinds of song what_next follows, as get_recipe has them; general when
-// none is given and the track's name doesn't say calm
-enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION };
+// none is given and the track's name doesn't say calm (append only)
+enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION, NEXT_COZY, NEXT_MYSTERIOUS, NEXT_ADVENTURE, NEXT_FLOATING,
+	NEXT_PLAYFUL, NEXT_FESTIVE, NEXT_BITTERSWEET, NEXT_TENSE, NEXT_MELANCHOLIC,
+	NEXT_ATMOSPHERIC, NEXT_KIND_COUNT };
 
 struct NextKind {
 	int Kind;					// next_kind
-	const char *Name;			// "calm", "lively", "action", "general"
+	const char *Name;			// "calm", "lively", "action", "cozy", "general"
 	double SlowestBpm, FastestBpm;	// the tempos it suits (0 for any)
 	double Bpm;					// set_tempo's when the song's isn't one of them
 	const char *LeadName;		// the lead's sound what_next designs for it, and design_instrument's kind
@@ -122,14 +124,66 @@ struct NextKind {
 	const char *MovingBass;
 	const char *Groove;			// add_drums's; "" for none (calm)
 	const char *MixStyle;		// mix's
-	const char *Style;			// check_song's, review_arrangement's and polish's: "calm", "lively" or "any"
+	const char *Style;			// check_song's, review_arrangement's and polish's: "calm", "lively", "any" or "atmospheric"
+								// (calm's, the checks asking for no lead: TextureArg in Tools.cpp)
 	double Loudness;			// export_for_game's, in LUFS
 	const char *Keys[3];		// a new song's key, one of these (by its name)
+	// The kinds after cozy (feat-cozy-kind) say the rest here, so what_next, finish_song and the recipes need no code of
+	// their own for each (null or 0 for the older kinds, which keep theirs)
+	const char *Aliases;		// other words ParseNextKind takes for it, a space between
+	int KeyMode;				// +1: a major key (major or lydian), -1: a minor one (minor, dorian...), 0: either
+	const char *Color;			// add_chords_and_bass's color for the chords written before the melody
+	const char *Intensity;		// add_drums's ("" normal)
+	bool Samples;				// add_drums with kit samples
+	int Grow;					// grow_melody's kind: 1 calm (few, long notes, by step), 2 lively, 3 action; 0 lively
+	const char *Title;			// "a mysterious track", as finish_song names it
+	const char *Listen;			// what to listen for once it's finished
+	const char *LeadWhy;		// the lead step's why: the sound and what it's for
+	const char *ProgMajor[2];	// its A's and B's chords (NextProgression), in a major key and a minor one; null: the
+	const char *ProgMinor[2];	// general recipe's
+	const char *Place;			// what it's for: "caves, sewers, ruins, forgotten places"
+	const char *Feel;			// the recipe's line on how it should feel
+	const char *Melody;			// the recipe's line on its tune
+	const char *Depth;			// the recipe's line on its repeats and depth
+	// Pools (a kind is guidance, not a preset): what_next picks one of each by the song (NextPicksOf), so two songs of a
+	// kind differ and a song keeps its picks; '|' between the entries, the first the kind's own (the fields above). Null:
+	// the single value above
+	const char *Leads;			// design_instrument's kinds
+	const char *ChordStyles;
+	const char *BassStyles;
+	const char *Grooves;		// an empty entry: no drums
+	const char *Tempos;			// BPM, each an even one (rows of whole frames)
+	const char *KeyPool;
 };
 
+// What what_next takes from a kind's pools for one song: picked by the track's name and the song's seed, each pool with a
+// salt of its own so the picks don't move together. Count: how many the pool had (1 for a single value)
+struct NextPick {
+	std::string Value;
+	int Count;
+	NextPick() : Count(1) {}
+};
+
+struct NextPicks {
+	NextPick Lead, ChordStyle, BassStyle, Groove, Tempo, Key;
+	double Bpm() const;
+};
+
+NextPicks NextPicksOf(int Kind, const std::string &TrackName, unsigned int Seed);
+// A pool's entries ("a|b|c")
+std::vector<std::string> PoolEntries(const char *Pool);
+// "a, b or c"
+std::string PoolText(const char *Pool, const char *Single);
+
 const NextKind &NextKindInfo(int Kind);
-// A kind as asked ("calm", "Lively"); false when it's none of the three
+// A kind as asked ("calm", "Lively", "cosy", "caves"); false when it's none of them
 bool ParseNextKind(const std::string &Text, int &Kind);
+// The kinds' names, "calm, lively, cozy, ... or floating"
+std::string NextKindNames();
+// Whether a kind's songs want a major key (calm, cozy and others whose keys are all major), or a minor one (minor or a
+// minor mode: mysterious and others), for what_next's note on a track whose key goes against it
+bool KindWantsMajor(int Kind);
+bool KindWantsMinor(int Kind);
 
 // The chords what_next gives a new song's A part (or its B part, on other
 // chords), eight bars as degrees of its key: "| I | V | vi | IV | ... |"

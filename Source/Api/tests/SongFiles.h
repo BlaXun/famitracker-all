@@ -41,6 +41,7 @@
 #include "Sections.h"
 #include "Song.h"
 #include "Vrc6Plus.h"
+#include "SongSeed.h"
 #include "../../Nsf/FtmFile.h"
 
 namespace ftapi {
@@ -65,7 +66,8 @@ public:
 		KeyStore Keys;
 		MixStore Mix;
 		bool Plus = false;
-		ReadOwnBlocks(Path, Sections, Keys, Mix, Plus);
+		unsigned int Seed = 0;
+		ReadOwnBlocks(Path, Sections, Keys, Mix, Plus, Seed);
 
 		const nsf::Track &T = M.Tracks[static_cast<size_t>(Track)];
 		Info = SongInfo();
@@ -87,6 +89,7 @@ public:
 		Info.FirstHighlight = FileInfo.FirstHighlight;
 		Info.SecondHighlight = FileInfo.SecondHighlight;
 		Info.DirectChanges = true;	// as the user lets Claude change it, so what_next gives its steps (nothing is written)
+		Info.Seed = Seed;
 		Info.Vrc6Plus = Plus && (M.Expansion & nsf::EXP_VRC6) != 0 && (M.Expansion & nsf::EXP_N163) != 0 && M.N163Channels == 4;
 		const int CHIPS[] = { nsf::EXP_VRC6, nsf::EXP_VRC7, nsf::EXP_FDS, nsf::EXP_MMC5, nsf::EXP_N163, nsf::EXP_S5B };
 		const char *const CHIP_NAMES[] = { "VRC6", "VRC7", "FDS", "MMC5", "N163", "5B" };
@@ -230,7 +233,8 @@ private:
 
 	// This fork's blocks, which nsf::ReadFtmFile passes over: the header (18 bytes and the version), then blocks of a
 	// 16-byte name, a version and a size
-	static void ReadOwnBlocks(const std::string &Path, SectionStore &Sections, KeyStore &Keys, MixStore &Mix, bool &Plus)
+	static void ReadOwnBlocks(const std::string &Path, SectionStore &Sections, KeyStore &Keys, MixStore &Mix, bool &Plus,
+		unsigned int &Seed)
 	{
 		std::ifstream File(Path.c_str(), std::ios::binary);
 		const std::vector<unsigned char> Bytes((std::istreambuf_iterator<char>(File)), std::istreambuf_iterator<char>());
@@ -251,6 +255,8 @@ private:
 				Mix.Read(pData, Size, Version);
 			else if (Id == Vrc6PlusMark::BLOCK_ID)
 				Plus = true;
+			else if (Id == SongSeedMark::BLOCK_ID)
+				Seed = SongSeedMark::Read(pData, Size, Version);
 			At += 24 + Size;
 		}
 	}

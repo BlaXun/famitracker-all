@@ -54,6 +54,7 @@
 #include "Vrc6Plus.h"
 #include "Wavetables.h"
 #include "WhatNext.h"
+#include "SongSeed.h"
 #include "NextSteps.h"
 #include "../Nsf/FdsModulator.h"
 #include "../Nsf/FtmFile.h"
@@ -379,6 +380,7 @@ public:
 	SongInfo Song;
 	Timing Time;
 	std::vector<std::string> Remarks;	// told along with the result
+	bool Texture = false;	// style atmospheric (TextureArg): a track of texture over tune, whose checks don't ask for a lead
 
 private:
 	void Unhide()
@@ -2094,7 +2096,18 @@ int StyleArg(const Json &Args)
 		return STYLE_LIVELY;
 	if (Word == "any" || Word == "none" || Word == "normal")
 		return STYLE_ANY;
-	throw Problem("style should be any or calm (also \"ambient\"), or lively.");
+	if (Word == "atmospheric" || Word == "texture")
+		return STYLE_CALM;	// (calm's, and TextureArg: the checks that expect a lead leave it alone)
+	throw Problem("style should be any or calm (also \"ambient\"), lively, or atmospheric (calm's, without asking for a lead).");
+}
+
+// style atmospheric: a track of texture over tune (Metroid's ambience: drones, slow pads, sparse motifs), checked as calm
+// but without what asks for a lead: the melody's phrases (check_song's phrases), its breaths (the review's tip) and the
+// melody covered (listen), as a cue's or a sound effect's checks leave out what music asks for
+bool TextureArg(const Json &Args)
+{
+	const std::string Word = Arg(Args, "style") != 0 ? Squeezed(StringArg(Args, "style")) : std::string();
+	return Word == "atmospheric" || Word == "texture";
 }
 
 // Changes go into the song, or become a clip
@@ -11938,7 +11951,11 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 	int Kind = GROW_LIVELY;
 	std::string KindWhy;
 	const std::string KindText = Squeezed(StringArg(Args, "kind"));
-	if (KindText == "calm" || KindText == "ambient" || KindText == "night" || KindText == "peaceful")
+	int Named = NEXT_GENERAL;	// (a kind of what_next's after cozy grows as its row of KINDS says)
+	const int Grows = !KindText.empty() && ParseNextKind(KindText, Named) && Named > NEXT_COZY ? NextKindInfo(Named).Grow : 0;
+	if (Grows > 0)
+		Kind = Grows == 1 ? GROW_CALM : Grows == 3 ? GROW_ACTION : GROW_LIVELY;
+	else if (KindText == "calm" || KindText == "ambient" || KindText == "night" || KindText == "peaceful")
 		Kind = GROW_CALM;
 	else if (KindText == "action" || KindText == "battle" || KindText == "boss" || KindText == "fight" || KindText == "chase")
 		Kind = GROW_ACTION;
@@ -11958,8 +11975,9 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 			Remarks.push_back(Note);
 		}
 	}
-	else if (KindText != "lively" && KindText != "stage")
-		throw Problem("kind: calm (fewer, longer notes, mostly steps), lively (the default: more motion) or action (drive).");
+	else if (KindText != "lively" && KindText != "stage" && KindText != "cozy" && KindText != "cosy" && Named <= NEXT_COZY)
+		throw Problem("kind: calm (fewer, longer notes, mostly steps), lively (the default: more motion; cozy grows as lively) or "
+			"action (drive).");
 	static const char *const KIND_NAMES[] = { "calm", "lively", "action" };
 	const std::vector<BarSpan> Spans = SongBarSpans(S, First, End);
 	std::string Source;
@@ -12019,7 +12037,9 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 	}
 	Q.SpanOffset = BarsIntoPhrase(From, PhraseAnchor(S), 2) == 0 ? 0 : 1;
 	Q.Kind = Kind;
-	Q.Variant = IntArg(Args, "variant", 1, 1, 1000);
+	// (without variant, a song with a seed starts from one of its own, SongSeed.h; one without from 1)
+	Q.Variant = Arg(Args, "variant") != 0 || S.Song.Seed == 0 ? IntArg(Args, "variant", 1, 1, 1000) : 1 + static_cast<int>(SeededHash(
+		"grow", S.Song.TrackName, S.Song.Seed) % 4);
 	std::vector<GrownVersion> Versions;
 	if (!GrowMelody(Q, Versions, Error))
 		throw Problem(Error);
@@ -15731,7 +15751,8 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	if (Use.Use != TRACK_MUSIC || S.Song.Speed == 1)
 		return Out;	// a cue, a sound effect, or ambience written a row a tick
 	const bool Calm = Style == STYLE_CALM;
-	PhrasesFinding(S, Melody, From, To, Out);
+	if (!S.Texture)
+		PhrasesFinding(S, Melody, From, To, Out);
 	BassFindings(S, Melody, From, To, Calm, K, Out);
 	SoundFindings(S, From, To, Out);
 	FadersFinding(S, Ears, Melody, From, To, Calm, Out);
@@ -15985,6 +16006,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 				"any other).", FormatNumber(std::floor(Bpm + 0.5)).c_str());
 		}
 	}
+	S.Texture = TextureArg(Args);
 	const bool Calm = Chosen.Style == STYLE_CALM, Lively = Chosen.Style == STYLE_LIVELY;
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
 	if (Form != "text" && Form != "short")
@@ -16458,7 +16480,9 @@ std::string ReviewTool(Session &S, const Json &Args)
 		if (Lengths.size() <= 2 && Tune.size() >= 8 && !Calm)
 			Tip(1.0, "The melody keeps one or two note lengths: mix long and short notes (a dotted rhythm, a held note "
 				"at each phrase end, a run of quick notes) with write_notes.");
-		if (Rests == 0 && BarCount >= 8)
+		if (S.Texture)
+			;	// (style atmospheric: a texture's motifs, not a sung line, so no tip about its breaths)
+		else if (Rests == 0 && BarCount >= 8)
 			Tip(1.0, "The melody never rests: a breath of a beat or two between phrases (every 2 or 4 bars) helps it "
 				"sound sung, and leaves room for a counter-melody to answer.");
 		else if (Phrases && Breaths.Breaths < (Calm ? CALM_BREATHING_SHARE : BREATHING_SHARE) * Breaths.Spans && !PiecesFound) {
@@ -21303,6 +21327,8 @@ ShapeRequest ShapeRequestOf(Session &S, const Json &Args)
 	R.Drop = TagsArg(Args, "drop");
 	R.Bars = IntArg(Args, "bars", 0, 4, 256);
 	R.Variant = IntArg(Args, "variant", 0, 1, 99);
+	R.Seed = RolledSeed(S.Song.Seed, IntArg(Args, "seed", 1, 1, 9999));
+	R.Roll = IntArg(Args, "seed", 1, 1, 9999);
 	return R;
 }
 
@@ -21313,8 +21339,9 @@ std::string ShapeChoiceText(const ShapeChoice &C)
 	if (!C.FromWords.empty())
 		Text += "\n" + C.FromWords;
 	if (C.Variants > 1) {
-		Text += Format("\nVariant %d of %d%s. For another form give its variant:", C.Variant, C.Variants, C.VariantFromName ?
-			" (the track's name picks it; the same name always gets the same form)" : "");
+		Text += Format("\nVariant %d of %d%s. For another form give its variant:", C.Variant, C.Variants, !C.VariantFromName ? "" :
+			C.Seed == 0 ? " (the track's name picks it; the same name always gets the same form)" : Format(" (the track's name and the "
+			"song's seed pick it, the same for this song every time; seed %d gives another choice)", C.Roll + 1).c_str());
 		for (size_t i = 0; i < C.Others.size(); ++i)
 			Text += (i == 0 ? " " : "; ") + C.Others[i];
 		Text += ".";
@@ -23128,7 +23155,8 @@ std::string WarningLines(const std::vector<std::string> &Warnings)
 // mix's style, the styles of polish and the checks, and the loudness; KindPolish polish's arguments), so a change to a
 // kind reaches both, and the tools' own styles decide the numbers: a cue or a sound effect, as UseOfTrack tells them,
 // keeps its notes as written and gets its file
-enum finish_kind { FINISH_GENERAL, FINISH_CALM, FINISH_LIVELY, FINISH_ACTION, FINISH_CUE, FINISH_SOUND, FINISH_KIND_COUNT };
+enum finish_kind { FINISH_GENERAL, FINISH_CALM, FINISH_LIVELY, FINISH_ACTION, FINISH_CUE, FINISH_SOUND, FINISH_COZY,
+	FINISH_KIND_COUNT, FINISH_LATER = FINISH_KIND_COUNT };	// (FINISH_LATER: a kind after cozy, which its row of KINDS says)
 
 struct FinishKind {
 	const char *Name;			// as the reply names it: "a lively stage"
@@ -23146,18 +23174,23 @@ const FinishKind FINISH_KINDS[FINISH_KIND_COUNT] = {
 	{ "an action track", NEXT_ACTION, 0.0, "the melody on top with accents on the beats, and the drums driving" },
 	{ "a cue", -1, -20.0, "its last notes dying away before it stops" },
 	{ "a sound effect", -1, -18.0, "how it ends: quietly, without a click" },
+	{ "a cozy track", NEXT_COZY, 0.0,
+		"the tune smiling a little over the chords, the bass bouncing close under it, and the drums (if any) soft" },
 };
 
 // polish's arguments for a kind of music as the recipes have them, for what_next's polish step and finish_song's (one
 // list, so a change to a kind's touches reaches both): a calm song in polish's calm style, a lively stage in its lively
-// style (the default touches, accents and all), the general recipe and action polish's own
+// style (the default touches, accents and all), the general recipe and action polish's own. A cozy song's touches are
+// gentle, calm's: no accents (a cozy tune smiles by its rhythm), a faint vibrato that waits
 Json KindPolish(int Kind)
 {
 	Json A = Json::MakeObject();
-	if (Kind == NEXT_CALM)
+	if (Kind == NEXT_CALM || Kind == NEXT_COZY)
 		A.Set("style", "calm");
 	else if (Kind == NEXT_LIVELY)
 		A.Set("style", "lively");
+	else if (Kind > NEXT_COZY && std::string(NextKindInfo(Kind).Style) != "any")
+		A.Set("style", NextKindInfo(Kind).Style);	// (the later kinds: their style's touches)
 	return A;
 }
 
@@ -23271,7 +23304,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 {
 	// The kind: as given; else a sound effect or a cue as the track plays, calm when its name says so, the general recipe's
 	// otherwise
-	int Kind = FINISH_GENERAL;
+	int Kind = FINISH_GENERAL, Later = NEXT_GENERAL;
 	std::string Why;
 	const TrackUse Use = UseOfTrack(S);
 	if (Arg(Args, "kind") != 0) {
@@ -23282,14 +23315,19 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 			Kind = FINISH_LIVELY;
 		else if (Word == "action" || Word == "battle" || Word == "boss" || Word == "fight")
 			Kind = FINISH_ACTION;
+		else if (Word == "cozy" || Word == "cosy" || Word == "warm" || Word == "homey" || Word == "homely" || Word == "indoors" ||
+			Word == "shop" || Word == "inn" || Word == "house")
+			Kind = FINISH_COZY;
 		else if (Word == "general" || Word == "any")
 			Kind = FINISH_GENERAL;
 		else if (Word == "cue" || Word == "jingle")
 			Kind = FINISH_CUE;
 		else if (Word == "soundeffect" || Word == "sfx" || Word == "effect")
 			Kind = FINISH_SOUND;
+		else if (ParseNextKind(Word, Later) && Later > NEXT_COZY)
+			Kind = FINISH_LATER;
 		else
-			throw Problem("kind: calm, lively or action (or general; a cue or a sound effect is told by how the track plays).");
+			throw Problem("kind: " + NextKindNames() + " (or general; a cue or a sound effect is told by how the track plays).");
 	}
 	else if (Use.Use == TRACK_SOUND) {
 		Kind = FINISH_SOUND;
@@ -23309,9 +23347,11 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 			Why = Format(" (no kind given; it looks calm, %s BPM without drums: kind calm finishes it as a calm track)",
 				FormatNumber(std::floor(Bpm + 0.5)).c_str());
 		else
-			Why = " (no kind given: kind lively for a stage, action for a fight)";
+			Why = " (no kind given: kind lively for a stage, cozy for a warm place indoors, action for a fight)";
 	}
-	const FinishKind &Plan = FINISH_KINDS[Kind];
+	// (the later kinds: their row of KINDS says it)
+	const FinishKind LaterPlan = { NextKindInfo(Later).Title, Later, 0.0, NextKindInfo(Later).Listen };
+	const FinishKind &Plan = Kind == FINISH_LATER ? LaterPlan : FINISH_KINDS[Kind];
 	const bool Arranged = Plan.Next >= 0;	// polish and mix apply (not to a cue or a sound effect)
 	const NextKind &Recipe = NextKindInfo(Arranged ? Plan.Next : NEXT_GENERAL);
 	const double KindLoudness = Arranged ? Recipe.Loudness : Plan.Loudness;
@@ -23513,6 +23553,8 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 		else {
 			Json A = Json::MakeObject();
 			A.Set("format", "json");
+			if (std::string(Recipe.Style) == "atmospheric")
+				A.Set("style", "atmospheric");
 			WithMelody(A);
 			try {
 				ListenTool(Step, A, &Heard);
@@ -25448,7 +25490,11 @@ std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 	if (Form != "text" && Form != "short" && Form != "json")
 		throw Problem("format: text (the default: every finding with what's heard and its fix), short (the counts and the three "
 			"findings heard worst, with their calls) or json.");
-	const ListenReport R = ListenToTrack(S, Args);
+	ListenReport R = ListenToTrack(S, Args);
+	// style atmospheric: a texture's motifs aren't a tune to keep clear, so the melody covered isn't a finding
+	if (TextureArg(Args))
+		R.Findings.erase(std::remove_if(R.Findings.begin(), R.Findings.end(), [](const ListenFinding &F) {
+			return F.Kind == LISTEN_COVERED; }), R.Findings.end());
 	std::vector<Json> Fixes;
 	std::vector<std::string> Advices;
 	int Counts[LISTEN_KINDS] = { 0 };
@@ -25687,6 +25733,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	// A calm track also hears its lead's sound: one that holds a high, steady level presses (calm when asked, or when the
 	// track's name says so)
 	const TrackStyle Chosen = ChooseStyle(S, StyleArg(Args), "also warns about a lead whose sound holds a steady level", "any");
+	S.Texture = TextureArg(Args);
 	std::vector<CheckFinding> Findings[FOUND_KINDS];
 	auto Report = [&](int Kind, int Channel, int Row, int Rows, const std::string &Line, const std::string &Summary) -> CheckFinding & {
 		CheckFinding F;
@@ -26601,7 +26648,7 @@ std::string NewSongTool(Session &S, const Json &Args, const Caller &Who)
 	Text += " The old song's Ctrl+Z history went with it" + (Closed.FileName.empty() ? std::string(".") : "; its file stays as it "
 		"was saved (open_song with name \"" + SongFileBase(Closed.FileName) + "\" opens it again).");
 	return Text + " Next: what_next gives the steps one at a time (a new song's tempo, key and shape first), or get_recipe with a "
-		"kind (calm, lively or action) the whole recipe.";
+		"kind (calm, lively, cozy or action) the whole recipe.";
 }
 
 // open_song's songs: the songs in the Songs folder and the recent files, the newest first
@@ -28255,6 +28302,15 @@ void CalmLeadArgs(Json &A, const ChannelInfo &Lead)
 		A.Set("duty", Lead.Chip == "VRC6" ? "37.5%" : "50%");
 }
 
+// KindFromWordsLine's line as what_next's kind note, which its reply puts after "Kind: " and ends with a full stop
+std::string KindNoteOf(const std::string &Line)
+{
+	std::string Out = Line.compare(0, 6, "Kind: ") == 0 ? Line.substr(6) : Line;
+	if (!Out.empty() && Out.back() == '.')
+		Out.erase(Out.size() - 1);
+	return Out;
+}
+
 // The steps a stage of what_next finds, worked out from the song as it is
 class WhatNext {
 public:
@@ -28271,6 +28327,9 @@ private:
 	std::string m_KindNote;		// how the kind was chosen, when it wasn't given
 	std::string m_About;		// words about the place (about), passed on to song_shape
 	const SongShape *m_pShape;	// the shape an empty song gets (its kind's, its name's or the words')
+	NextPicks m_Picks;			// what the kind's pools give this song (NextPicksOf): its lead, chords, bass, groove, tempo, key
+	unsigned int m_Seed;		// the song's seed rolled by the seed argument (RolledSeed), what the picks mix with the name
+	int m_Roll;					// the seed argument, 1 when none
 	std::vector<std::string> m_SkipWords;
 	std::set<std::string> m_Skip;
 	std::vector<NextStep> m_Steps;	// the steps found, the next first (one unless all are asked for)
@@ -28297,9 +28356,32 @@ private:
 	bool Wanted(const std::string &Id) const { return m_Skip.count(Id) == 0; }
 	bool Looking() const { return m_Steps.empty() || m_All; }
 	bool Calm() const { return m_KindId == NEXT_CALM; }
+	// Polished, mixed and checked in calm's style: a calm song, and a cozy one (calm's places, soft drums kept soft, no accents)
+	bool CalmStyle() const { return std::string(Kind().Style) == "calm" || std::string(Kind().Style) == "atmospheric"; }
+	// A step's words on a pick from the kind's pool: one of several, and another fits ("" for a single value)
+	std::string PoolNote(const NextPick &P, const char *What) const
+	{
+		if (P.Count <= 1)
+			return std::string();
+		return Format(" (%s: one of the %d %s a %s song draws from, %s; another fits if the song wants it, and what_next with "
+			"seed %d gives another choice)", P.Value.empty() ? "none" : P.Value.c_str(), P.Count, What, Kind().Name, m_Seed == 0 ?
+			"the kind's own" : "picked for this song", m_Roll + 1);
+	}
 	// Lush chords' frames a note: a calm song's slow shimmer, a lively stage's fast arpeggios (the soundtrack's first
 	// stages looped their chords at 2-3 frames a note)
-	int LushFrames() const { return Calm() ? 3 : 2; }
+	int LushFrames() const { return CalmStyle() ? 3 : 2; }
+	// The later kinds (after cozy): what they say in their row of KINDS
+	bool Later() const { return m_KindId > NEXT_COZY; }
+	// A tune of few, long notes, mostly by step, as calm's (grow_melody's calm, the offered phrase's rhythm)
+	bool CalmTune() const { return Calm() || Kind().Grow == 1; }
+	// The chords' color before the melody (WithNotes: fitted to a melody there)
+	const char *ChordColor(bool WithNotes) const
+	{
+		if (Later() && Kind().Color != 0)
+			return Kind().Color;
+		return Calm() || (m_KindId == NEXT_LIVELY && WithNotes) ? "rich" : m_KindId == NEXT_LIVELY || m_KindId == NEXT_COZY ? "plain" :
+			"sevenths";
+	}
 	bool Minor() const;
 	std::string ChannelName(int Channel) const { return S.Channel(Channel).FullName(); }
 	// A step: kept when one is still wanted, it isn't skipped and its tool is in the set the caller has
@@ -28372,27 +28454,35 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 	const ShapeWords Words = ReadShapeWords(m_About);
 	if (!Asked.empty()) {
 		if (!ParseNextKind(Asked, m_KindId))
-			throw Problem("kind should be calm, lively or action (or leave it out: calm when the track's name says so, else the "
+			throw Problem("kind should be " + NextKindNames() + " (or leave it out: calm when the track's name says so, else the "
 				"general recipe).");
 		m_KindAsked = true;
 	}
 	else if (Words.pShape != 0) {
-		// The words about the place: their shape's kind
-		const std::string &Kind = Words.pShape->Kind;
-		m_KindId = Kind == "calm" ? NEXT_CALM : Kind == "lively" ? NEXT_LIVELY : Kind == "action" ? NEXT_ACTION : NEXT_GENERAL;
-		m_KindNote = Format("%s, from the words about the place (a %s)", Kind == "general" ? "the general recipe" : Kind.c_str(),
-			Lowercase(Words.pShape->Title).c_str());
+		// The words about the place: their kind (a warm place indoors is cozy, a cave mysterious...), else their shape's
+		const std::string &Kind = Words.Kind;
+		if (Kind == "general" || !ParseNextKind(Kind, m_KindId))
+			m_KindId = NEXT_GENERAL;
+		m_KindNote = !Words.KindWords.empty() ? KindNoteOf(KindFromWordsLine(Words)) : Format("%s, from the words about the place "
+			"(a %s)", Kind == "general" ? "the general recipe" : Kind.c_str(), Lowercase(Words.pShape->Title).c_str());
 	}
 	else if (ChooseStyle(S, -1, "", "any").Style == STYLE_CALM) {
 		// As the other tools choose their style: calm when the track's name says so
 		m_KindId = NEXT_CALM;
-		m_KindNote = "calm, as the track's name says (kind lively or action for another)";
+		m_KindNote = "calm, as the track's name says (kind " + NextKindNames() + " for another)";
+	}
+	else if (!ReadShapeWords(S.Song.TrackName, true).KindWords.empty() && ParseNextKind(ReadShapeWords(S.Song.TrackName,
+		true).Kind, m_KindId)) {
+		// The track's name: a kind's own words ("The Caves", "Hut in a Field")
+		const std::string Line = KindFromWordsLine(ReadShapeWords(S.Song.TrackName, true));
+		const size_t At = Line.find(" (from the words ");
+		m_KindNote = KindNoteOf(Line.substr(0, At) + " (from the track's name: " + Line.substr(At + 17));
 	}
 	else {
 		double Bpm = 0.0;
 		m_KindNote = LooksCalm(S, Bpm) ? Format("none given, so the general recipe; this looks calm (%s BPM, no drums): kind calm "
-			"follows the calm recipe", FormatNumber(std::floor(Bpm + 0.5)).c_str()) : std::string("none given, so the general recipe; "
-			"give kind calm, lively or action for that one's");
+			"follows the calm recipe", FormatNumber(std::floor(Bpm + 0.5)).c_str()) : "none given, so the general recipe; give kind " +
+			NextKindNames() + " for that one's";
 	}
 	// Steps to leave out, as words: "drums", "echo"...
 	const Json *pSkip = Arg(Args, "skip");
@@ -28489,8 +28579,16 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		m_Melody = LeadChannel();
 	m_Form = SongForm(S);
 	m_HasKey = TrackKey(S, 0, Total, m_Key);
+	// The song's seed (SongSeed.h): an empty song without one gets one now (FamiTracker makes one for every new song), so
+	// two songs alike in name and steps still get other picks; seed rolls others (1 is the song's own)
+	m_Roll = IntArg(Args, "seed", 1, 1, 9999);
+	if (S.Song.Seed == 0 && !m_HasNotes && S.Host().MakeSongSeed())
+		S.Load();
+	m_Seed = RolledSeed(S.Song.Seed, m_Roll);
+	m_Picks = NextPicksOf(m_KindId, S.Song.TrackName, m_Seed);
 	// The shape an empty song gets: the words' (without a kind asked), else its kind's (or the one its name asks for)
-	m_pShape = !m_KindAsked && Words.pShape != 0 ? Words.pShape : &ShapeForKind(Kind().Name, S.Song.TrackName);
+	m_pShape = Words.pShape != 0 && (!m_KindAsked || Words.Kind == Kind().Name) ? Words.pShape : &ShapeForKind(Kind().Name,
+		S.Song.TrackName);
 }
 
 bool WhatNext::Step(const std::string &Id, const std::string &Tool, const Json &Arguments, const std::string &Why)
@@ -28860,7 +28958,7 @@ void WhatNext::Frame()
 	if (!Milestone("tempo", (Even && InRange) || !Wanted("tempo"), "tempo " + PaceText(S))) {
 		// The kind's own tempo on a new song or out of its range; else the even one nearest the song's (at the default tempo,
 		// a speed a step)
-		double Want = K.Bpm;
+		double Want = m_Picks.Bpm();
 		if (InRange && m_HasNotes) {
 			const int Default = DefaultTempo(S.Song.FrameRate);
 			double Best = -1.0;
@@ -28877,11 +28975,12 @@ void WhatNext::Frame()
 		Want = std::floor(Want * 10 + 0.5) / 10;
 		Json A = Json::MakeObject();
 		A.Set("bpm", Json::NumberText(FormatNumber(Want)));
-		Step("tempo", "set_tempo", A, !InRange ? Format("%s is %s for a %s song (%s-%s BPM): %s BPM, at a speed and tempo whose "
+		Step("tempo", "set_tempo", A, (!InRange ? Format("%s is %s for a %s song (%s-%s BPM): %s BPM, at a speed and tempo whose "
 			"rows all last the same, so hi-hats and arpeggios stay steady.", PaceText(S, false).c_str(),
 			Bpm < K.SlowestBpm ? "slow" : "fast", K.Name, FormatNumber(K.SlowestBpm).c_str(), FormatNumber(K.FastestBpm).c_str(),
 			FormatNumber(Want).c_str()) : Format("At speed %d and tempo %d the rows aren't all the same length, so hi-hats and "
-			"arpeggios wobble: %s BPM is the nearest whose rows are even.", S.Song.Speed, S.Song.Tempo, FormatNumber(Want).c_str()));
+			"arpeggios wobble: %s BPM is the nearest whose rows are even.", S.Song.Speed, S.Song.Tempo, FormatNumber(Want).c_str())) +
+			(!InRange && !m_HasNotes ? PoolNote(m_Picks.Tempo, "tempos") : std::string()));
 	}
 	if (!Milestone("key", S.Song.KeyChosen || !Wanted("key"), S.Song.KeyChosen ? "key " + KeyChoiceName(S.Song.ChosenKey) : std::string())) {
 		Json A = Json::MakeObject();
@@ -28894,12 +28993,48 @@ void WhatNext::Frame()
 			unsigned int Sum = 0;
 			for (size_t i = 0; i < Seed.size(); ++i)
 				Sum = Sum * 31u + static_cast<unsigned char>(Seed[i]);
-			Name = K.Keys[Sum % 3];
+			Name = K.KeyPool != 0 ? m_Picks.Key.Value : m_Seed != 0 ? std::string(K.Keys[SeededHash("key", S.Song.TrackName, m_Seed) %
+				3]) : std::string(K.Keys[Sum % 3]);
 		}
 		A.Set("key", Name);
 		Step("key", "set_key", A, m_HasNotes ? "The track's key isn't chosen, so the tools guess it from the notes: " + Name + " is what "
 			"they fit, and choosing it keeps every tool (and FamiTracker's piano roll) in it." : "A new song starts from its key: " + Name +
-			" suits a " + K.Name + " song (pick another if the mood asks for it: major bright, minor sad or tense); every tool follows it.");
+			" suits a " + K.Name + " song (pick another if the mood asks for it: major bright, minor sad or tense); every tool follows it." +
+			(m_HasNotes || K.KeyPool == 0 ? std::string() : PoolNote(m_Picks.Key, "keys")));
+	}
+	// A key that goes against the kind: a cozy (or calm) song's keys are all major, and a minor one makes a warm place sad
+	// ("Lost n Found", a cozy hut, came out in C minor and sounded depressing). Said once, at the top of the notes; the
+	// user may mean it, so nothing waits on it
+	if (KindWantsMajor(m_KindId) && Minor()) {
+		const Key Major(m_Key.Tonic, MODE_MAJOR);
+		Json A = Json::MakeObject();
+		std::string Call;
+		if (m_HasNotes && !m_Core) {
+			A.Set("to_mode", "major");
+			Call = "transpose " + WriteJson(A) + " moves its notes into " + KeyName(Major);
+		}
+		else {
+			A.Set("key", KeyName(Major));
+			Call = "set_key " + WriteJson(A) + (m_HasNotes ? std::string(" names it (it moves no notes)") : std::string());
+		}
+		m_Notes.insert(m_Notes.begin(), Format("A %s song wants a major key, and this one is in %s (minor sounds sad here): %s, or "
+			"keep it minor if you mean it.", K.Name, KeyName(m_Key).c_str(), Call.c_str()));
+	}
+	// And a kind whose keys are minor (a mysterious cave's, dorian or minor) on a major key
+	else if (KindWantsMinor(m_KindId) && m_HasKey && !Minor()) {
+		const Key Wanted(m_Key.Tonic, MODE_MINOR);
+		Json A = Json::MakeObject();
+		std::string Call;
+		if (m_HasNotes && !m_Core) {
+			A.Set("to_mode", "minor");
+			Call = "transpose " + WriteJson(A) + " moves its notes into " + KeyName(Wanted);
+		}
+		else {
+			A.Set("key", KeyName(Wanted));
+			Call = "set_key " + WriteJson(A) + (m_HasNotes ? std::string(" names it (it moves no notes)") : std::string());
+		}
+		m_Notes.insert(m_Notes.begin(), Format("A %s song wants a minor key (or dorian), and this one is in %s (major sounds too "
+			"bright here): %s, or keep it if you mean it.", K.Name, KeyName(m_Key).c_str(), Call.c_str()));
 	}
 	// Its shape (SongShapes.h): an empty song gets its kind's sections laid out (song_shape), so every part has its place and
 	// its job before the notes come; a song laid out so has it, one with notes or sections of its own has its own form. (The
@@ -28921,10 +29056,14 @@ void WhatNext::Frame()
 		R.Shape = Own.Id;
 		R.About = m_About;
 		R.TrackName = S.Song.TrackName;
+		R.Seed = m_Seed;
+		R.Roll = m_Roll;
+		if (m_Roll > 1)
+			A.Set("seed", m_Roll);
 		ShapeChoice Choice;
 		std::string Error;
 		const SongShape &Form = MakeSongShape(R, Choice, Error) ? Choice.Shape : Own;
-		const std::string Why = !m_KindAsked && !m_About.empty() && ReadShapeWords(m_About).pShape != 0 ? ", as the words about the "
+		const std::string Why = !m_About.empty() && ReadShapeWords(m_About).pShape == m_pShape ? ", as the words about the "
 			"place ask" : Own.Id != ShapeForKind(K.Name).Id ? ", as the track's name asks" : "";
 		Step("shape", "song_shape", A, Format("A new song starts from its shape: a %s of %d bars (%s)%s, each part a section named "
 			"for what it does, in frames, with the loop after the intro. The next steps fill the parts.", Lowercase(Form.Title).c_str(),
@@ -29101,7 +29240,7 @@ std::string WhatNext::OfferedHook(int FirstBar, int Variant) const
 	std::vector<std::vector<int> > Chord, Sounding;
 	Surroundings(First, End, Chord, Sounding);
 	const std::vector<TuneNote> Tune = ExampleTune(m_HasKey ? m_Key : Key(0, MODE_MAJOR), FirstBar, 2, S.Time.BeatsPerBar(FirstBar),
-		S.Time.RowsPerBeat, Chord, Sounding, Calm(), Variant);
+		S.Time.RowsPerBeat, Chord, Sounding, CalmTune(), Variant);
 	std::string Text;
 	return Tune.size() >= 4 && Tune.size() <= 7 && StepsOf(Tune, FirstBar, 2, false, Text) ? Text : std::string();
 }
@@ -29154,7 +29293,7 @@ NextStep WhatNext::TuneStep(int FirstBar, int Bars, int Variant, const std::stri
 	std::vector<std::vector<int> > Chord, Sounding;
 	Surroundings(First, End, Chord, Sounding);
 	const std::vector<TuneNote> Tune = ExampleTune(m_HasKey ? m_Key : Key(0, MODE_MAJOR), FirstBar, Bars, S.Time.BeatsPerBar(FirstBar),
-		S.Time.RowsPerBeat, Chord, Sounding, Calm(), Variant);
+		S.Time.RowsPerBeat, Chord, Sounding, CalmTune(), Variant);
 	// In steps, as a melody reads and changes most easily; the list of notes when the phrase doesn't fit that grid
 	Json Notes = Json::MakeArray();
 	std::string Text;
@@ -29180,7 +29319,7 @@ NextStep WhatNext::TuneStep(int FirstBar, int Bars, int Variant, const std::stri
 	Out.Why = Format("%s has no melody in bars %d-%d yet. The notes given are a phrase to start from, on its chords (their tones on the "
 		"strong beats, %s): write your own tune in their place, %s.%s", PartName.c_str(), FirstBar, FirstBar + Bars - 1, Bars >= 4 ?
 		"a held note after two bars, a held note and a rest at the end, so it breathes" : "ending on a held note and a rest",
-		Calm() ? "2-4 notes a bar, mostly by step" : "a motif a player would hum, mostly in octave 3, one high point a section",
+		CalmTune() ? "2-4 notes a bar, mostly by step" : "a motif a player would hum, mostly in octave 3, one high point a section",
 		Notes.IsString() ? " They're in steps: each token an eighth, - holds the note before, . rests, | ends a bar (read_notes with format "
 		"steps reads a part back so)." : "") + (m_Core ? " get_recipe shows a whole melody of 8 bars in steps over its chords." : "");
 	return Out;
@@ -29453,8 +29592,7 @@ void WhatNext::GrowForm()
 				End.Name.c_str(), FreeSectionName(S.Song.Sections, First.Base).c_str()));
 		return;
 	}
-	// B: other chords, as long as A, played as A's are
-	const NextKind &K = Kind();
+	// B: other chords, as long as A, played as A's are (the kind's picks)
 	Json B = Json::MakeObject();
 	// A second part of its own (a bridge after B) starts B's chords elsewhere, so the two don't sound alike
 	int Owns = 0;
@@ -29471,11 +29609,11 @@ void WhatNext::GrowForm()
 		B.Set("chord_channel", ChannelName(Here.Chords[0]));
 	if (Here.Bass >= 0)
 		B.Set("bass_channel", ChannelName(Here.Bass));
-	B.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : K.ChordStyle);
-	if (std::string(K.ChordStyle) == "lush" && !(Calm() && S.Song.Vrc6Plus))
+	B.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : m_Picks.ChordStyle.Value.c_str());
+	if (std::string(m_Picks.ChordStyle.Value.c_str()) == "lush" && !(Calm() && S.Song.Vrc6Plus))
 		B.Set("arp_frames", LushFrames());
-	B.Set("color", Calm() ? "rich" : m_KindId == NEXT_LIVELY ? "plain" : "sevenths");	// (lively: Colors gives them theirs)
-	B.Set("bass_style", K.BassStyle);
+	B.Set("color", ChordColor(false));	// (lively: Colors gives them theirs)
+	B.Set("bass_style", m_Picks.BassStyle.Value.c_str());
 	if (m_KindId == NEXT_ACTION)
 		B.Set("bass_instrument", "thump bass");
 	if (Laid >= 0)
@@ -29497,7 +29635,7 @@ void WhatNext::Parts()
 	for (int c = 0; c < S.ChannelCount() && Noise < 0; ++c)
 		if (S.Channel(c).Kind == KIND_NOISE)
 			Noise = c;
-	const bool Drums = !Calm() && !std::string(K.Groove).empty() && Noise >= 0 && Wanted("drums");
+	const bool Drums = !Calm() && !std::string(m_Picks.Groove.Value.c_str()).empty() && Noise >= 0 && Wanted("drums");
 	if (!Drums)
 		m_Away.insert("drums");
 	if (Lead < 0) {
@@ -29509,7 +29647,7 @@ void WhatNext::Parts()
 		m_HasMelody ? std::string() : std::string("the lead's sound (") + K.LeadName + ")")) {
 		Json A = Json::MakeObject();
 		A.Set("name", K.LeadName);
-		A.Set("kind", K.LeadKind);
+		A.Set("kind", m_Picks.Lead.Value);
 		A.Set("channel", ChannelName(Lead));
 		if (m_KindId == NEXT_ACTION) {
 			A.Set("click", true);
@@ -29531,7 +29669,10 @@ void WhatNext::Parts()
 			m_KindId == NEXT_LIVELY ? "a lively stage's lead speaks with a duty click, blooms in, "
 			"settles to 12 and brings a vibrato in after 24 frames (kind bloom lead), as the soundtrack's first stages' leads did." :
 			m_KindId == NEXT_ACTION ? "an action lead that opens up on each note, with a duty "
-			"click so it speaks." : "a lead whose vibrato comes in on long notes.") + " Its reply shows its volume a frame at a time. "
+			"click so it speaks." : m_KindId == NEXT_COZY ? "a cozy place's lead is warm and friendly and never presses (struck "
+			"and falling to a low hold that keeps singing, or breathing in), not a night song's music box, which rings away." :
+			Later() && K.LeadWhy != 0 ? K.LeadWhy : "a lead whose vibrato comes in on long notes.") + " Its reply shows its volume a "
+			"frame at a time." + PoolNote(m_Picks.Lead, "leads") + " "
 			"(For another, find_sound " + WriteJson(Find) + " lists the leads that play there; reference_sound makes a study's, with "
 			"name \"" + K.LeadName + "\".)");
 	}
@@ -29568,19 +29709,20 @@ void WhatNext::Parts()
 				"line: one under the chords." : "The melody plays alone: chords fitted to it, bar by bar, and a bass under them.";
 		}
 		if (A.Get("chord_channel") == 0 || A.Get("chord_channel")->String() != "none") {
-			A.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : K.ChordStyle);
-			if (std::string(K.ChordStyle) == "lush" && !(Calm() && S.Song.Vrc6Plus))
+			A.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : m_Picks.ChordStyle.Value.c_str());
+			if (std::string(m_Picks.ChordStyle.Value.c_str()) == "lush" && !(Calm() && S.Song.Vrc6Plus))
 				A.Set("arp_frames", LushFrames());
 			// A lively stage's chords plain before the melody, their colors given once it's there (Colors): rich chords
 			// written first put ninths and sevenths where the tune then rubbed them (Ironworks2)
-			A.Set("color", Calm() || (m_KindId == NEXT_LIVELY && m_HasNotes) ? "rich" : m_KindId == NEXT_LIVELY ? "plain" : "sevenths");
+			A.Set("color", ChordColor(m_HasNotes));
 		}
 		if (A.Get("bass_channel") == 0 || A.Get("bass_channel")->String() != "none") {
-			A.Set("bass_style", K.BassStyle);
+			A.Set("bass_style", m_Picks.BassStyle.Value.c_str());
 			if (m_KindId == NEXT_ACTION)
 				A.Set("bass_instrument", "thump bass");
 		}
-		Step("chords", "add_chords_and_bass", A, Why);
+		Step("chords", "add_chords_and_bass", A, Why + PoolNote(m_Picks.ChordStyle, "chord styles") + PoolNote(m_Picks.BassStyle,
+			"bass styles"));
 	}
 	if (!m_HasNotes) {
 		m_Unmet.insert("sections");
@@ -29651,9 +29793,29 @@ void WhatNext::Parts()
 		if (From < 0)
 			return;
 		Json A = Json::MakeObject();
-		A.Set("groove", K.Groove);
+		A.Set("groove", m_Picks.Groove.Value.c_str());
 		A.Set("from_bar", From);
 		A.Set("to_bar", To);
+		if (m_KindId == NEXT_COZY) {
+			// Soft and optional: the gentle groove on the noise alone, light (a sampled kick thumps in a small room)
+			A.Set("intensity", "light");
+			Step("drums", "add_drums", A, Format("A cozy place can take a soft beat: the %s groove, light, in bars %d-%d, under the "
+				"tune. Optional: skip drums for a room without one.", m_Picks.Groove.Value.c_str(), From, To) + PoolNote(m_Picks.Groove,
+				"grooves"));
+			return;
+		}
+		if (Later()) {
+			if (K.Intensity != 0 && *K.Intensity)
+				A.Set("intensity", K.Intensity);
+			if (K.Samples)
+				A.Set("kit", "samples");
+			std::string Title = K.Title;
+			Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
+			Step("drums", "add_drums", A, Format("%s wants drums: the %s groove%s%s in bars %d-%d, with a fill where each phrase ends.",
+				Title.c_str(), m_Picks.Groove.Value.c_str(), K.Intensity != 0 && *K.Intensity ? (std::string(", ") + K.Intensity).c_str() : "",
+				K.Samples ? " with kit samples" : "", From, To) + PoolNote(m_Picks.Groove, "grooves"));
+			return;
+		}
 		A.Set("kit", "samples");
 		Step("drums", "add_drums", A, Format("%s wants drums: %s in bars %d-%d, with a fill where each phrase ends.", m_KindId ==
 			NEXT_LIVELY ? "A lively stage" : m_KindId == NEXT_ACTION ? "An action track" : "The song", m_KindId == NEXT_LIVELY ?
@@ -30022,7 +30184,7 @@ bool WhatNext::TipStep(const std::string &Tip)
 		return Wanted("tips") && WouldChange(S, "polish", A) && Step("tips", "polish", A, "review_arrangement: " + Tip);
 	}
 	if (Has("The drums never change where a phrase ends") || Has("The drums repeat one bar") || Has("Every drum plays on the noise")) {
-		if (!Wanted("drums") || std::string(K.Groove).empty() || m_Parts.Drums < 0)
+		if (!Wanted("drums") || std::string(m_Picks.Groove.Value.c_str()).empty() || m_Parts.Drums < 0)
 			return false;
 		// A run of the body's parts where the drums play at a time (an intro or a break between keeps none): the first one
 		// whose bars hardly vary, or (for a sampled kit) without samples
@@ -30056,7 +30218,7 @@ bool WhatNext::TipStep(const std::string &Tip)
 			if (!Due)
 				continue;
 			Json A = Json::MakeObject();
-			A.Set("groove", K.Groove);
+			A.Set("groove", m_Picks.Groove.Value.c_str());
 			A.Set("from_bar", From);
 			A.Set("to_bar", To);
 			A.Set("kit", "samples");
@@ -30095,9 +30257,9 @@ bool WhatNext::TipStep(const std::string &Tip)
 		else {
 			A.Set("bass_channel", "none");
 			A.Set("chord_channel", ChannelName(Channel));
-			A.Set("chord_style", K.ChordStyle);
+			A.Set("chord_style", m_Picks.ChordStyle.Value.c_str());
 			A.Set("color", Calm() || m_KindId == NEXT_LIVELY ? "rich" : "sevenths");
-			if (std::string(K.ChordStyle) == "lush")
+			if (std::string(m_Picks.ChordStyle.Value.c_str()) == "lush")
 				A.Set("arp_frames", LushFrames());
 			Styles.push_back(std::string());
 		}
@@ -30179,9 +30341,9 @@ bool WhatNext::TipStep(const std::string &Tip)
 	if (Has("Most of the melody's notes are gone within"))
 		return LeadSound("tips", Calm() ? "breath" : "pluck", Calm() ? std::string(K.LeadName) : std::string(K.LeadName) + " (lasting)",
 			"review_arrangement: " + Tip);
-	if (Has("The lead presses") && Calm())	// the calm lead's way, which never holds a level
-		return LeadSound("tips", K.LeadKind, K.LeadName, "review_arrangement: " + Tip);
-	if (Has("The song doesn't build") && m_KindId == NEXT_LIVELY)
+	if (Has("The lead presses") && CalmStyle())	// the calm lead's way, which never holds a level
+		return LeadSound("tips", m_Picks.Lead.Value, K.LeadName, "review_arrangement: " + Tip);
+	if (Has("The song doesn't build") && (m_KindId == NEXT_LIVELY || std::string(Kind().Style) == "lively"))
 		return Climax(Tip);
 	return false;
 }
@@ -30191,10 +30353,16 @@ bool WhatNext::TipStep(const std::string &Tip)
 // no channel is free there (the tip stays a note)
 bool WhatNext::Climax(const std::string &Tip)
 {
-	int Last = -1;
+	// The section named as the climax where there is one (a varied stage's A'' can follow it), else the last part
+	int Last = -1, Named = -1;
 	for (size_t i = 0; i < m_Form.size(); ++i)
-		if (m_Form[i].Named && !m_Form[i].Free && !m_Form[i].Empty)
+		if (m_Form[i].Named && !m_Form[i].Free && !m_Form[i].Empty) {
 			Last = static_cast<int>(i);
+			if (IsClimaxName(m_Form[i].Name) && Named < 0)
+				Named = Last;
+		}
+	if (Named >= 0)
+		Last = Named;
 	if (Last < 0 || !m_HasMelody || !Wanted("tips") || !Wanted("second_line"))
 		return false;
 	const FormPart &P = m_Form[static_cast<size_t>(Last)];
@@ -30258,7 +30426,7 @@ void WhatNext::Echo()
 	E.Set("channel", ChannelName(m_Melody));
 	E.Set("to_channel", ChannelName(To));
 	E.Set("delay_beats", 1);
-	E.Set("volume", Calm() ? 5 : 6);
+	E.Set("volume", CalmStyle() ? 5 : 6);
 	E.Set("detune", 1);
 	E.Set("pan", "opposite");
 	if (InstrumentChip(S.Channel(To)) != InstrumentChip(S.Channel(m_Melody)))
@@ -30321,7 +30489,7 @@ void WhatNext::Polish()
 	// Polished when no part plays at one volume (what accents shape) and the other touches would change nothing: accents
 	// on a part whose notes all fall on beats leave two volumes, which the next polish accents again, a step softer each time
 	bool Due = MixDue();
-	if (Due && !Calm() && FlatParts().Size() == 0) {
+	if (Due && !CalmStyle() && FlatParts().Size() == 0) {
 		Json Rest = A;
 		Json T = Json::MakeArray();
 		static const char *const TOUCHES[] = { "vibrato", "separate", "clicks" };
@@ -30330,12 +30498,17 @@ void WhatNext::Polish()
 		Rest.Set("touches", T);
 		Due = WouldChange(S, "polish", Rest);
 	}
-	else if (Due && Calm())
+	else if (Due && CalmStyle())
 		Due = WouldChange(S, "polish", A);
 	if (Milestone("polish", !Wanted("polish") || !Due, "polished"))
 		return;
 	const std::string Why = std::string("Finishing touches before the mix: ") + (Calm() ? "a faint vibrato that comes in late on "
-		"long notes, no accents (a calm song's notes don't push)." : m_KindId == NEXT_LIVELY ? "accents on the beats (a lively stage's "
+		"long notes, no accents (a calm song's notes don't push)." : m_KindId == NEXT_COZY ? "gentle ones: a faint vibrato that comes "
+		"in late on long notes and gaps between repeated notes, no accents (a cozy tune smiles by its rhythm, it doesn't push)." :
+		Later() && CalmStyle() ? "gentle ones: a faint vibrato that comes in late on long notes and gaps between repeated notes, no "
+		"accents." : Later() && std::string(Kind().Style) == "lively" ? "accents on the beats (the lead a step louder on a bar's "
+		"first note), a vibrato on long notes and gaps between repeated notes." :
+		m_KindId == NEXT_LIVELY ? "accents on the beats (a lively stage's "
 		"lead is a step louder on a bar's first note), a vibrato on long notes and gaps between repeated notes." : "accents on the "
 		"beats, a vibrato on long notes and gaps between repeated notes, so the parts sound played rather than typed.");
 	if (!FinishStep("polish", Why))
@@ -30353,6 +30526,11 @@ void WhatNext::Mix()
 	if (Milestone("mix", !Wanted("mix") || !MixDue(), std::string("the mix (") + Kind().MixStyle + ")"))
 		return;
 	const std::string Why = Calm() ? "The mix, last, as heard: the melody 2-3 dB over the chords, the echo and the rest well under it." :
+		m_KindId == NEXT_COZY ? "The mix, last, as heard (calm's places): the melody 2-3 dB over the chords, the bass close under it, "
+		"the soft drums kept as soft as they were written." :
+		Later() && CalmStyle() ? "The mix, last, as heard (calm's places): the melody 2-3 dB over the chords, the echo and the rest "
+		"under it." : Later() && std::string(Kind().MixStyle) == "lively" ? "The mix, last, as heard (lively's places): the melody's "
+		"loudest at 9, the bass about level with it, the chords 3-4 dB under it, the band louder than the melody." :
 		m_KindId == NEXT_LIVELY ? "The mix, last, as heard: a stage's band, the melody's loudest at 9, the bass about level with it, "
 		"the chords 3-4 dB under it and the band louder than the melody." :
 		"The mix, last: the melody's loudest at 9, an echo at 4, chords at 6, the pulses softer so the triangle comes through.";
@@ -30458,7 +30636,10 @@ bool WhatNext::Listened()
 	Json Heard;
 	if (!KeptHeard(Heard)) {
 		Milestone("listened", false);
-		Step("listen", "listen", Json::MakeObject(), "The song changed since it was last heard: before the game's file, listen renders "
+		Json L = Json::MakeObject();
+		if (std::string(Kind().Style) == "atmospheric")
+			L.Set("style", "atmospheric");
+		Step("listen", "listen", L, "The song changed since it was last heard: before the game's file, listen renders "
 			"its real audio as FamiTracker plays it (the mix and each part alone) and reports what an ear would notice that the notes "
 			"can't show: a warble, notes out of tune, "
 			"clicks, a sound that drones on, a covered melody. It changes nothing; the user's own ear has the final word.");
@@ -30625,14 +30806,16 @@ std::vector<NextMilestone> WhatNext::MilestoneStates() const
 	return Out;
 }
 
-// The call that asks again, with the kind and the skips as given
+// The call that asks again, with the kind (as given, or as the words or the track's name chose it) and the skips as given
 Json WhatNext::AgainArgs() const
 {
 	Json Again = Json::MakeObject();
-	if (m_KindAsked || m_KindId == NEXT_CALM)
+	if (m_KindAsked || m_KindId != NEXT_GENERAL)
 		Again.Set("kind", Kind().Name);
 	if (!m_About.empty())
 		Again.Set("about", m_About);
+	if (m_Roll > 1)
+		Again.Set("seed", m_Roll);
 	if (!m_SkipWords.empty()) {
 		Json Words = Json::MakeArray();
 		for (size_t i = 0; i < m_SkipWords.size(); ++i)
@@ -30819,6 +31002,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		R.Shape = Text("shape");
 		R.About = Text("about");
 		R.TrackName = S.Song.TrackName;
+		R.Roll = N.Arguments.Get("seed") != 0 && N.Arguments.Get("seed")->IsNumber() ? static_cast<int>(N.Arguments.Get("seed")->Number()) : 1;
+		R.Seed = RolledSeed(S.Song.Seed, R.Roll);
 		ShapeChoice Choice;
 		std::string Error;
 		return MakeSongShape(R, Choice, Error) ? Format("Lay out the song's shape: %s (%d bars)", Choice.Shape.Title.c_str(),
@@ -31497,8 +31682,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"ask what_next, make the call it gives, ask again. A melody step comes with a phrase on the chords to start from: put your "
 		"own tune in its place.",
 		Schema()
-			.Add("kind", EnumProp("calm, lively or action, as get_recipe has them (default: calm when the track's name says so, else "
-				"the general recipe). Give the same kind every time.", std::vector<std::string>{ "calm", "lively", "action" }))
+			.Add("kind", Prop("string", "A kind of get_recipe's (default: from about or the track's name). Same every time."))
+			.Add("seed", Prop("integer", "2 and on: other picks."))
 			.Add("skip", WordListProp("Steps to leave out, like [\"drums\"] when the user wants none: tempo, key, lead, chords, "
 				"sections, melody, form, drums, second_line, variation, break, intro, loop, tips, colors, echo, polish, mix, seam, save, "
 				"export, "
@@ -31954,9 +32139,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 					"parts start."))
 				.Add("to_bar", BarProp("Last bar, included (up to 32 bars a call). Default: 8 bars."))
 				.SectionChoice()
-				.Add("kind", EnumProp("calm (fewer, longer notes, mostly steps, two-bar phrases), lively (more motion) or action "
-					"(drive). Default: calm when the track's name says so, action when it names a battle, a boss or a chase, else "
-					"lively.", std::vector<std::string>{ "calm", "lively", "action" }))
+				.Add("kind", Prop("string", "calm (fewer, longer notes by step), lively (more motion), action (drive) or another "
+					"kind. Default: by the track's name, else lively."))
 				.Add("variant", Prop("integer", "1 (the default), 2, 3...: each gives other versions, the same ones every time."))
 				.Add("pick", Prop("integer", "Writes this version (1-3) of the variant on the channel, as write_notes writes a line. "
 					"Without it the versions are only shown."))
@@ -32380,6 +32564,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema().Add("shape", Prop("string", "stage, night, town, boss, small or jingle (or a word: calm, battle...)."))
 			.Add("about", Prop("string", "Words about the place: \"a dangerous factory, but not hectic\"."))
 			.Add("variant", Prop("integer", "Which form, from 1 (default: the track's name picks)."))
+			.Add("seed", Prop("integer", "2 and on: another roll."))
 			.Add("add", WordListProp("Parts to put in: climax, break, bridge, outro, intro, b, a'."))
 			.Add("drop", WordListProp("Parts to take out, as add names them."))
 			.Add("bars", Prop("integer", "About how long, 8-256 bars."))
@@ -32473,14 +32658,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"mix in the kind's style (calm, lively, or soft for action and the general recipe), check_loop and fix_loop where "
 			"the seam needs it, listen to the song as it then sounds (kept, so what_next takes it as heard; the reply lists its "
 			"high findings with their fixes), and export_for_game at the kind's loudness (-22 "
-			"LUFS calm, -20 lively and general, -19 action; a cue -20, a sound effect -18). Without a kind it's calm when the "
+			"LUFS calm, -19 action, -20 the rest; a cue -20, a sound effect -18). Without a kind it's calm when the "
 			"track's name says so, else the general recipe's; a cue or a sound effect keeps its notes as written and gets its "
 			"file. The song's changes are one Ctrl+Z; the reply is a line a step, then what to listen for. Run it once the "
 			"parts are written and check_song and review_arrangement are clean. Needs direct changes; the export needs the song "
 			"saved.",
 			Schema()
-				.Add("kind", EnumProp("calm, lively or action (default: calm when the track's name says so, else general).",
-					std::vector<std::string>{ "calm", "lively", "action", "general" }))
+				.Add("kind", Prop("string", "A kind of get_recipe's (default: general, or calm by the track's name)."))
 				.Add("skip", Skips)
 				.Add("faders", EnumProp("auto (the default: back to 0 dB when they do the mix's work), keep (as the user set them) or "
 					"reset (every fader to 0 dB before the mix).", std::vector<std::string>{ "auto", "keep", "reset" }))
@@ -32529,6 +32713,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		Schema().Range()
 			.Add("parts", ChannelListProp("Channels to hear alone (default: each with notes there)."))
 			.Add("melody_channel", ChannelProp("The melody (default: guessed), or \"none\"."))
+			.Add("style", Prop("string", "atmospheric: no melody to keep clear."))
 			.Add("format", EnumProp("text (the default), short (the three heard worst) or json.",
 				std::vector<std::string>{ "text", "short", "json" })),
 		true, false, true);
@@ -32957,11 +33142,11 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 
 	AddTool("get_recipe", "A recipe for composing",
 		"The steps for composing a kind of song with these tools, with the numbers that make it work: calm (only when the "
-		"song is asked to be calm: a place to rest, a night scene, a lullaby), lively (a stage to explore: bouncy, never "
-		"harsh) or action (a fight, a boss, a chase: punchy). Without a kind, how to choose one. Read it before composing.",
+		"song is asked to be calm), lively (a stage), cozy (a shop, an inn), action (a fight) and more. Without a kind, all "
+		"of them and how to choose one. Read it before composing.",
 		Schema()
-			.Add("kind", EnumProp("calm, lively or action (default: how to choose).", std::vector<std::string>{ "calm", "lively",
-				"action" }))
+			.Add("kind", Prop("string", "A kind (default: how to choose)."))
+			.Add("about", Prop("string", "Instead: words about the place; it picks the kind and says which."))
 			.Add("idea", Prop("string", "What the song is for, like \"a river stage by day\", for the recipe to name."))
 			.Add("bars", Prop("integer", "How long, in bars (default 40).")),
 		true, false, true);
@@ -33661,7 +33846,7 @@ std::string ToolSet::CoreInstructions()
 		"FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz.\n"
 		"No song yet: new_song with a name (and expansion, like \"VRC6\"); open_song reopens one; set_expansion switches "
 		"chips.\n"
-		"Work in a loop: get_song, then what_next (with kind calm, lively or action when the user's words say which, and skip "
+		"Work in a loop: get_song, then what_next (with the kind when the user's words say which, and skip "
 		"for what they don't want, like [\"drums\"]; describe the map in about). It answers with the one next step: a tool, its arguments ready to send, "
 		"and why. Make that call, then ask what_next again, until it says done. Its melody steps offer a hook to start from: "
 		"write your own there. Where a check gives a \"Fix:\", send its call as given, then the calls "
@@ -33682,7 +33867,8 @@ std::string ToolSet::CoreInstructions()
 		"strings, bass...), find_sound to look for one (\"soft flute\"), reference_sound for a studied game's, "
 		"set_instrument to give a part another.\n"
 		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: no drums, a music-box "
-		"lead); a stage to explore is lively; a fight or a chase is action. get_recipe gives each one's steps.\n"
+		"lead); a stage to explore is lively; a warm room by day (a shop, an inn) is cozy; a fight or a chase is action; "
+		"get_recipe lists more (about picks one), each with its steps.\n"
 		"- VRC6 Plus (get_song says so): its Soft 1-4 channels are a quieter layer under the VRC6: a pad holding the chords "
 		"(chord_style voices), a soft echo, a sub bass.\n"
 		"- Stereo: a note's \"pan\" in write_notes (left, right, center) lasts for the notes after it; keep the "
@@ -33874,8 +34060,8 @@ std::string ToolSet::Instructions()
 		"is new_song with name (over MCP it's saved into the Songs folder at once), \"save it\" save_song, \"start another\" "
 		"new_song again once it's saved (it refuses over changes that aren't saved), and \"go back to Town\" open_song with name "
 		"(open_song with list true names the songs).\n"
-		"- Three kinds of song, each with a recipe (get_recipe or the compose_track prompt gives the steps, references "
-		"action guide topics calm, lively and action the numbers). Calm only when a song is asked to be calm (a place to rest, a night scene, a "
+		"- Kinds of song, each with a recipe (get_recipe or the compose_track prompt gives the steps, references "
+		"action guide topics of their names the numbers; get_recipe with about picks one from words about the place). Calm only when a song is asked to be calm (a place to rest, a night scene, a "
 		"lullaby): a lead that fades away like a music box (the night songs' favourite: design_instrument kind music box on a "
 		"VRC6 pulse, duty 37.5%, attack bloom), swells in or falls low after its strike (kind breath or falling strike), "
 		"the melody only 2-3 dB over the chords (mix style calm), few long notes by "
@@ -33885,7 +34071,11 @@ std::string ToolSet::Instructions()
 		"climax (polish style lively keeps its accents), the bass about level with the melody and the band louder than it "
 		"(mix style lively), a sampled kick and snare under noise hats where the place has a beat (add_drums with kit "
 		"samples), lush fast arpeggios in bright places, and a climax 2-4 dB over the first A with a second voice harmonizing "
-		"the tune. Action (fights, bosses, chases): punchy as ever. The tools treat a song as calm or lively only when asked "
+		"the tune. Cozy (a warm place indoors by day: a shop, a hut, an inn, a friendly face keeping it; not a night song): a "
+		"major key, 90-112 BPM, a lead struck warm that falls to a low hold (kind falling strike), soft broken chords, a "
+		"bass on root and fifth that bounces, soft drums or none, short phrases of a tune that smiles, polish, mix and the "
+		"checks with style calm. Action (fights, bosses, chases): punchy as ever. The others (mysterious, adventure, floating, "
+		"and more) say theirs in get_recipe. The tools treat a song as calm or lively only when asked "
 		"(style, or a track named \"(night)\"), "
 		"and say when one looks calm. mix style calm or lively mixes as heard, last: no other mix after it.\n"
 		"- Check before you call it done: review_arrangement scores the depth and lists what's missing; aim for 8 out of 10. "
@@ -33946,8 +34136,8 @@ const std::vector<PromptInfo> &ToolSet::Prompts()
 		PromptArgument Idea = { "idea", "What it's for: a place, a scene or a mood, like \"a snowy mountain village at night\".", true };
 		PromptArgument Bars = { "bars", "How long, in bars (default 32).", false };
 		PromptArgument Kind = { "kind", "The kind of song, for its recipe: calm (only when it's asked to be calm: a place to "
-			"rest, a night scene, a lullaby), lively (a stage to explore: bouncy, never harsh) or action (a fight, a boss, a "
-			"chase: punchy). Default: the general recipe.", false };
+			"rest, a night scene, a lullaby), lively (a stage to explore: bouncy, never harsh), cozy (a warm place indoors by "
+			"day: a shop, a hut, an inn) or action (a fight, a boss, a chase: punchy). Default: the general recipe.", false };
 		P.Arguments.push_back(Idea);
 		P.Arguments.push_back(Bars);
 		P.Arguments.push_back(Kind);
@@ -33982,16 +34172,119 @@ const std::vector<PromptInfo> &ToolSet::Prompts()
 	return PROMPTS;
 }
 
-// compose_track's recipe for a kind of song (calm, lively or action): the
-// steps, with the guide's topic of that name after them in numbers
+// The kinds after cozy: their recipes from their rows of KINDS (WhatNext.cpp), the same steps as the others', with
+// their numbers (tempo, keys, sounds, styles, drums, loudness) and words
+static std::string LaterKeys(const NextKind &K)
+{
+	return (K.KeyPool != 0 ? PoolText(K.KeyPool, 0) : std::string(K.Keys[0]) + ", " + K.Keys[1] + " or " + K.Keys[2]) + (K.KeyMode > 0 ? " (a major key: minor makes it sad)" :
+		K.KeyMode < 0 ? " (minor or dorian)" : "");
+}
+
+static std::string LaterDrums(const NextKind &K)
+{
+	if (!*K.Groove && (K.Grooves == 0 || !*K.Grooves))
+		return "No drums (a soft tick on the noise at most, in one section).";
+	return std::string("add_drums groove ") + PoolText(K.Grooves, K.Groove) + (K.Intensity != 0 && *K.Intensity ? std::string(" with intensity ") +
+		K.Intensity : std::string()) + (K.Samples ? " and kit samples" : "") + ", fills where phrases end.";
+}
+
+static std::string LaterKindRecipe(const NextKind &K, const std::string &Idea, const std::string &Bars)
+{
+	const std::string Kind = K.Name, Style = std::string(K.Style) == "any" ? std::string() : std::string(" style ") + K.Style;
+	const SongShape &Shape = ShapeForKind(Kind);
+	std::string T = "Compose " + std::string(K.Title) + " in FamiTracker for this: " + Idea + ". It's for " + K.Place + ": " + K.Feel +
+		". Make it sound composed by a person. Work through these steps with the FamiTracker tools; the recipe after them has "
+		"the numbers.\n"
+		"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them. If the idea or the "
+		"notes name a composer, a game or a reference, look it up in the reference library (references, action search, "
+		"then show) and lean on what the studies show; write your own melody and chords.\n"
+		"2. Decide, and tell me in a few lines: the key and mode, the tempo, the form for " + Bars + " bars (the " +
+		Lowercase(Shape.Title) + "'s: " + Shape.PartsText() + "), what each channel plays and where it sits (left, middle, right), "
+		"and the lead's sound with its envelope.\n"
+		"3. set_tempo at an even tempo between " + FormatNumber(K.SlowestBpm) + " and " + FormatNumber(K.FastestBpm) + " BPM (" +
+		PoolText(K.Tempos, 0) + " suit it). For a meter other than 4/4, set_meter before any notes. name_song (title and track), "
+		"set_key: " + LaterKeys(K) + ". On an empty song, song_shape lays the form out at once (shape " + Shape.Id + "): its "
+		"frames, each part a section named for what it does, the loop after the intro.\n"
+		"4. The lead's sound first: " + K.LeadWhy + " design_instrument kind " + PoolText(K.Leads, K.LeadKind) + " (or another "
+		"that suits it), one for the whole track. Read its "
+		"volume sequence in the reply before writing the tune.\n"
+		"5. Chords and bass: add_chords_and_bass with chords you choose (a chord a bar; other chords for the B part), "
+		"chord_style " + PoolText(K.ChordStyles, K.ChordStyle) + ", color " + K.Color + " (a seventh or a ninth a semitone from a "
+		"tune note rubs), bass_style " + PoolText(K.BassStyles, K.BassStyle) + " (" + K.MovingBass + " where it moves). These are "
+		"options, not a preset: what_next picks one of each for the song, and any other that fits the song is right too.\n"
+		"6. The melody with write_notes, phrase by phrase: " + K.Melody + ". The melody must breathe: about 2 of every 3 two-bar "
+		"spans end on a rest of a beat or more or a note held two beats or more. Write it in steps (notes as text: \"5: D4 G4 A4 "
+		"B4 - A4 G4 -\", - holds across | too): it breathes at a phrase's end, not at every bar line. Or write the hook alone and "
+		"grow_melody (kind " + Kind + ") grows it over the chords in versions: pick the one that sings, then shape it by hand.\n"
+		"7. The form: name each section as it takes shape (name_section), copy_bars for the repeats, each made different (" +
+		K.Depth + "), and a break before the loop comes round.\n"
+		"8. Drums: " + LaterDrums(K) + " Depth: add_echo a beat behind on the other side where it leaves the tune room, a "
+		"little Space (set_mixer).\n"
+		"9. Finish: polish" + Style + ", then mix style " + K.MixStyle + " last (as heard; no other mix after it).\n"
+		"10. Check: review_arrangement" + Style + " (8 or more; fix what it lists), check_song" + Style + " (0 clicking, 0 "
+		"vanishing, no clashes you didn't mean), measure_mix" + Style + " with melody_channel the lead (the intro 6-10 dB under "
+		"the main part, the two sides within 2 dB); fix what they find and check again.\n"
+		"11. set_loop from the bar after the intro, then check_loop and fix_loop until the seam is clean.\n"
+		"12. save_song; measure_mix with loudness " + FormatNumber(K.Loudness) + " and stems false shows each section as the file "
+		"will have it. Play it for me and ask what I'd change; keep what I like in soundtrack_notes.\n"
+		"When the parts are written, finish_song with kind " + Kind + " does step 9, step 11's seam and the file in one call: it "
+		"polishes, mixes, fixes the loop's seam, listens and exports at that loudness. Fix what it heard with the calls it gives, "
+		"then export_for_game again.\n\n";
+	return T + StyleGuideTopic(Kind);
+}
+
+static std::string LaterCoreRecipe(const NextKind &K)
+{
+	const std::string Kind = K.Name, Style = std::string(K.Style) == "any" ? std::string() : std::string(" with style ") + K.Style;
+	const SongShape &Shape = ShapeForKind(Kind);
+	return "A " + Kind + " track (" + K.Place + "): " + K.Feel + ". With this set's tools.\n"
+		"Work in a loop: what_next with kind " + Kind + " gives the next step with its call, ready to send; make it, then ask "
+		"what_next again, until it says done. It follows this plan, from the song as it is:\n"
+		"1. get_song. Plan: the key (set_key with " + LaterKeys(K) + "), the tempo (set_tempo with bpm " + PoolText(K.Tempos, 0) + "; " +
+		FormatNumber(K.SlowestBpm) + "-" + FormatNumber(K.FastestBpm) + "), the form (song_shape with shape " + Shape.Id + ": " +
+		Shape.PartsText() + ") and what each channel plays.\n"
+		"2. The lead's sound first: design_instrument, kind " + PoolText(K.Leads, K.LeadKind) + ". Read its volume sequence in the "
+		"reply.\n"
+		"3. add_chords_and_bass with chords you choose, chord_style " + PoolText(K.ChordStyles, K.ChordStyle) + ", color " + K.Color +
+		", bass_style " + PoolText(K.BassStyles, K.BassStyle) + " (options: what_next picks one of each for the song).\n"
+		"4. The melody: write only the hook, 4-7 notes in steps (\"D4 - F4 - A4 - G4 -\"), and grow_melody with kind " + Kind +
+		" and the section grows it over the chords: pick the version whose shape fits (variant 2 for others), then shape it by "
+		"hand (read_notes with format steps, write_notes). It wants " + K.Melody + "; each phrase ends on a held note or a rest "
+		"(not at every bar line). A melody of 8 bars that works, in C major over | C | Am | F | G | C | Am | F G | C | (each "
+		"two-bar phrase ends on a held note or a rest; chord tones on the beats, steps between them): \"1: E3 - G3 - C4 - - B3 | "
+		"2: A3 - - - E3 - . . | 3: F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | 5: E3 - G3 - C4 - - E4 | 6: D4 - C4 - A3 - - - | "
+		"7: A3 - C4 - B3 - D4 - | 8: C4 - - - - - . .\"\n"
+		"5. " + (*K.Groove ? "add_drums with groove " + PoolText(K.Grooves, K.Groove) + (K.Intensity != 0 && *K.Intensity ? std::string(" and "
+		"intensity ") + K.Intensity : std::string()) + "; then depth: " : std::string("No drums. Depth: ")) + "add_harmony in the "
+		"repeat, vary_part where a part comes back unchanged, and add_echo a beat behind, last (delay_beats 1, pan opposite).\n"
+		"6. check_song" + Style + " (0 clicking, 0 vanishing) and review_arrangement" + Style + " (8 or more). Fix what they find "
+		"and check again.\n"
+		"7. When the parts are written: finish_song with kind " + Kind + ". It polishes, mixes (style " + K.MixStyle + "), fixes "
+		"the loop's seam, listens and exports at " + FormatNumber(K.Loudness) + " LUFS in one call; fix what it heard with the "
+		"calls it gives, then export_for_game again.\n"
+		"8. save_song, and play it for the user.";
+}
+
+// compose_track's recipe for a kind of song (calm, lively, cozy or action): the
+// steps, with the guide's topic of that name after them in numbers. A cozy song
+// is checked and mixed in calm's style (Style), its own words otherwise (Of)
 static std::string KindRecipe(const std::string &Kind, const std::string &Idea, const std::string &Bars)
 {
-	const bool Calm = Kind == "calm", Lively = Kind == "lively";
-	const std::string Style = Calm ? " style calm" : (Lively ? " style lively" : "");
+	int Later = NEXT_GENERAL;
+	if (ParseNextKind(Kind, Later) && Later > NEXT_COZY)
+		return LaterKindRecipe(NextKindInfo(Later), Idea, Bars);
+	const bool Calm = Kind == "calm", Lively = Kind == "lively", Cozy = Kind == "cozy";
+	const std::string Style = Calm || Cozy ? " style calm" : (Lively ? " style lively" : "");
+	// The text for this kind: calm's, lively's, cozy's or action's
+	auto Of = [&](const char *ForCalm, const char *ForLively, const char *ForCozy, const char *ForAction) {
+		return std::string(Calm ? ForCalm : Lively ? ForLively : Cozy ? ForCozy : ForAction);
+	};
 	std::string T = "Compose a " + Kind + " track in FamiTracker for this: " + Idea + ". ";
-	T += Calm ? "It's a calm song: peaceful on the surface, with depth underneath, and its melody must never press. " :
-		Lively ? "It's a lively stage: it bounces and drives, its lead inside a full band, and it builds to a climax. " :
-		"It's an action track: punchy and driving, the melody on top. ";
+	T += Of("It's a calm song: peaceful on the surface, with depth underneath, and its melody must never press. ",
+		"It's a lively stage: it bounces and drives, its lead inside a full band, and it builds to a climax. ",
+		"It's a cozy place: warm, by day, indoors (a shop, a hut, an inn, someone friendly keeping it), a tune that smiles over "
+		"a bass that bounces, never sleepy and never sad. ",
+		"It's an action track: punchy and driving, the melody on top. ");
 	T += "Make it sound composed by a person. Work through these steps with the FamiTracker tools; the recipe after them "
 		"has the numbers.\n"
 		"1. get_song; if it mentions soundtrack notes, read them with soundtrack_notes and keep to them. If the idea or the "
@@ -33999,46 +34292,67 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"then show) and lean on what the studies show (tempo and feel, form, chord colors, how the channels share the parts, "
 		"sounds and tricks); write your own melody and chords.\n"
 		"2. Decide, and tell me in a few lines: the key and mode, the tempo, the form for " + Bars + " bars (" +
-		(Calm ? "an intro of the chords alone, A, A', B, a break without the melody, A''" :
-		Lively ? "an intro that builds, A, A', B, a climax (the tune at its biggest, with a harmony), a break without the "
-		"melody or the drums before the loop comes round" :
+		Of("an intro of the chords alone, A, A', B, a break without the melody, A''",
+		"an intro that builds, A, A', B, a climax (the tune at its biggest, with a harmony), a break without the "
+		"melody or the drums before the loop comes round",
+		"a short intro of the chords and bass, A, A', B on other chords, A'' (its fullest time round), a short break; a "
+		"small room's loop can be half as long",
 		"a short, tense intro, A, A', a climax, a short break before the loop") +
 		"), what each channel plays and where it sits (left, middle, right), and the lead's sound with its envelope.\n";
-	T += std::string("3. ") + (Calm ? "set_tempo at a slow, even tempo (64.3, 69.2, 75 or 81.8 BPM: speed 14, 13, 12 or 11 at "
+	T += "3. " + Of("set_tempo at a slow, even tempo (64.3, 69.2, 75 or 81.8 BPM: speed 14, 13, 12 or 11 at "
 		"tempo 150). For softness and depth on the VRC6, set_expansion chips [\"VRC6 Plus\"] first: its soft layer holds pads, "
-		"a choir and a soft echo under the VRC6." :
-		Lively ? "set_tempo at an even tempo between 112 and 160 BPM (150, 128.6 or 112.5: speed 6, 7 or 8 at tempo 150); "
-		"set_swing with a percentage (56-60) for a light swing." :
+		"a choir and a soft echo under the VRC6.",
+		"set_tempo at an even tempo between 112 and 160 BPM (150, 128.6 or 112.5: speed 6, 7 or 8 at tempo 150); "
+		"set_swing with a percentage (56-60) for a light swing.",
+		"set_tempo at a walking pace, even: 100 BPM (speed 9 at tempo 150), 90 (speed 10) or 112.5 (speed 8); a light swing "
+		"(set_swing 56-60) or a waltz or 6/8 lilt (set_meter) suits a cozy room too. set_key a major key (F, Bb, C, G or D "
+		"major): a minor one makes a warm place sad.",
 		"set_tempo at an even tempo between 140 and 190 BPM (150 is speed 6; speed 7 with tempo 191 gives even eighths at "
 		"163.7).") + " For a meter other than 4/4, set_meter before any notes. name_song (title and track), set_key. On an "
-		"empty song, song_shape lays that form out at once (shape " + std::string(Calm ? "night" : Lively ? "stage" : "boss") +
-		"): its frames, each part a section named for what it does, the loop after the intro.\n";
-	T += std::string("4. The lead's sound first: ") + (Calm ? "design_instrument kind music box, breath or falling strike, one "
+		"empty song, song_shape lays that form out at once (shape " + Of("night", "stage", "town, or small for a small room",
+		"boss") + "): its frames, each part a section named for what it does, the loop after the intro.\n";
+	T += "4. The lead's sound first: " + Of("design_instrument kind music box, breath or falling strike, one "
 		"for the whole track. Try first the lead the listener liked best of the night songs: kind music box on a VRC6 pulse, "
 		"duty 37.5% (50% on the 2A03) and attack bloom (it blooms in over two frames, without a duty click), struck and "
 		"ringing away to silence within about a beat for a tune in quarter notes, over 1.5-2 beats for one in halves (decay "
-		"in frames: the reply gives the song's beat), never holding a level" : Lively ? "the soundtrack's stage lead: design_instrument kind bloom lead with restrike_beats 0 "
+		"in frames: the reply gives the song's beat), never holding a level", "the soundtrack's stage lead: design_instrument kind bloom lead with restrike_beats 0 "
 		"(a 25% pulse that speaks with a 12.5% duty click, blooms 10-12-15 in two frames, settles to 12 and brings a vibrato in "
-		"after 24 frames; 15-27 suit a stage), or the singing lead preset" : "a lead with life that stands out (the singing lead, brass or strings presets, or "
+		"after 24 frames; 15-27 suit a stage), or the singing lead preset",
+		"a warm sound that's struck and keeps singing low: design_instrument kind falling strike (struck at 15, falling to "
+		"about 6 and holding, a faint vibrato that waits), keys, or breath (swelling in, holding low); on the VRC7 a flute or "
+		"a piano patch. Not a night song's music box, which rings away, and nothing that holds a high level. what_next "
+		"picks one of falling strike, keys and breath for each song, so cozy songs don't all sound alike",
+		"a lead with life that stands out (the singing lead, brass or strings presets, or "
 		"design_instrument kind bloom lead with restrike_beats 0.5, or stepped lead, with a duty click)") + ". Read its volume "
 		"sequence in the reply "
 		"before writing the tune.\n";
-	T += std::string("5. Chords and bass: add_chords_and_bass with chords you choose, ") + (Calm ? "slow and colored (a chord a "
+	T += "5. Chords and bass: add_chords_and_bass with chords you choose, " + Of("slow and colored (a chord a "
 		"bar or two: m7, maj7, add9, sus2; plagal turns and the minor iv; the loop's last bar open). Under the lead, the night "
 		"songs' best texture: a soft broken chord in eighths (chord_style broken on the other pulse, a struck sound at volume "
 		"3-5, a little to one side), held maj7 and m7 pads, strummed (chord_style voices on the soft layer, strum 2), and a "
 		"soft heartbeat on the triangle (the root on beats 1 and 3, each note a row long), kept out of the intro and the "
 		"break. Or chord_style lush (arp_frames 3-4; chord_instrument a pad you designed, which each chord copies) under "
-		"the melody, and a bass of few long notes kept out of the intro and the break" : Lively ? "colored (a chord a bar: sevenths, "
+		"the melody, and a bass of few long notes kept out of the intro and the break", "colored (a chord a bar: sevenths, "
 		"add9, sus; bVI and bVII for a lift): in a bright place chord_style lush with arp_frames 2 or 3 (fast lush arpeggios on a "
 		"pulse at volume 4-7, the soundtrack's own chord sound), else broken or stabs, and a bass_style that bounces (root and "
-		"fifth, walking, octaves) on the triangle" : "with tension (minor, phrygian or harmonic minor; "
+		"fifth, walking, octaves) on the triangle",
+		"plain and friendly (a chord a bar: I vi IV V, I IV ii V, a sixth or a sus2 for warmth, IV and the relative minor in "
+		"B): chord_style broken (a soft pluck picking the chord in eighths), lush (slow, soft) or stabs (on the offbeats), "
+		"under the melody, color plain while the tune is being written (a ninth or a seventh a semitone from a tune note "
+		"rubs), and a bass_style that bounces but stays light on the triangle: root_fifth, walking or half (what_next picks "
+		"one of each per song; any that fits is right)",
+		"with tension (minor, phrygian or harmonic minor; "
 		"bVI-bVII-i), a driving chord_style and bass_style (octaves, a gallop; bass_instrument \"thump bass\" for punch)") +
 		". Other chords for the B part.\n";
-	T += std::string("6. The melody with write_notes, phrase by phrase: ") + (Calm ? "2-4 notes a bar, mostly by step and "
+	T += "6. The melody with write_notes, phrase by phrase: " + Of("2-4 notes a bar, mostly by step and "
 		"repeated notes, two-bar phrases each ending with a rest of a beat or more, one gentle high point a section, a few "
 		"notes a frame or two late (Gxx 01-02), in a rhythm and a shape of the tune's own: not quarter notes by step every "
-		"time (a dotted rhythm, a rest on beat 1, a turn around the high note, a fall of a sixth after it)" :
+		"time (a dotted rhythm, a rest on beat 1, a turn around the high note, a fall of a sixth after it)",
+		"a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
+		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, mostly in octave 3",
+		"a tune that smiles: short phrases of 2 bars, question and answer, each ending on a held note or a rest, a skip up "
+		"(a third, a sixth) and steps down, a dotted or a lilting rhythm, chord tones on the beats, the answer coming home to "
+		"the tonic; mostly in octave 3",
 		"a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
 		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, mostly in octave 3") +
 		". The melody must breathe: about 2 of every 3 two-bar spans end on a rest of a beat or more or a note held two "
@@ -34048,45 +34362,56 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"shape it by hand.\n";
 	T += std::string("7. The form: name each section as it takes shape (name_section), an intro of 2-4 bars that plays once, "
 		"6-10 dB under the main part (insert_bars at bar 1, copy_bars with channels), copy_bars for the repeats, each made "
-		"different (") + (Calm ? "an echo or a second voice joining (add_counter_melody style calm answers only in the melody's "
-		"rests), the soft layer, another register; never drums" : Lively ? "a counter-melody (add_counter_melody rests "
+		"different (") + Of("an echo or a second voice joining (add_counter_melody style calm answers only in the melody's "
+		"rests), the soft layer, another register; never drums", "a counter-melody (add_counter_melody rests "
 		"answer) or harmony only the second time, busier drums, another voicing), a climax 2-4 dB over the first A (A'' or B: "
 		"a second voice harmonizing the tune in thirds or sixths with add_harmony, the bass in octaves, busier drums and a "
-		"crash, the lead a step louder" : "a counter-melody or harmony only the "
+		"crash, the lead a step louder",
+		"a harmony a third under the tune the second time (add_harmony), the soft beat coming in, the bass walking in B, "
+		"another voicing; A'' the fullest",
+		"a counter-melody or harmony only the "
 		"second time, busier drums, another voicing") + "), and a break before the loop "
 		"comes round.\n";
-	T += std::string("8. Depth: ") + (Calm ? "add_echo a beat behind from the second A on (delay_beats 1, detune 1, pan "
+	T += "8. Depth: " + Of("add_echo a beat behind from the second A on (delay_beats 1, detune 1, pan "
 		"opposite, about 8 dB under; on the VRC6 Plus onto a soft channel with the soft flute), a pad or choir under the "
 		"chords, one small event in the break (a clock far off striking, a kettle's sigh: a sound of its own on a free "
 		"channel, a few notes far to one side with Space), and set_mixer's Soft and Space for the place (a room; space on "
-		"pads and the lead, the bass dry). No drums" : Lively ? "a sampled beat where the place has one "
+		"pads and the lead, the bass dry). No drums", "a sampled beat where the place has one "
 		"(add_drums with kit samples: a sampled kick, a sampled snare on 2 and 4 under noise hats, fills where phrases end; "
 		"groove lively, soft hats and a soft kick with no snare, only for a gentle place), add_echo a beat behind on the other "
-		"side (6-8 dB under) where it leaves the tune room, a little Space" : "add_drums with kit samples (a sampled kick and snare "
+		"side (6-8 dB under) where it leaves the tune room, a little Space",
+		"a soft beat, if the room has one: add_drums groove lively with intensity light (soft closed hats and a soft kick, no "
+		"snare, on the noise alone: a sampled kick thumps in a small room), add_echo a beat behind on the other side at about "
+		"40%, set_mixer room small room and a little Space on the chords",
+		"add_drums with kit samples (a sampled kick and snare "
 		"under noise hats) and fills where phrases end, add_echo where it leaves room, a counter-melody or harmony in the "
 		"repeats") + ".\n";
-	T += std::string("9. Finish: ") + (Calm ? "polish style calm" : Lively ? "polish style lively (its default touches: accents, "
-		"a vibrato on long notes, separate, clicks; scoops and falls on chosen bars, staccato for a bass that bounces)" :
-		"polish (its default touches; scoops and falls on chosen bars)") + ", then mix" + (Calm || Lively ? Style :
-		" (style soft, the default, or full)") + " last" + (Calm ? " (it mixes as heard and its reply says how far each part "
-		"sits under the melody; no other mix after it)" : Lively ? " (as heard, a stage's band: the melody's loudest at 9, the "
+	T += "9. Finish: " + Of("polish style calm", "polish style lively (its default touches: accents, "
+		"a vibrato on long notes, separate, clicks; scoops and falls on chosen bars, staccato for a bass that bounces)",
+		"polish style calm (gentle touches: a faint vibrato that waits, separate, clicks; no accents: a cozy tune smiles by its "
+		"rhythm; staccato on the bass where it should bounce)",
+		"polish (its default touches; scoops and falls on chosen bars)") + ", then mix" + (Calm || Lively || Cozy ? Style :
+		" (style soft, the default, or full)") + " last" + Of(" (it mixes as heard and its reply says how far each part "
+		"sits under the melody; no other mix after it)", " (as heard, a stage's band: the melody's loudest at 9, the "
 		"bass about level with it, the chords together 3-4 dB under it, an echo 6-8 under, the hats about 10 under, so the band "
-		"plays louder than the melody; no other mix after it)" : "") + ".\n";
-	T += "10. Check: review_arrangement" + Style + " (8 or more; " + (Calm ? "its tips that the melody doesn't stand out or "
-		"has few, long notes are expected here" : Lively ? "fix what it lists: a climax under 2 dB over the first A, a lead at "
-		"one volume, a band quieter than its melody" : "fix what it lists") + "), check_song" + Style + " (0 clicking, 0 "
-		"vanishing, no clashes you didn't mean" + (Calm ? ", no held lead" : "") + "), measure_mix" + Style + " with "
-		"melody_channel the lead (" + (Calm ? "the melody 2-3 dB over the chords, " : Lively ? "the melody about level with the "
-		"bass and 3-4 dB over the chords together, the band louder than it, each section's loudness building to the climax, " : "") +
+		"plays louder than the melody; no other mix after it)", " (as heard, calm's places: the melody 2-3 dB over the chords, "
+		"the bass close under it, soft drums kept as soft as written; no other mix after it)", "") + ".\n";
+	T += "10. Check: review_arrangement" + Style + " (8 or more; " + Of("its tips that the melody doesn't stand out or "
+		"has few, long notes are expected here", "fix what it lists: a climax under 2 dB over the first A, a lead at "
+		"one volume, a band quieter than its melody", "fix what it lists", "fix what it lists") + "), check_song" + Style + " (0 "
+		"clicking, 0 vanishing, no clashes you didn't mean" + (Calm || Cozy ? ", no held lead" : "") + "), measure_mix" + Style +
+		" with melody_channel the lead (" + Of("the melody 2-3 dB over the chords, ", "the melody about level with the "
+		"bass and 3-4 dB over the chords together, the band louder than it, each section's loudness building to the climax, ",
+		"the melody 2-3 dB over the chords, ", "") +
 		"the intro 6-10 dB under the main part, the "
 		"two sides within 2 dB); fix what they find (set_mixer with change moves the faders it names) and check again, "
 		"measure_mix with parts [\"chords\"] or stems false for a quick look, all the stems once at the end.\n"
 		"11. set_loop from the bar after the intro, then check_loop and fix_loop until the seam is clean; look_at_song on a "
 		"section or two.\n"
-		"12. save_song; measure_mix with loudness " + std::string(Calm ? "-22" : Lively ? "-20" : "-19") + " and stems false "
+		"12. save_song; measure_mix with loudness " + Of("-22", "-20", "-20", "-19") + " and stems false "
 		"shows each section as the file will have it. Play it for me and ask what I'd change; keep what I like in "
 		"soundtrack_notes.\n"
-		"When the parts are written, finish_song with kind " + std::string(Calm ? "calm" : Lively ? "lively" : "action") + " does "
+		"When the parts are written, finish_song with kind " + Kind + " does "
 		"step 9, step 11's seam and the file in one call: it polishes, mixes, fixes the loop's seam, listens and exports at "
 		"that loudness. Fix what it heard with the calls it gives, then export_for_game again.\n\n";
 	T += StyleGuideTopic(Kind);
@@ -34094,8 +34419,22 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 }
 
 // get_recipe's text for the small set (/mcp/core): a kind's steps naming only that set's tools
+// The kinds after cozy, a line each, for the recipes that say how to choose one
+static std::string LaterKindsList()
+{
+	std::string Out;
+	for (int k = NEXT_COZY + 1; k < NEXT_KIND_COUNT; ++k) {
+		const NextKind &K = NextKindInfo(k);
+		Out += "- " + std::string(K.Name) + ": " + K.Place + ". " + K.Feel + ".\n";
+	}
+	return Out;
+}
+
 static std::string CoreRecipe(const std::string &Kind)
 {
+	int Later = NEXT_GENERAL;
+	if (!Kind.empty() && ParseNextKind(Kind, Later) && Later > NEXT_COZY)
+		return LaterCoreRecipe(NextKindInfo(Later));
 	// Each kind's plan for the what_next loop, and a worked melody of 8 bars in steps (Help > Example songs' First song)
 	if (Kind == "calm")
 		return
@@ -34162,6 +34501,37 @@ static std::string CoreRecipe(const std::string &Kind)
 		"the loop's seam, listens and exports at -20 LUFS in one call; fix what it heard with the calls it gives, then "
 		"export_for_game again.\n"
 		"8. save_song, and play it for the user.";
+	if (Kind == "cozy")
+		return
+		"A cozy place (a warm room by day: a shop, a hut, an inn, someone friendly keeping it): a tune that smiles over a "
+		"bass that bounces, never sleepy or sad. With this set's tools.\n"
+		"Work in a loop: what_next with kind cozy gives the next step with its call, ready to send; make it, then ask "
+		"what_next again, until it says done. It follows this plan, from the song as it is:\n"
+		"1. get_song. Plan: a major key (set_key with F, Bb, C, G or D major: minor makes a warm place sad), a walking pace "
+		"(set_tempo with bpm 100; 90-112.5), a form of 14-40 bars (a short intro, A, A', B on other chords, A again; a small "
+		"room's loop shorter) and what each channel plays.\n"
+		"2. The lead's sound first: design_instrument, kind falling strike (struck warm, falling to a low hold that keeps "
+		"singing), keys or breath. Read its volume sequence in the reply.\n"
+		"3. add_chords_and_bass with plain, friendly chords you choose (| I | vi | IV | V |, a sixth or sus2 for warmth), "
+		"chord_style broken, lush or stabs, color plain, bass_style root_fifth, walking or half (what_next picks one of each "
+		"per song).\n"
+		"4. The melody: write only the hook, 4-7 notes in steps (\"C4 - E4 G4 A4 - G4 -\"), and grow_melody with kind cozy and "
+		"the section grows it over the chords: pick the version whose shape fits (variant 2 for others), then shape it by hand "
+		"(read_notes with format steps, write_notes). It wants short phrases of 2 bars, question and answer, each ending on a "
+		"held note or a rest (not at every bar line), a skip up and steps down, chord tones on the beats, the answer coming "
+		"home. A melody of 8 bars "
+		"that works, in C major over | C | Am | F | G | C | Am | F G | C |: \"1: E3 - G3 - C4 - - B3 | 2: A3 - - - E3 - . . | 3: "
+		"F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | 5: E3 - G3 - C4 - - E4 | 6: D4 - C4 - A3 - - - | 7: A3 - C4 - B3 - D4 - | "
+		"8: C4 - - - - - . .\"\n"
+		"5. add_drums with groove lively and intensity light (soft hats and a soft kick, no snare), only if the room has a "
+		"beat; then depth: add_harmony in the repeat, vary_part where a part comes back unchanged, and add_echo a beat behind, "
+		"last (delay_beats 1, pan opposite, volume 5).\n"
+		"6. check_song with style calm (0 clicking, 0 vanishing, no held lead) and review_arrangement with style calm (8 or "
+		"more). Fix what they find and check again.\n"
+		"7. When the parts are written: finish_song with kind cozy. It polishes (style calm: no accents), mixes (the melody "
+		"2-3 dB over the chords, soft drums kept soft), fixes the loop's seam, listens and exports at -20 LUFS in one call; "
+		"fix what it heard with the calls it gives, then export_for_game again.\n"
+		"8. save_song, and play it for the user.";
 	if (Kind == "action")
 		return
 		"An action track (a fight, a boss, a chase): punchy and driving, the melody on top. With this set's tools.\n"
@@ -34190,13 +34560,16 @@ static std::string CoreRecipe(const std::string &Kind)
 		"gives, then export_for_game again.\n"
 		"8. save_song, and play it for the user.";
 	return
-		"Choose the kind of song from the user's words, then ask get_recipe for it:\n"
+		"Choose the kind of song from the user's words (get_recipe with about picks one from them), then ask get_recipe for "
+		"it:\n"
 		"- calm: only when the user asks for calm, peaceful or relaxing music (a place to rest, a night scene, a lullaby). The "
 		"melody never presses: a lead that swells in or fades away, 2-3 dB over the chords, no drums.\n"
 		"- lively: a stage or a level to explore. Bouncy and driving: a lead with accents inside a full band, a sampled beat, "
 		"a climax that lifts.\n"
+		"- cozy: a warm place indoors by day (a shop, a hut, an inn, a grandmother keeping it). A major key, a tune that "
+		"smiles, a bass that bounces, soft drums or none; not a night song.\n" + LaterKindsList() +
 		"- action: a fight, a boss, a chase. Punchy: the melody on top, drums that drive, accents.\n"
-		"Anything else (a town, a shop, a title screen) follows the craft in the instructions, and what_next without a kind "
+		"Anything else (a town, a title screen) follows the craft in the instructions, and what_next without a kind "
 		"its general plan. Either way, work in a loop: what_next gives the next step with its call; make it, ask again, until "
 		"it says done. For an empty song, describe the map in about (what_next passes it to song_shape), or give song_shape add, "
 		"drop or bars.\n"
@@ -34209,29 +34582,53 @@ static std::string CoreRecipe(const std::string &Kind)
 		"version.";
 }
 
-// get_recipe: the recipe for a kind of song (calm, lively, action, or how to choose); the small set's names only its tools
+// get_recipe: the recipe for a kind of song (calm, lively, cozy, action, or how to choose); the small set's names only its
+// tools
 static std::string RecipeTool(const Json &Args, bool Core)
 {
 	const Json *pKind = Args.Get("kind");
-	const std::string Kind = pKind != 0 && pKind->IsString() ? Lowercase(Trim(pKind->String())) : std::string();
-	if (!Kind.empty() && Kind != "calm" && Kind != "lively" && Kind != "action" && Kind != "general")
-		throw Problem("kind should be calm, lively or action (or leave it out to see how to choose).");
+	std::string Kind = pKind != 0 && pKind->IsString() ? Lowercase(Trim(pKind->String())) : std::string();
+	int Parsed = NEXT_GENERAL;
+	if (!Kind.empty() && Kind != "general") {
+		if (!ParseNextKind(Kind, Parsed))
+			throw Problem("kind should be " + NextKindNames() + " (or leave it out to see how to choose; about picks one from words "
+				"about the place).");
+		Kind = NextKindInfo(Parsed).Name;
+	}
+	// Without a kind, words about the place pick one, as what_next's and song_shape's about do, and the reply says so
+	std::string Picked;
+	const std::string About = Trim(StringArg(Args, "about"));
+	if (Kind.empty() && !About.empty()) {
+		const ShapeWords Words = ReadShapeWords(About);
+		if (!Words.KindWords.empty() && ParseNextKind(Words.Kind, Parsed)) {
+			Kind = NextKindInfo(Parsed).Name;
+			Picked = KindFromWordsLine(Words) + "\n\n";
+		}
+		else if (Words.pShape != 0 && Words.Kind != "general" && ParseNextKind(Words.Kind, Parsed)) {
+			Kind = NextKindInfo(Parsed).Name;
+			Picked = "Kind: " + Kind + " (the words ask for a " + Lowercase(Words.pShape->Title) + "). Pass kind \"" + Kind + "\" to "
+				"get_recipe, what_next and finish_song.\n\n";
+		}
+		else
+			Picked = "Kind: none of the kinds from those words (the general recipe); give kind for one.\n\n";
+	}
 	if (Core)	// a new song first: the small set has new_song and set_expansion
-		return "Start: get_song; with no song open, or for another one, new_song with a name (and expansion for the chips).\n" +
+		return Picked + "Start: get_song; with no song open, or for another one, new_song with a name (and expansion for the chips).\n" +
 			CoreRecipe(Kind);
 	const Json *pIdea = Args.Get("idea");
 	const std::string Idea = pIdea != 0 && pIdea->IsString() && !Trim(pIdea->String()).empty() ? Trim(pIdea->String()) :
 		std::string("the song the user asked for");
 	const Json *pBars = Args.Get("bars");
 	const int Bars = pBars != 0 && pBars->IsNumber() ? std::max(4, std::min(256, static_cast<int>(pBars->Number()))) : 40;
-	if (Kind == "calm" || Kind == "lively" || Kind == "action")
-		return KindRecipe(Kind, Idea, std::to_string(Bars));
+	const bool OwnIdea = pIdea != 0 && pIdea->IsString() && !Trim(pIdea->String()).empty();
+	if (!Kind.empty() && Kind != "general")
+		return Picked + KindRecipe(Kind, OwnIdea || About.empty() ? Idea : About, std::to_string(Bars));
 	Json Prompt = Json::MakeObject();
-	Prompt.Set("idea", Idea);
+	Prompt.Set("idea", OwnIdea || About.empty() ? Idea : About);
 	Prompt.Set("bars", std::to_string(Bars));
 	std::string Text, Error;
 	ToolSet::PromptText("compose_track", Prompt, Text, Error);
-	return Text;
+	return Picked + Text;
 }
 
 // explain: a term in plain words, as FamiTracker's glossary (Help > Glossary, Glossary.h) shows it, by any of its names; an
@@ -34303,11 +34700,14 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			Error = "compose_track needs the idea: what the track is for.";
 			return false;
 		}
-		const std::string Kind = Lowercase(Value("kind", ""));
-		if (!Kind.empty() && Kind != "calm" && Kind != "lively" && Kind != "action") {
-			Error = "kind should be calm, lively or action.";
+		std::string Kind = Lowercase(Value("kind", ""));
+		int Parsed = NEXT_GENERAL;
+		if (!Kind.empty() && !ParseNextKind(Kind, Parsed)) {
+			Error = "kind should be " + NextKindNames() + ".";
 			return false;
 		}
+		if (!Kind.empty())
+			Kind = NextKindInfo(Parsed).Name;
 		if (!Kind.empty()) {
 			Text = KindRecipe(Kind, Idea, Value("bars", "40"));
 			return true;
@@ -34320,9 +34720,9 @@ bool ToolSet::PromptText(const std::string &Name, const Json &Arguments, std::st
 			"parts, volumes, echoes, sounds (reference_sound brings one in) and tricks. Write your own melody and chords.\n"
 			"2. Decide, and tell me in a few lines: the key and mode, the tempo, and the form for " + Value("bars", "32") + " bars "
 			"(an A part and a contrasting B, like A A B A, or intro A B A'), and what each channel plays. When the idea asks "
-			"for a calm song (calm, peaceful, relaxing, a lullaby, a place to rest), or is a stage to explore or a fight, "
-			"follow that kind's recipe instead: references action guide topic calm, lively or action (this prompt takes it "
-			"as kind).\n"
+			"for a calm song (calm, peaceful, relaxing, a lullaby, a place to rest), is a stage to explore, a warm place indoors "
+			"(a shop, a hut, an inn: cozy), a fight or another kind (get_recipe lists them), follow that kind's recipe instead: "
+			"references action guide topic " + NextKindNames() + " (this prompt takes it as kind).\n"
 			"3. For a meter other than 4/4 (a waltz, a 6/8 lilt), set_meter before any notes. Set the tempo with set_tempo, at one "
 			"whose rows are all the same length (it says when they aren't and names even tempos nearby), so the hi-hats and "
 			"arpeggios stay steady. Start the backing: make_groove with the nearest mood, or add_chords_and_bass with chords you "

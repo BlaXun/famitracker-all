@@ -42,7 +42,7 @@
 
 class CMcpConnection;
 
-// The kind of song chosen in the panel for the open song's selected track (calm, lively or action; "" for what_next's own
+// The kind of song chosen in the panel for the open song's selected track (calm, lively, cozy or action; "" for what_next's own
 // choice), kept while FamiTracker runs: the Ask panel tells the model (ftapi::AssistantFacts::Kind)
 std::string WhatNextChosenKind();
 

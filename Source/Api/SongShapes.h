@@ -50,7 +50,7 @@ struct SongShape {
 	std::string Id;		// what song_shape takes: "stage"
 	std::string Title;	// "Lively stage"
 	std::string About;	// what the song is for, a line
-	std::string Kind;	// what_next's kind for it: "lively", "calm", "action" or "general"
+	std::string Kind;	// what_next's kind for it: "lively", "calm", "action" or "general" (cozy has the town's and the small's)
 	bool Loops;			// false: it plays once and stops (a jingle)
 	int LoopPart;		// the part the loop goes back to (the one after the intro)
 	std::vector<ShapePart> Parts;
@@ -68,7 +68,8 @@ const std::vector<SongShape> &SongShapes();
 const SongShape *FindSongShape(const std::string &Words);
 // The ids, "stage, night, town, boss, small or jingle"
 std::string SongShapeIds();
-// The shape what_next lays out for one of its kinds ("lively", "calm", "action"; anything else is the general recipe's)
+// The shape what_next lays out for one of its kinds ("lively", "calm", "action"; "cozy" and anything else the town of
+// the general recipe)
 const SongShape &ShapeForKind(const std::string &Kind);
 // The same for a track of that name: the shape its name asks for when that's one of the kind's that loops (a "Shop" or
 // "A first small song" gets the general recipe's short loop instead of its town), else the kind's own
@@ -100,8 +101,10 @@ struct ShapeRequest {
 	std::string Parts;		// a whole list of parts as text; takes the place of the rest
 	std::vector<std::string> Add, Drop;
 	int Bars;				// about how long; 0: the variant's own
-	int Variant;			// from 1; 0: from the track's name
-	ShapeRequest() : Bars(0), Variant(0) {}
+	int Variant;			// from 1; 0: from the track's name (and the seed)
+	unsigned int Seed;		// the song's seed (SongSeed.h), rolled by song_shape's seed; 0: the name alone picks the variant
+	int Roll;				// song_shape's seed argument, 1 when none
+	ShapeRequest() : Bars(0), Variant(0), Seed(0), Roll(1) {}
 };
 
 struct ShapeChoice {
@@ -109,10 +112,13 @@ struct ShapeChoice {
 	const SongShape *pBase;	// the shape it's a variation of
 	int Variant, Variants;	// 0 of 0 for a list of parts
 	bool VariantFromName;
+	unsigned int Seed;		// the request's
+	int Roll;
 	std::string FromWords;	// what the words about the place chose, a line ("" without them)
+	std::string Kind;		// what_next's kind the words ask for (ShapeWords::Kind), "" without them
 	std::vector<std::string> Changes;	// what add, drop and bars did, a sentence each
 	std::vector<std::string> Others;	// the other variants as "variant 2: Intro 4, A 8, ..."
-	ShapeChoice() : pBase(0), Variant(0), Variants(0), VariantFromName(false) {}
+	ShapeChoice() : pBase(0), Variant(0), Variants(0), VariantFromName(false), Seed(0), Roll(1) {}
 };
 
 // The form a request asks for; false with Error (in plain words) when it makes no sense
@@ -121,6 +127,8 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 std::vector<SongShape> VariantsOf(const SongShape &Shape);
 // The variant (from 1) a track's name picks among Count
 int VariantOfName(const std::string &TrackName, int Count);
+// The same with the song's seed mixed in (SongSeed.h): 0 is VariantOfName's
+int VariantOfName(const std::string &TrackName, int Count, unsigned int Seed);
 // The words add and drop take, "climax, break, bridge, outro, intro, b (another contrast) or a (another time round of A)"
 std::string ShapePartWords();
 // Reads a list of parts ("Intro 4, A 8, A' 8"); false with Error
@@ -129,12 +137,20 @@ bool ReadShapeParts(const std::string &Text, std::vector<ShapePart> &Parts, std:
 // and a line on why
 struct ShapeWords {
 	const SongShape *pShape;
+	std::string Kind;		// what_next's kind the words ask for: a kind's own words' (cozy for a warm place indoors by day,
+							// a shop, a hut, an inn; mysterious for a cave...), else the shape's; "" without a shape
+	std::vector<std::string> KindWords;	// the words that asked for a kind of their own ("cave", "hidden"); empty when the
+										// shape's kind is the kind
 	std::vector<std::string> Add, Drop;
 	double Length;			// a factor on the shape's bars, 1 for none
 	std::string Why;
 	ShapeWords() : pShape(0), Length(1.0) {}
 };
-ShapeWords ReadShapeWords(const std::string &About);
+// Name: the words are a track's name, where the nouns that only name a small place's shape (shop, inn) pick no kind
+ShapeWords ReadShapeWords(const std::string &About, bool Name = false);
+// The line that says the kind words picked and to keep passing it: "Kind: mysterious (from the words cave, hidden). Pass
+// kind "mysterious" to get_recipe, what_next and finish_song." (Words.KindWords not empty)
+std::string KindFromWordsLine(const ShapeWords &Words);
 
 // The shape a track's sections were laid out in by song_shape, varied or not: MatchSongShape's, else (sections that
 // read as a laid-out form: from the first frame on without a gap, every name a shape's part, A's repeats marked with

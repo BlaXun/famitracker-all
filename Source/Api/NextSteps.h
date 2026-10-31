@@ -75,7 +75,7 @@ struct NextStepInfo {
 
 struct NextAnswer {
 	int Track;				// from 0
-	std::string Kind;		// "general", "calm", "lively", "action"
+	std::string Kind;		// "general", "calm", "lively", "cozy", "action"
 	std::string KindNote;	// how the kind was chosen when none was given; empty when one was
 	bool Done;				// every step is done (the step is play)
 	NextStepInfo Step;

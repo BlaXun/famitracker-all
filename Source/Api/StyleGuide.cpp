@@ -337,7 +337,7 @@ const Section SECTIONS[] = {
 		"peace restful",
 		"What makes a song calm rather than plain or pressing, from the calm pieces of Final Fantasy III, Castlevania III and "
 		"Punch-Out!!, modern FamiTracker music and a soundtrack whose listener loved the result. Only for songs asked to be "
-		"calm: lively stages and fights have topics of their own (lively, action).\n"
+		"calm: lively stages, warm rooms by day and fights have topics of their own (lively, cozy, action).\n"
 		"- The melody's sound never holds a high, steady level: a level held from attack to release presses like an organ key "
 		"held down, however soft the parts around it. Give the lead one of three shapes and keep it for the song. First the "
 		"one the listener liked best of the night songs: a music box (kind music box: a struck pulse that rings away to "
@@ -423,6 +423,154 @@ const Section SECTIONS[] = {
 		"- Checks: review_arrangement style lively 8 or more (it tips a climax under 2 dB over A, a lead at one volume and a "
 		"band quieter than its melody), check_song 0 clicking and 0 vanishing, measure_mix style lively with melody_channel "
 		"the lead. export_for_game at -20 LUFS." },
+	{ "cozy", "Cozy places (a shop, a hut, an inn: warm, indoors, by day)",
+		"cozy cosy warm homey homely friendly shop store inn tavern hut cabin cottage bakery cafe house kitchen hearth "
+		"fireplace indoors granny grandmother elderly shopkeeper keeper",
+		"A warm room by day, with someone friendly keeping it (a shop, a hut, an inn, a grandmother's kitchen): the player "
+		"steps in from outside and feels at home. It isn't a night song: asked for as calm, \"Lost n Found\" (a cozy, "
+		"run-down hut where an old woman keeps the lost things) came out a night song in C minor and sounded depressing. "
+		"What makes a room cozy on the NES:\n"
+		"- A major key: F, Bb, C, G or D major (F and Bb sound the warmest on the pulses). Minor makes it sad; a borrowed "
+		"minor iv for a moment of fondness is enough.\n"
+		"- A walking pace: 90-112.5 BPM at an even tempo (100 is speed 9 at tempo 150, 90 speed 10, 112.5 speed 8). A light "
+		"swing (set_swing 56-60), a waltz or a 6/8 lilt (set_meter) all suit a room where someone potters about.\n"
+		"- A tune that smiles: short phrases of two bars, question and answer, each ending on a held note or a rest; a skip "
+		"up (a third, a sixth) and steps down, a dotted or lilting rhythm, the answer coming home to the tonic. Mostly octave "
+		"3, a high point a section, never busy.\n"
+		"- A warm lead that keeps singing low: design_instrument kind falling strike (struck at 15, falling to about 6 and "
+		"holding, a faint vibrato that waits), keys, or a soft pluck that settles; on the VRC6 a pulse at 25-37.5%; on the "
+		"VRC7 the flute or piano patch. Not the night songs' music box, which rings away, and nothing that holds a high "
+		"level (check_song style calm finds a held lead).\n"
+		"- Chords plain and friendly, a chord a bar (I vi IV V, I IV ii V; a sixth, a sus2 or a maj7 for warmth where no tune "
+		"note sits a semitone from it), picked softly under the tune: add_chords_and_bass chord_style broken (a pluck in "
+		"eighths, up or alberti), the B part on IV and the relative minor.\n"
+		"- A bass that bounces but stays light: bass_style root_fifth on the triangle (walking where it moves, as in a B "
+		"part), polish touches staccato for the bounce.\n"
+		"- Soft drums or none: add_drums groove lively with intensity light (soft closed hats and a soft kick, no snare) on "
+		"the noise alone; a sampled kick thumps in a small room. A tick of a clock or a kettle's sigh in the break is "
+		"charm.\n"
+		"- Depth: a harmony a third under the tune in the repeat (add_harmony), an echo a beat behind at about 40% on the "
+		"other side, set_mixer room small room with a little Space on the chords, soft 20-40 on a pulse that should sound "
+		"warm.\n"
+		"- Form: a town's (intro 4, A, A', B, A'' its fullest, a short break) or, for a small room, a short loop (intro 2, A, "
+		"A', B: 14 bars). song_shape with about (\"a cozy hut\") picks it.\n"
+		"- Mix and checks in calm's style: polish style calm (no accents), mix style calm (the melody 2-3 dB over the chords, "
+		"soft drums kept as soft as written), review_arrangement and check_song style calm. export_for_game at -20 LUFS, "
+		"beside the towns and the stages (a night song's -22 is for the quiet scenes)." },
+	{ "mysterious", "Mysterious places (caves, sewers, ruins, forgotten places)",
+		"mysterious mystery cave caves cavern sewer sewers ruin ruins crypt mine hidden secret forgotten underground eerie",
+		"A place that hides something: the player is curious, not frightened. Not a dungeon's dread (the dark topic) and not "
+		"sad:\n"
+		"- Minor or dorian (dorian's raised sixth keeps it from sounding sad): D dorian, A minor, E dorian. A tritone's lean or "
+		"a flat second now and then, resolved.\n"
+		"- A slow walk: 85-100 BPM at an even tempo (90 is speed 10 at tempo 150).\n"
+		"- A drone underneath: the bass on the tonic held (bass_style pedal), or a pulsing bass on one note; soft, slow chords "
+		"over it (chord_style lush with arp_frames 3, color plain).\n"
+		"- A sparse tune: 1-3 notes a bar, long notes, gaps of a beat or more where the echo answers (add_echo a beat behind, "
+		"on the other side); the high note rare.\n"
+		"- A lead that breathes in and holds low (design_instrument kind breath), or a soft pulse at 25%; a faint vibrato that "
+		"waits.\n"
+		"- No backbeat: no drums, or a soft tick on the noise in one section; a drip or a far-off clank in the break is the "
+		"charm.\n"
+		"- Calm's style: polish, mix, check_song and review_arrangement with style calm. export_for_game at -21 LUFS." },
+	{ "adventure", "Adventure (open fields, travel, an airship flight)",
+		"adventure journey travel voyage field fields road overworld airship flight flying explore quest plains",
+		"The road ahead: wide, hopeful, on the move.\n"
+		"- Major: D, G or Bb major; I-V-IV-V, a bVII or a IV-V lift into each part.\n"
+		"- 110-130 BPM at an even tempo (128.6 is speed 7, 112.5 speed 8, at tempo 150).\n"
+		"- A wide tune: a leap up of a fifth or a sixth (an octave at the high point) and steps back down, a dotted rhythm "
+		"that marches, phrases of 2 or 4 bars ending on a held note, reaching into octave 4 at each part's high point.\n"
+		"- A bass that marches or gallops: bass_style arpeggio (rolling) or octaves on the triangle.\n"
+		"- Steady drums: add_drums groove march (or basic) with kit samples, fills and a crash into each part.\n"
+		"- A lead that blooms in and settles (design_instrument kind bloom lead); broken chords under the leaps (chord_style "
+		"broken, color plain while the tune is written).\n"
+		"- A harmony a third or sixth under the tune in the repeat, the bass in octaves the last time round.\n"
+		"- Lively's style: polish, mix and the checks with style lively. export_for_game at -20 LUFS." },
+	{ "floating", "Floating (the sky, clouds, underwater, waiting at a dock)",
+		"floating float sky skies cloud clouds underwater drift drifting waiting dock pier lagoon dawn weightless",
+		"Weightless: carried by wind or water, waiting without hurry.\n"
+		"- Major or lydian (its raised fourth floats): F, D or G major, or F lydian; I-iii-IV, IV-I, the loop's last bar on IV.\n"
+		"- A slow pulse: 80-95 BPM (90 is speed 10 at tempo 150).\n"
+		"- Rolling arpeggios: chord_style broken (up or rolling, a soft pluck), the bass on half bars or held roots.\n"
+		"- A lead that breathes in and holds a soft level (design_instrument kind breath), long notes rising and settling by "
+		"step, 2-3 a bar.\n"
+		"- Plenty of echo: add_echo a beat behind on the other side from the first repeat, Space on the lead and the chords "
+		"(set_mixer room hall).\n"
+		"- Soft or no drums: none, or soft hi-hats like a shaker.\n"
+		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -21 LUFS." },
+	{ "playful", "Playful (minigames, funny characters, a toy shop)",
+		"playful minigame minigames game toy toys silly funny clown goofy cheeky circus prank bouncy",
+		"Cheeky and bouncy, a smile in every bar.\n"
+		"- Major (C, G or F); I-IV-V turns, a chromatic step up into V for a wink.\n"
+		"- 112-150 BPM at an even tempo (128.6 is speed 7); a swing (set_swing 56-60) or a 6/8 lilt (set_meter) suits it.\n"
+		"- Short cheeky phrases of a bar or two: repeated notes and skips, a rest on a beat, the answer turning the question "
+		"around.\n"
+		"- A lead that speaks at once and settles a little under its peak (design_instrument kind lead, on a 12.5% or 25% "
+		"pulse): a click pluck that falls low makes quick notes vanish.\n"
+		"- Stabs on the offbeats (chord_style stabs, color plain) over a root-and-fifth bass that hops (polish touches "
+		"staccato).\n"
+		"- Light drums: add_drums groove basic with intensity light, or a woodblock-like noise tick.\n"
+		"- The general recipe's polish (accents) and mix (style soft). export_for_game at -20 LUFS." },
+	{ "festive", "Festive (a market day, a festival, a holiday town)",
+		"festive festival fair carnival celebration party holiday parade feast market",
+		"A crowd in the square: fast, bright, catchy.\n"
+		"- Major (D, A or G); I-IV-V, a IV-V-I that lands on the downbeat of each part.\n"
+		"- 130-165 BPM at an even tempo (150 is speed 6).\n"
+		"- Bright stabs (chord_style stabs) over a bass in octaves; a lead that blooms in (kind bloom lead).\n"
+		"- A catchy tune, busy but not too busy for the NES: a motif of 4-6 notes that comes back in every phrase, two or "
+		"three rhythms repeated (check_song's too_busy hears a line that never settles).\n"
+		"- Fuller drums: add_drums groove basic with kit samples, fills and a crash into each part.\n"
+		"- A harmony in thirds in the repeat. Lively's style: polish, mix and the checks with style lively. export_for_game "
+		"at -19 LUFS." },
+	{ "bittersweet", "Bittersweet (a farewell, a memorial, a sunset, an ending)",
+		"bittersweet farewell goodbye memory memories memorial sunset ending grave parting nostalgia nostalgic",
+		"Fond and a little sad: the sun going down on something that was good. Never plainly minor and gloomy: a minor key "
+		"makes it a lament (the melancholy topic), so it stays major and borrows its sadness:\n"
+		"- A major key (F, C or G major) with borrowed minor chords: iv (F minor in C), bVI (Ab), a I-iv-I at a phrase's end; "
+		"the last chord major. what_next notes a minor key.\n"
+		"- Slow: 70-90 BPM (75 is speed 12 at tempo 150).\n"
+		"- A singing tune: long notes, a sigh (a falling second) at a phrase's end, a leap of a sixth onto the borrowed chord.\n"
+		"- A lead that breathes in and sings (design_instrument kind breath); slow lush chords at arp_frames 3, color plain, "
+		"roots in the bass.\n"
+		"- No drums; an echo a beat behind in the repeat.\n"
+		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -22 LUFS." },
+	{ "tense", "Tense (sneaking, a guarded place, slow danger)",
+		"tense tension sneak sneaking stealth stealthy guard guarded prison lurking watched spy infiltrate hiding",
+		"Danger that is slow: the player sneaks and listens. Not a fight (the action topic):\n"
+		"- Minor (E, A or D minor); i-VI-V, a pedal, a semitone's lean (the flat second) that never quite resolves.\n"
+		"- 90-112 BPM (100 is speed 9 at tempo 150).\n"
+		"- An ostinato bass that never stops (bass_style driving, eighths on the root), sparse stabs over it (chord_style "
+		"stabs).\n"
+		"- A close tune: steps and repeated notes, no leap past a fourth, rests where a guard might look up; a lead that holds "
+		"then steps down (kind stepped lead).\n"
+		"- Soft drums or ticking hats: add_drums groove calm with intensity light.\n"
+		"- polish and mix style soft. export_for_game at -20 LUFS." },
+	{ "melancholic", "Melancholic (grief, loneliness, rain, an abandoned home: openly sad, when asked for)",
+		"melancholic sad sorrow grief mourning lonely loneliness tears rain abandoned lost lament",
+		"Openly sad, only when sadness is asked for (a run-down place isn't sad by itself: a cozy, run-down hut stays cozy). "
+		"The melancholy topic has the classic laments' figures; this is the recipe:\n"
+		"- Minor, natural or dorian (A minor, D dorian, E minor); it may stay minor all through, unlike bittersweet, which "
+		"borrows its sadness from a major key. i-III-VII-v, a bass that steps down.\n"
+		"- Slow: 60-80 BPM (75 is speed 12, 69.2 speed 13, at tempo 150).\n"
+		"- A singing tune: long notes, sighs (a falling second, the upper note on the beat) at the phrases' ends, a slow climb "
+		"to one high note a section, 1-3 notes a bar; a lead that breathes in (design_instrument kind breath).\n"
+		"- Sparse soft chords: lush at arp_frames 3, color plain, a bass of held roots or half bars.\n"
+		"- No drums, or a very soft tick in one section; an echo far behind in the repeat.\n"
+		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -22 LUFS." },
+	{ "atmospheric", "Atmospheric (texture over tune: vast, empty, alien places, the deep)",
+		"atmospheric atmosphere ambient ambience texture vast empty void alien abyss deep drone metroid",
+		"Texture over tune, as Metroid's caverns are: the place is the music.\n"
+		"- Minor, modal or ambiguous: E minor, D dorian, A minor; chords that change slowly (a chord for two bars), a drone "
+		"under them (bass_style pedal).\n"
+		"- 60-90 BPM (75 is speed 12 at tempo 150); long sections, a loose form (the night shape's variants, song_shape "
+		"with add or bars).\n"
+		"- Slow-changing pads (chord_style lush, arp_frames 3-4, color plain), sparse motifs of 2-4 notes far apart (a bar or "
+		"two of rests between them) rather than a tune to hum; a lead that breathes in (kind breath).\n"
+		"- An echo a beat or two behind, Space on the pads and the motifs (set_mixer room cave or hall).\n"
+		"- Quiet, irregular percussion or none: a soft tick now and then on the noise, a low thump.\n"
+		"- Its own style, atmospheric: calm's polish, mix and checks without the ones that ask for a lead (check_song's "
+		"phrases, the review's breaths, listen's covered melody), as a cue's checks leave out a loop's. export_for_game at "
+		"-22 LUFS." },
 	{ "action", "Action: battles, bosses and chases (punchy and driving)",
 		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
 		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"
@@ -576,8 +724,9 @@ const Section SECTIONS[] = {
 		"rest, -19 for action and bosses, -20 for the rest. Every track opens with an intro of 2-4 bars that plays once, 6-10 dB "
 		"under the loop's main part (13 dB under reads as silence in a game), and breathes before the loop comes round (a break "
 		"of 2-4 bars). measure_mix checks it, with each section's loudness and the two sides (within 2 dB of each other).\n"
-		"- Three kinds of song, each with a recipe in this guide: calm (only when a song is asked to be calm: a place to rest, a "
-		"night scene), lively (a stage to explore) and action (fights, bosses, chases). The listener found the night songs' "
+		"- Four kinds of song, each with a recipe in this guide: calm (only when a song is asked to be calm: a place to rest, a "
+		"night scene), lively (a stage to explore), cozy (a warm room by day: a shop, a hut, an inn) and action (fights, "
+		"bosses, chases). The listener found the night songs' "
 		"melodies too active and direct (a lead held at one level, 5-8 dB over the chords) where they were asked to be calm "
 		"and melancholic: calm songs answer that, and only they. The first lively stages, a lead with accents inside a band "
 		"louder than it, a sampled beat and sections that build, were liked nearly every one: lively stages keep that, and "
@@ -664,7 +813,8 @@ std::string StyleGuide(const std::string &Topic)
 	if (Asked.empty()) {
 		std::string Out = "The guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos), to dark "
 			"and melancholic music, and to the atmospheric sound of modern FamiTracker music, from studies of their "
-			"soundtracks, with recipes for calm songs, lively stages and action. Topics (references action guide with a topic):\n";
+			"soundtracks, with recipes for calm songs, lively stages, cozy places and action. Topics (references action guide "
+			"with a topic):\n";
 		for (size_t i = 0; i < SECTION_COUNT; ++i)
 			Out += std::string("- ") + SECTIONS[i].Topic + ": " + SECTIONS[i].Title + "\n";
 		return Out;

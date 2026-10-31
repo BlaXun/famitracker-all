@@ -988,6 +988,7 @@ public:
 		Info.SecondHighlight = pDoc->GetSecondHighlight();
 		const unsigned char Chips = pDoc->GetExpansionChip();
 		Info.Vrc6Plus = pDoc->IsVrc6Plus();
+		Info.Seed = pDoc->GetSongSeed();
 		const unsigned char ALL[] = { SNDCHIP_VRC6, SNDCHIP_VRC7, SNDCHIP_FDS, SNDCHIP_MMC5, SNDCHIP_N163, SNDCHIP_S5B };
 		for (size_t i = 0; i < sizeof(ALL); ++i) {
 			if (Chips & ALL[i])
@@ -2344,6 +2345,16 @@ public:
 			Error = "The tempo couldn't be changed.";
 			return false;
 		}
+		return true;
+	}
+
+	bool MakeSongSeed()
+	{
+		// (saved with the song when it's next saved; the song isn't marked changed for it)
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL || pDoc->GetSongSeed() != 0)
+			return false;
+		pDoc->MakeSongSeed();
 		return true;
 	}
 

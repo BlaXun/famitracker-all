@@ -2319,6 +2319,132 @@ with flats (C# in D minor, F# in G minor). `TestIntroNoteIntoLoop`,
 `TestEchoInTuneWhereDoubled`, `TestVibratoAcrossRegister`,
 `TestReviewKeepsItsStyle` and `TestMinorLeadingTone` cover them.
 
+A cozy kind (from `feat-cozy-kind`): "Lost n Found" (a cozy, run-down hut
+an old woman keeps), asked for as calm, came out a night song in C minor and
+sounded depressing, so a warm place indoors by day is a kind of its own:
+`NEXT_COZY` (appended to `next_kind`, its row of `KINDS` in `WhatNext.cpp`:
+F, Bb or C major, 85-112.5 BPM at 100 (speed 9), the lead "Cozy lead" of
+kind falling strike, chords `broken`, bass `root_fifth` (walking when it
+moves), the `lively` groove with `intensity` light and no kit samples, mixed,
+polished and checked in calm's style (calm's places, its drums kept as
+written, no accents, the held-lead check), -20 LUFS beside the towns;
+`NextProgression` has its own major chords). `ParseNextKind` takes cozy,
+cosy, warm, homey, homely, indoors, shop, inn and house; `KindWantsMajor` is
+calm's and cozy's, and `WhatNext::Frame` puts a note first when the track's
+key is minor (`set_key`, or `transpose` `to_mode` major with notes, "or keep
+it minor if you mean it"). `WhatNext::CalmStyle` is the kind's `Style`
+(polish's due check, the "presses" tip); `Calm()` stays the night song's
+choices. `ReadShapeWords` gives `ShapeWords::Kind` (the shape's, or cozy for
+`COZY` words without `NIGHT` or `DARK` ones, a fight or intense words, over
+a night, town or small shape: the small one where the words name a shop or
+an inn, else the town, which "Lost n Found" gets: 40 bars with `bars` 40);
+`what_next` takes its kind from it and, with a kind given, the words' shape
+when their kind agrees; `ShapeChoice::Kind` and `FromWords` say so.
+`FINISH_COZY` (appended before the count), `KindPolish` (style calm),
+`grow_melody` (grows as lively), `KindRecipe` (an `Of` per kind),
+`CoreRecipe`, the style guide's `cozy` topic, the instructions and the What
+next panel's kind menu (`KIND_IDS`) have it. `TestCozyKind` and
+`TestWhatNextLoop`'s cozy walk cover it.
+
+Mysterious, adventure and floating (from `feat-cozy-kind`, its second
+commit): the kinds after cozy are rows of `KINDS` alone, appended to
+`next_kind` before `NEXT_KIND_COUNT` (keep it last): `NextKind`'s later
+fields (`Aliases` for `ParseNextKind`, `KeyMode` for `KindWantsMajor` and
+`KindWantsMinor`, `Color`, `Intensity`, `Samples`, `Grow` for grow_melody,
+`Title` and `Listen` for finish_song's `FINISH_LATER`, `LeadWhy`, its own
+`ProgMajor` and `ProgMinor`, and the recipes' `Place`, `Feel`, `Melody` and
+`Depth`) say what `WhatNext::Later()` reads, `LaterKindRecipe` and
+`LaterCoreRecipe` in `Tools.cpp` write, `LaterKindsList` lists and
+`NextKindNames` names; the older kinds keep their own code and leave them 0.
+Mysterious (caves, sewers, ruins: D or E dorian or A minor, 90 BPM, a
+breath lead over a pedal bass and slow lush chords, i III v VII so a dorian
+key's VI puts no D# over the drone, no drums, calm's style, -21 LUFS),
+adventure (fields, travel, an airship flight: major, 128.6 BPM, a bloom lead,
+broken chords over a rolling arpeggio bass, the basic groove with kit
+samples, lively's style, -20; the march groove leaves the noise channel
+empty, so the drums step came again) and floating (the sky, underwater,
+waiting at a dock: major, 90 BPM, a breath lead over broken chords and a
+bass on half bars, no drums, calm's style, -21). Words pick a kind with
+`KIND_WORDS` in `SongShapes.cpp`: the kind most of the words ask for, the
+first of the table on a tie (mysterious, floating, cozy, adventure: "Waiting
+for the Airship" is floating, "Hut in a Field" cozy), never over a fight's
+or a jingle's words, a gentle one not over intense words, cozy only over a
+night's, a town's or a small place's (`KindWordRow::Over`); the shape is the
+words' own where the kind takes it (`Shapes`), else the first of its shapes
+whose words are there, else its own. A track's name picks a kind the same
+way (`ReadShapeWords` with `Name`, which leaves out the place nouns that
+only name a small place's shape, so a "Shop" stays general) after calm by
+name; what_next then says so with `KindFromWordsLine` ("Kind: mysterious
+(from the words hidden, cave). Pass kind ..."), as it does for `about`, and
+asks again with the kind (`AgainArgs`). get_recipe takes `about` too. The
+kind props of what_next, grow_melody, finish_song and get_recipe are plain
+strings now, the kinds listed once in get_recipe's reply, since the small
+set's list must stay under three fifths of the full one. The What next
+panel's kind menu starts at `MENU_KIND` 200. `TestLaterKinds` and
+`TestWhatNextLoop`'s walks cover them.
+
+Playful, festive, bittersweet and tense (from `feat-cozy-kind`, its third
+commit), rows of `KINDS` as the three before: playful (minigames, funny
+characters, a toy shop: major, 128.6 BPM, a lead of kind `lead`, since a
+click pluck's quick notes vanished and the walk swapped its lead, stabs over
+root and fifth, the basic groove light, the general recipe's style, -20),
+festive (a market day, a festival: major, 150 BPM, a bloom lead, stabs, a
+bass in octaves, the basic groove with kit samples, lively's style, the
+stage's shape so its climax lifts, -19), bittersweet (a farewell, a sunset:
+major with the borrowed iv and bVI, 75 BPM, a breath lead, lush chords,
+calm's style, -22; a minor key gets what_next's note and the recipe says why:
+it would be a lament) and tense (sneaking, a guarded place: minor, 100 BPM,
+a stepped lead, stabs over a driving ostinato, the calm groove light, the
+general style, -20; not action, a fight). The review's "doesn't build" tip
+turns into the climax's harmony for every kind in lively's style. The words'
+order on a tie, every kind's (`KIND_WORDS`, its comment): tense, bittersweet,
+festive, mysterious, floating, playful, cozy, adventure; a fight's words
+stay action, and "market day", "the ending" count as pairs (`Pairs`).
+`TestLaterKinds` tests the order.
+
+Melancholic and atmospheric (from `feat-cozy-kind`, its fourth commit):
+melancholic is openly sad (grief, loneliness, rain: minor or dorian, 75
+BPM, a breath lead, lush chords, calm's style, -22; it may stay minor), and
+chosen only by sadness's own words (`KIND_WORDS`: sad, grief, lonely, tears,
+the pairs "abandoned home", "rainy day"...), never by a place's neglect (a
+cozy, run-down hut stays cozy). Atmospheric is texture over tune (drones,
+slow pads, sparse motifs: a pedal bass, lush chords, 75 BPM, the night's
+shape, -22) with a style of its own: `atmospheric` (`StyleArg` gives calm's,
+`TextureArg` and `Session::Texture` leave out what asks for a lead:
+`PhrasesFinding` in `ArrangeFindings`, the review's breath tips and
+`listen`'s covered melody, as a cue's checks leave out a loop's); what_next
+passes it to check_song, the review, polish and its listen step, and
+finish_song to its listen. A pair of words counts twice in `KIND_WORDS`
+("eerie silence" is atmospheric, "eerie" alone mysterious); the order on a
+tie is tense, bittersweet, melancholic, festive, mysterious, atmospheric,
+floating, playful, cozy, adventure.
+
+Kinds are guidance, not presets (from `feat-cozy-kind`, its fifth commit):
+every kind has pools (`NextKind::Leads`, `ChordStyles`, `BassStyles`,
+`Grooves`, `Tempos`, `KeyPool`; `|` between entries, the kind's own value
+first, calm's, lively's, action's and the general recipe's old values
+among them), and `NextPicksOf` picks one of each by the track's name and the
+song's seed (`SeededHash` in `Source/Api/SongSeed.cpp`, a salt per pool so
+the picks don't move together). A song without a seed (0: every song made
+before seeds, and `FakeSong` unless `GivesSeeds`) gets each pool's first,
+the kind's own, so it keeps the steps it was made with. The seed is made
+once, when a song is created (`CFamiTrackerDoc::OnNewDocument` and so
+`new_song`, `MakeSongSeed` from the performance counter, the tick count,
+the clock and the document's address; `NewSongSeed`) or by the first
+`what_next` on an empty song without one (`SongHost::MakeSongSeed`, which
+doesn't mark the song changed), and saved in a `BF SEED` block. It also picks
+`song_shape`'s variant when none is given (`VariantOfName` with a seed) and
+`grow_melody`'s first variant. `what_next` and `song_shape` take `seed` (2
+and on roll other picks, `RolledSeed`; 1 is the song's own), asked again with
+it (`AgainArgs`); each step from a pool says so and invites another
+(`WhatNext::PoolNote`: "one of the 3 leads a cozy song draws from, picked for
+this song; another fits if the song wants it, and what_next with seed 2 gives
+another choice"), and an argument given always wins. The review's climax tip
+puts its harmony in the section named the climax where there is one
+(`WhatNext::Climax`). `TestKindPools` (picks by name and seed, the block,
+two new songs alike, a song saved and opened again, rolls, walks of every
+kind on three seeded songs) covers it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
@@ -2692,6 +2818,12 @@ Code lives in `Source/`. `resource.h`, `version.h`, `config.h` and
   1 with that value; anything else is ignored and the song opens as VRC6 +
   N163 (4 channels), as builds without it open it. `Source/Nsf/FtmFile.cpp`
   skips it quietly.
+- **`BF SEED` block** (this branch; version 1, written after `BF VRC6PLUS`
+  only when the song has a seed): one `int32`, the song's seed (not 0),
+  made once when the song is created (`Source/Api/SongSeed.h`).
+  `SongSeedMark::Read` takes exactly those 4 bytes of version 1; anything
+  else is no seed (the kinds' own picks). `Source/Nsf/FtmFile.cpp` skips
+  it quietly, and `SongFiles.h` reads it into `SongInfo::Seed`.
 - **Block versions:** each block has its own version. To add data:
   1. Append it in `WriteBlock_*` and bump that block's version.
   2. In `ReadBlock_*`, read it only when `GetBlockVersion()` is new enough.

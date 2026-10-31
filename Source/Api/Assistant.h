@@ -140,7 +140,7 @@ std::string AssistantSystemPrompt(bool SmallSet, bool WithTools);
 struct AssistantFacts {
 	std::string Song;			// get_song's overview
 	std::string Next;			// what_next's step
-	std::string Kind;			// the kind of song chosen in What next for the track (calm, lively or action), "" for none
+	std::string Kind;			// the kind of song chosen in What next for the track (calm, lively, cozy or action), "" for none
 	std::string Exercise;		// the exercise in progress (Help > Exercises): its title, "" for none...
 	std::string ExerciseStep;	// ...what its note asks now...
 	std::string ExerciseCheck;	// ...and the check_exercise check of that step, "" for none

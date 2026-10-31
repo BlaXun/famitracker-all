@@ -149,10 +149,12 @@ struct SongInfo {
 	// The mixer's space, which channels' Space sends to (ChannelMix.h): its room (SPACE_ROOM_NAMES), its echo in
 	// 48ths of a beat of the track's tempo (0: none) and the echo's repeats
 	int SpaceRoom, SpaceEcho, SpaceRepeats;
+	unsigned int Seed;		// the song's seed (SongSeed.h, a BF SEED block): what_next's picks from a kind's pools and
+							// song_shape's variant mix it with the track's name; 0 for none (the kinds' own picks)
 
 	SongInfo() : Modified(false), Track(0), Tracks(1), FrameRate(60), Pal(false), Speed(6), Tempo(150), SplitPoint(32),
 		PatternLength(64), Frames(1), MaxFrames(128), FirstHighlight(4), SecondHighlight(16), Vrc6Plus(false), KeyChosen(false),
-		DirectChanges(false), Playing(false), PlayRow(-1), SpaceRoom(1), SpaceEcho(0), SpaceRepeats(3) {}
+		DirectChanges(false), Playing(false), PlayRow(-1), SpaceRoom(1), SpaceEcho(0), SpaceRepeats(3), Seed(0) {}
 };
 
 // The mixer window's settings as set_mixer sets them: a fader (tenths of a dB), a starting pan, Soft and Space
@@ -378,6 +380,9 @@ public:
 	// The meter, undoable: the row highlights (rows a beat, rows a bar; one pair for the whole module in
 	// 0.4.6) and the selected track's pattern length (0 keeps it)
 	virtual bool SetMeter(int RowsPerBeat, int RowsPerBar, int PatternLength, std::string &Error) = 0;
+	// Gives a song without a seed one (SongSeed.h), made by the host, saved with the song; false where the host makes none
+	// (the picks then stay the kinds' own)
+	virtual bool MakeSongSeed() { return false; }
 	// The module's title, author and copyright (FamiTracker's song information
 	// boxes) and the selected track's name. False with Error when the song
 	// can't change, or a name is longer than FamiTracker keeps.

@@ -103,6 +103,7 @@ add_library(ftapi STATIC
 	Keys.cpp
 	ChannelMix.cpp
 	Vrc6Plus.cpp
+	SongSeed.cpp
 	Chords.cpp
 	ChordRoles.cpp
 	RecorderInput.cpp
