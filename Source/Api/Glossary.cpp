@@ -530,7 +530,8 @@ const RawEntry ENTRIES[] = {
 	{ "piano-roll", "Piano roll", "pianoroll, roll view, note view", GLOSSARY_TRACKER,
 		"The piano roll shows the notes as bars on a grid, higher notes higher up and longer notes longer, like the roll of a "
 		"player piano, and you can draw, move and stretch notes there instead of typing them. The channel you edit is bright "
-		"and the others are faint behind it: a double-click on a faint note edits that note's channel, and so do the colored "
+		"and the others are faint behind it: a click on a faint note adds a note to your channel, a double-click edits that "
+		"note's channel, and so do the colored "
 		"channel buttons along the top (Tab goes to the next), whose light mutes a channel so you hear the song without it. "
 		"View > Piano roll shows it; drag with the middle mouse button to move around in it.",
 		"pattern, key, note", "", "" },
