@@ -129,6 +129,13 @@ std::vector<int> VoiceTones(const Chord &C, int Voices, bool RootInBass);
 // octave up, and a third that would rub a semitone against a ninth left out).
 std::vector<int> LushShape(const Chord &C, int Pattern);
 
+// Where a rhythm (chord_rhythm) strikes in a bar of BarRows rows, as rows from
+// its start, and how many volume steps softer than beat 1 a chord part strikes
+// a row Offset rows into its bar (0 on beat 1, 1 on another beat, 2 between
+// beats): tresillo's hits play 6, 4 and 5 at volume 6
+std::vector<int> ChordRhythmRows(int Rhythm, int BarRows, int RowsPerBeat);
+int HitSofter(int Offset, int RowsPerBeat);
+
 // The 0xy arpeggio for a chord: three of its tones, the lowest (Base) within
 // [Low, High] near Near, and X and Y semitones above it (X < Y <= 15), led
 // smoothly from the one before when there is one; with a room, its top

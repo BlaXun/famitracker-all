@@ -21,11 +21,13 @@
 
 // check_song and what_next on real songs: a folder (the first argument, or the
 // FAMITRACKER_SONG_CHECKS environment variable) with "keep" (songs the user
-// likes, which must get no "too_busy" finding and no what_next step for it: a
-// failure) and "flag" (songs the user called too busy for the NES, which should
-// get one: listed when they don't, since not every busy song can be told from
-// the kept ones; see CLAUDE.md, "Busy for NES"). The songs are the user's own and stay out of the repository: without
-// the folder, nothing is checked and the test passes.
+// likes, which must get no finding of the kinds below and no what_next step
+// for one: a failure) and "flag" (songs the user found fault with: too busy for
+// the NES, or chords that drone on, which should get one of them: listed when
+// they don't, since not every such song can be told from the kept ones; see
+// CLAUDE.md, "Busy for NES" and "Chords that drone on"). The songs are the
+// user's own and stay out of the repository: without the folder, nothing is
+// checked and the test passes.
 //   song_file_checks /path/to/songs [-v]
 
 #include <algorithm>
@@ -49,6 +51,10 @@ using namespace ftapi;
 namespace {
 
 int g_Failures = 0;
+
+// The kinds checked, and words of the what_next step each finding gives
+const char *const KINDS[][2] = { { "too_busy", "oo busy for the NES" }, { "chord_drone", "drone on" } };
+const size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
 std::vector<std::string> FtmFiles(const std::string &Folder)
 {
@@ -84,7 +90,7 @@ Json Parse(const char *pText)
 	return Out;
 }
 
-// The "too_busy" findings check_song gives every track of a song
+// The findings of the kinds checked that check_song gives every track of a song
 int CheckSong(const std::string &Path, bool Flagged, bool Verbose)
 {
 	FileSong Probe;
@@ -108,31 +114,33 @@ int CheckSong(const std::string &Path, bool Flagged, bool Verbose)
 			continue;
 		}
 		const Json *pFindings = Reply.Get("findings");
-		int Here = 0;
-		for (size_t i = 0; pFindings != 0 && i < pFindings->Items().size(); ++i) {
-			const Json &F = pFindings->Items()[i];
-			const Json *pKind = F.Get("kind");
-			if (pKind == 0 || !pKind->IsString() || pKind->String() != "too_busy")
-				continue;
-			++Here;
-			const Json *pMessage = F.Get("message");
-			std::printf("    %s track %d: %s\n", Path.substr(Path.find_last_of('/') + 1).c_str(), t + 1,
-				pMessage != 0 && pMessage->IsString() ? pMessage->String().c_str() : "");
-		}
 		const std::string Next = Tools.Call("what_next", Parse("{\"all\": true}")).Text;
-		const bool Step = Next.find("oo busy for the NES") != std::string::npos;
-		if (Flagged && Here > 0 && !Step) {
-			std::printf("FAIL %s track %d: what_next lists no step for its too_busy finding\n", Path.c_str(), t + 1);
-			++g_Failures;
-		}
 		if (Verbose)
 			std::printf("    what_next: %s\n", Next.c_str());
-		if (!Flagged && (Here > 0 || Step)) {
-			std::printf("FAIL %s track %d: %d too_busy findings%s on a song the user keeps\n", Path.c_str(), t + 1, Here,
-				Step ? " and a what_next step" : "");
-			++g_Failures;
+		for (size_t k = 0; k < KIND_COUNT; ++k) {
+			int Here = 0;
+			for (size_t i = 0; pFindings != 0 && i < pFindings->Items().size(); ++i) {
+				const Json &F = pFindings->Items()[i];
+				const Json *pKind = F.Get("kind");
+				if (pKind == 0 || !pKind->IsString() || pKind->String() != KINDS[k][0])
+					continue;
+				++Here;
+				const Json *pMessage = F.Get("message");
+				std::printf("    %s track %d, %s: %s\n", Path.substr(Path.find_last_of('/') + 1).c_str(), t + 1, KINDS[k][0],
+					pMessage != 0 && pMessage->IsString() ? pMessage->String().c_str() : "");
+			}
+			const bool Step = Next.find(KINDS[k][1]) != std::string::npos;
+			if (Flagged && Here > 0 && !Step) {
+				std::printf("FAIL %s track %d: what_next lists no step for its %s finding\n", Path.c_str(), t + 1, KINDS[k][0]);
+				++g_Failures;
+			}
+			if (!Flagged && (Here > 0 || Step)) {
+				std::printf("FAIL %s track %d: %d %s findings%s on a song the user keeps\n", Path.c_str(), t + 1, Here, KINDS[k][0],
+					Step ? " and a what_next step" : "");
+				++g_Failures;
+			}
+			Found += Here;
 		}
-		Found += Here;
 	}
 	return Found;
 }
@@ -169,7 +177,7 @@ int main(int argc, char *argv[])
 	for (size_t i = 0; i < Flag.size(); ++i) {
 		std::printf("flag %s\n", Flag[i].c_str());
 		if (CheckSong(Flag[i], true, Verbose) == 0) {
-			std::printf("MISSED %s: no too_busy finding on a song the user called too busy\n", Flag[i].c_str());
+			std::printf("MISSED %s: no finding of the kinds checked on a song the user found fault with\n", Flag[i].c_str());
 			++Missed;
 		}
 	}

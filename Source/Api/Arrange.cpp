@@ -44,7 +44,8 @@ const std::vector<StyleInfo> &ChordStyles()
 			"busy melody", "guidetones|pad|sustain|long|line" },
 		{ "lush", "each chord an instrument of its own whose arpeggio loops through four or more of its notes, two frames "
 			"each, so sevenths and ninths ring (plain chords get them: color rich by default); held like arpeggio, softly "
-			"(volume 6) under the melody: lush, jazzy and atmospheric, on 2A03, MMC5 or VRC6 pulses",
+			"(volume 6) under the melody (on a lively stage struck again on a rhythm, tresillo or half): lush, jazzy and "
+			"atmospheric, on 2A03, MMC5 or VRC6 pulses",
 			"lusharp|jazzarp|jazzy|atmospheric|instrumentarp|instrumentarpeggio|slowarp|sevenths" },
 		{ "voices", "each chord's notes on channels of their own (chord_channels, 2-4 of them), its third and seventh first, "
 			"each voice moving to the next chord's nearest note: real chords on the VRC7's FM channels (an electric piano "
@@ -562,6 +563,17 @@ int GuidePitch(const Chord &C, int Near, int Low, int High, const Room &Space)
 }
 
 }	// namespace
+
+std::vector<int> ChordRhythmRows(int Rhythm, int BarRows, int RowsPerBeat)
+{
+	return RhythmRows(Rhythm, BarRows, RowsPerBeat);
+}
+
+int HitSofter(int Offset, int RowsPerBeat)
+{
+	const BarSpan Bar(0, std::max(1, Offset + 1));
+	return Softer(Offset, Bar, RowsPerBeat);
+}
 
 // Chords
 

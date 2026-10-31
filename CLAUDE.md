@@ -2087,6 +2087,39 @@ bars, a channel with a few scattered notes; so Green Valley Sunrise, which
 the user called chaos, gets no finding. `TestBusyFindings` covers it on songs
 built in code, and `TestWhatNextLoop`'s walks end without one.
 
+Chords that drone on (from `feat-chord-rests`): a local model's lively VRC6
+stage (Ironworks) followed what_next's lively recipe, whose lush chords on
+the 2A03's Pulse 1 struck once a bar, every bar, at one volume, for all 40
+bars; the user found that Pulse 1 annoying. Measured on the 43 kept songs,
+their lush parts sound in every bar too, without a rest, with the same
+envelope and as high against the melody (tops 10-19 semitones over its low
+notes, Ironworks' 4); what they do and it doesn't is strike their held
+chords again inside the bar, softer, in rhythms that change with the
+section (08 Verdant Run: whole notes in the intro, tresillo at 6, 4 and 5
+in A, half notes in B): their most common bar rhythm covers 0.53-0.59 of
+their bars, Ironworks' all 40. `DroneFindings` (with `ArrangeFindings`,
+`ARRANGE_DRONE`, `ChordRunOf` measuring with `Hearing`) is check_song's
+`chord_drone` (severity medium, after `too_busy` in `CHECK_KIND`;
+`PROBLEM_CHORD_DRONE` and the panel's `WORDS` appended): a held chord part
+(a looping arpeggio instrument or `0xy` on half its notes, `DRONE_ATTACKS`
+notes a bar or fewer) sounding in `DRONE_SOUNDING` of the bars,
+`DRONE_RUN` of them without a rest of a beat, one bar rhythm in
+`DRONE_SAME` of them, within `DRONE_UNDER_DB` of the melody, 16 bars or
+more, not calm (the night songs' pads hold: City's Deep night 0.86). Its
+fix is `vary_part`'s new `restrike` with `rhythm` (`ChordRhythmRows` and
+`HitSofter` in `Arrange.cpp`, as chord parts strike) section by section
+(`DroneFix`: tresillo in A and a climax, half in the others, free sections
+held; without sections the halves), each a call of the fix's `then`.
+GreenValleySunrise (flagged as chaos) gets it too (0.92). what_next's
+lively and general kinds give `add_chords_and_bass` `rhythm` tresillo in A
+and half in B (`NextKind::ChordRhythm`, `OtherRhythm`); calm's calls are
+unchanged. The room logic (`ChordPartOptions::Ceiling`) wasn't what let
+Ironworks' D-4 into the melody: what_next writes A's chords before there's
+a melody, and the kept songs reach as high. `song_file_checks` checks
+`too_busy` and `chord_drone` on keep/ and flag/. `TestChordDrones` and
+`TestWhatNextLoop` (the rhythms, and no `chord_drone` after a walk) cover
+it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
