@@ -13653,9 +13653,9 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // What review_arrangement and check_song find in an arrangement besides their other checks, from a local model's first
 // stage, which was clean on all of those and missed these: a melody in one-bar pieces, a thin or doubled bass, a sound
 // its channel can't play, faders doing the mix's work, a section that repeats another note for note, a lively stage that
-// loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main part (IntroFinding). Each carries the call
+// loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main part (IntroFinding); and (BusyFindings) a part too busy for the NES. Each carries the call
 // that fixes it where one does (the intro's may be advice alone: Fix null)
-enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO,
+enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO, ARRANGE_BUSY,
 	ARRANGE_KINDS };
 
 struct ArrangeFinding {
@@ -14603,8 +14603,106 @@ void IntroFinding(Session &S, Hearing &Ears, int Melody, int From, int Style, st
 	Out.push_back(F);
 }
 
-// Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats, the loop and
-// the intro
+// Too busy for the NES (from feat-busy-check): what the user heard in a local model's songs that "were not bad, but didn't
+// sound like NES: too complex, no charm", told from 43 songs he keeps (his game's tracks, 23 of his soundtrack's and 4 of a
+// local model's he liked).
+//
+// A line that never settles: the melody, or a line of its own (OwnLine), plays many notes a bar and brings a rhythm not
+// heard before in almost every bar, so the ear never gets a pattern to hold on to. BUSY_LINE_SCORE is its notes a bar
+// times the share of its bars whose rhythm (the rows its notes start on) no earlier bar of it had, over BUSY_LINE_BARS
+// bars or more. Measured: Mud Caves II's high line 7.57 (8.1 notes a bar, 31 of its 33 bars new); the kept songs' melodies
+// and lines 5.10 at most (13 Mirage Bazaar's melody, 6.6 notes a bar, 14 of 18 bars new; Undefined2's 4.72, 5.7 notes a
+// bar, 10 of 12 new; 37 The Narrows' 3.83 at 6.9 notes a bar, 000_TitleScreen's 2.6 at 6.9, repeating their rhythms).
+// Not checked, since the kept songs do it as much as the songs the user flagged: lines of their own beside the melody
+// (two or three busy ones near its register in 13 Mirage Bazaar, 09 Pollen Drift, 52 Bubblewell Grotto), the tune moving
+// between channels and the texture changing every four bars
+const double BUSY_LINE_SCORE = 6.3;
+const int BUSY_LINE_BARS = 8;
+
+// A line of its own beside the melody in [First, End): no echo of it, bass, chords (an arpeggio, a chord voice: Voices,
+// ChordVoicesIn's), harmony moving with the tune (MovesWithTune), steady run of broken chords or sparkle over it
+bool OwnLine(Session &S, int Channel, int Melody, int First, int End, const std::vector<int> &Voices)
+{
+	if (Channel == Melody || !IsMelodic(S.Channel(Channel)) || std::find(Voices.begin(), Voices.end(), Channel) != Voices.end())
+		return false;
+	const std::vector<NoteInfo> Notes = NotesIn(S.Notes(Channel), First, End);
+	return !Notes.empty() && MixRole(S, Channel, Melody, First, End) == ROLE_LINE && !(Melody >= 0 && MovesWithTune(S, Notes, Melody)) &&
+		!RunsSteadily(S, Notes) && !IsSparkle(S, Channel, Melody, First, End);
+}
+
+// A part's bars (those a note of it starts in) and how many bring a rhythm none before them had
+struct BarRhythms {
+	int Bars, Notes, New, FirstBar, LastBar;
+	BarRhythms() : Bars(0), Notes(0), New(0), FirstBar(0), LastBar(0) {}
+	double Score() const { return Bars > 0 ? Notes / static_cast<double>(Bars) * New / Bars : 0.0; }
+};
+
+BarRhythms RhythmsOf(Session &S, const std::vector<NoteInfo> &Notes)
+{
+	BarRhythms Out;
+	std::map<int, std::vector<int> > ByBar;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int Bar = S.Time.BarOf(Notes[i].Row);
+		ByBar[Bar].push_back(Notes[i].Row - S.Time.BarStart(Bar));
+	}
+	std::set<std::vector<int> > Heard;
+	for (std::map<int, std::vector<int> >::const_iterator it = ByBar.begin(); it != ByBar.end(); ++it) {
+		Out.FirstBar = Out.Bars == 0 ? it->first : Out.FirstBar;
+		Out.LastBar = it->first;
+		++Out.Bars;
+		Out.Notes += static_cast<int>(it->second.size());
+		Out.New += Heard.insert(it->second).second ? 1 : 0;
+	}
+	return Out;
+}
+
+void BusyFindings(Session &S, int Melody, int From, int To, std::vector<ArrangeFinding> &Out)
+{
+	if (Melody < 0 || !IsMelodic(S.Channel(Melody)))
+		return;
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+
+	// A line that never settles
+	const std::vector<int> Voices = ChordVoicesIn(S, First, End, Melody);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		if ((c != Melody && !OwnLine(S, c, Melody, First, End, Voices)) || RunsSteadily(S, Notes))
+			continue;
+		const BarRhythms R = RhythmsOf(S, Notes);
+		if (R.Bars < BUSY_LINE_BARS || R.Score() < BUSY_LINE_SCORE)
+			continue;
+		const std::string Name = S.Channel(c).FullName(), What = c == Melody ? "the melody" : "a line of its own";
+		const int PerBar = static_cast<int>(std::floor(R.Notes / static_cast<double>(R.Bars) + 0.5));
+		ArrangeFinding F;
+		F.Kind = ARRANGE_BUSY;
+		F.Channel = c;
+		F.FromBar = R.FirstBar;
+		F.ToBar = R.LastBar;
+		F.Weight = 1.5;
+		F.Text = Format("Too busy for the NES: %s (%s) plays about %d notes a bar in %s, and %d of its %d bars bring a rhythm it "
+			"hasn't played before, so the ear never gets a pattern to hold on to. NES tunes charm with a few short rhythms that come "
+			"back (a bar's rhythm again a bar or two later, the same in each phrase) and fewer notes: keep two or three rhythms and "
+			"repeat them, and let long notes and rests in.", Name.c_str(), What.c_str(), PerBar, RangeText(R.FirstBar, R.LastBar).c_str(),
+			R.New, R.Bars);
+		F.Summary = Format("%s plays about %d notes a bar with a new rhythm in %d of %d bars: too busy for the NES", Name.c_str(), PerBar,
+			R.New, R.Bars);
+		F.Details.Set("problem", "never_settles");
+		F.Details.Set("notes_a_bar", Json::NumberText(FormatNumber(std::floor(R.Notes * 10.0 / R.Bars + 0.5) / 10)));
+		F.Details.Set("bars", R.Bars);
+		F.Details.Set("new_rhythms", R.New);
+		Json Simplify = Json::MakeObject();
+		Simplify.Set("channel", Name);
+		Simplify.Set("variation", "simplify");
+		Simplify.Set("from_bar", R.FirstBar);
+		Simplify.Set("to_bar", R.LastBar);
+		F.Fix = ToolCall("vary_part", Simplify, "keeps only " + Name + "'s notes on the beats in " + RangeText(R.FirstBar, R.LastBar) +
+			", so its rhythm settles");
+		Out.push_back(F);
+	}
+}
+
+// Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats, the loop,
+// the intro and parts too busy for the NES
 std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const TrackUse &Use,
 	const Key &K)
 {
@@ -14619,6 +14717,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	RepeatFindings(S, Melody, From, To, Out);
 	LoopFinding(S, Style, Use, Out);
 	IntroFinding(S, Ears, Melody, From, Style, Out);
+	BusyFindings(S, Melody, From, To, Out);
 	return Out;
 }
 
@@ -15660,6 +15759,21 @@ std::string ReviewTool(Session &S, const Json &Args)
 		Tip(0.0, "Under half a minute before it loops: game music heard for minutes wants more material, an A part and "
 			"a B part (16 to 32 bars or more).");
 
+	// A part too busy for the NES (BusyFindings): the tips that would add more to it (company for the melody, a counter-melody
+	// in a repeat, busier drums) are left out, what they took off the score with them
+	bool BusyFound = false;
+	for (size_t i = 0; i < Arranged.size(); ++i)
+		BusyFound = BusyFound || Arranged[i].Kind == ARRANGE_BUSY;
+	for (size_t i = 0; BusyFound && i < Tips.size(); ) {
+		const std::string &Said = Tips[i].Text;
+		if (Said.compare(0, 26, "The melody has no company:") == 0 || Said.compare(0, 31, "Phrases come back unchanged: va") == 0 ||
+			Said.compare(0, 28, "A repeat with nothing new is") == 0) {
+			Missing -= Tips[i].Weight;
+			Tips.erase(Tips.begin() + static_cast<std::ptrdiff_t>(i));
+		}
+		else
+			++i;
+	}
 	for (size_t i = 0; i < Arranged.size(); ++i)
 		TipCall(Arranged[i].Weight, Arranged[i].Text + FixLine(Arranged[i].Fix), Arranged[i].Summary, Arranged[i].Fix);
 	// Most first: the tips that take the most off the score (in the order found where they take as much)
@@ -24173,13 +24287,21 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // arrangement's findings (ArrangeFindings, in arrange_kind's order): the melody in one-bar pieces, a thin or doubled
 // bass, a sound its channel can't play, faders doing the mix's work, a repeat that copies, a stage's short loop, an intro
 // that jumps into the main part
-// WARBLE (from feat-listen): FDS notes held past where a fast, deep modulator comes in, heard as a fluttering echo
+// WARBLE (from feat-listen): FDS notes held past where a fast, deep modulator comes in, heard as a fluttering echo.
+// TOO_BUSY (from feat-busy-check): the arrangement's ARRANGE_BUSY, a part too busy for the NES (BusyFindings); BUSY is a
+// bar of quick notes, the older and smaller check
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
-	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_KINDS };
+	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop", "intro", "warble" };
+	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "medium", "high" };
+	"medium", "low", "low", "low", "medium", "high", "medium" };
+
+// The check_song kind of one of ArrangeFindings' (arrange_kind)
+int ArrangeCheckKind(int Kind)
+{
+	return Kind == ARRANGE_BUSY ? static_cast<int>(FOUND_TOO_BUSY) : FOUND_PHRASES + Kind;
+}
 
 // A note a finding is about
 struct CheckNote {
@@ -24672,7 +24794,7 @@ std::string CheckTool(Session &S, const Json &Args)
 			++Arranged[A.Kind];
 			++ArrangedAll;
 			const int Row = S.Time.BarStart(A.FromBar);
-			CheckFinding &F = Report(FOUND_PHRASES + A.Kind, A.Channel, Row, std::max(1, std::min(End, S.Time.BarEnd(A.ToBar)) - Row),
+			CheckFinding &F = Report(ArrangeCheckKind(A.Kind), A.Channel, Row, std::max(1, std::min(End, S.Time.BarEnd(A.ToBar)) - Row),
 				A.Text + FixLine(A.Fix), A.Summary);
 			F.Details = A.Details;
 			F.Fix = A.Fix;
@@ -24686,7 +24808,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
-		Arranged[ARRANGE_INTRO], Warbling };
+		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY] };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -24762,7 +24884,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind. The arrangement's few findings are all listed, after the rest
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
-		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "" };
+		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "", "" };
 	int Shown[FOUND_KINDS], Left = MAX_LISTED * 3;
 	bool Any = false;
 	for (int k = FOUND_PHRASES; k < FOUND_KINDS; ++k) {
@@ -29233,6 +29355,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		return Where("Make the repeat different", false);
 	if (Id == "short_loop")
 		return "Make the loop longer";
+	if (Id == "too_busy")
+		return Where(Tool == "vary_part" ? "Simplify a part too busy for the NES" : "Clear a line that competes with the melody", true);
 	// The recipe's steps
 	if (Id == "tempo")
 		return "Set the tempo to " + FormatNumber(Number("bpm")) + " BPM";

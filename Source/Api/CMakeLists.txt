@@ -213,3 +213,9 @@ add_test(NAME exercises_tests COMMAND exercises_tests)
 add_executable(assistant_tests tests/AssistantTests.cpp)
 target_link_libraries(assistant_tests PRIVATE ftapi Threads::Threads)
 add_test(NAME assistant_tests COMMAND assistant_tests)
+
+# check_song and what_next on real songs read from their .ftm files (tests/SongFiles.h): the user's own, kept out of the
+# repository, in a folder given as its argument or by FAMITRACKER_SONG_CHECKS (keep/ and flag/); skipped without one
+add_executable(song_file_checks tests/SongFileChecks.cpp)
+target_link_libraries(song_file_checks PRIVATE ftapi)
+add_test(NAME song_file_checks COMMAND song_file_checks)

@@ -2059,6 +2059,34 @@ section ("Bottom", "Right", by `PANEL_*`) and shown again once the panels
 reopen (`RestorePanelTabs`). The mixer stays along the bottom edge and the
 clips panel beside the note views, outside the tabs.
 
+Busy for NES (from `feat-busy-check`): a local model's songs "were not bad,
+but didn't sound like NES: too complex, no charm". `BusyFindings` (with
+`ArrangeFindings`, `ARRANGE_BUSY`) finds a line that never settles: the
+melody, or a line of its own (`OwnLine`: not an echo, the bass, a chord voice,
+a harmony moving with the tune, a steady run or a sparkle) whose notes a bar
+times the share of its bars bringing a rhythm it hadn't played
+(`RhythmsOf`) reach `BUSY_LINE_SCORE` over 8 bars or more. `check_song`
+reports it as the kind `too_busy` (severity medium, after `warble` in
+`CHECK_KIND`, `ArrangeCheckKind`; `PROBLEM_TOO_BUSY` and the panel's `WORDS`
+appended), its fix `vary_part` `simplify` over the line's bars; the review
+weighs it in and then leaves out the tips that would add to the part (company
+for the melody, a counter-melody in a repeat); `what_next` gives its fix as a
+step (`PartFixes`, as other medium findings). Calibrated on the user's songs
+with `song_file_checks` (`tests/SongFileChecks.cpp`, which reads `.ftm` files
+through `tests/SongFiles.h`'s `FileSong`, a read-only `SongHost` built from
+`nsf::ReadFtmFile` and the fork's blocks): a folder given as its argument or
+by `FAMITRACKER_SONG_CHECKS`, with `keep/` (no `too_busy` finding and no
+`what_next` step for one, else it fails) and `flag/` (listed when one gets
+none); the songs are the user's own and stay out of the repository, and
+without the folder it passes. Measured: Mud Caves II's high line 7.57, the 43
+kept songs' 5.10 at most. Not checked, since the kept songs do it as much:
+two or three busy lines of their own near the melody's register (the user's
+soundtrack does it in 13 Mirage Bazaar, 09 Pollen Drift, 52 Bubblewell
+Grotto), the tune moving between channels, the texture changing every four
+bars, a channel with a few scattered notes; so Green Valley Sunrise, which
+the user called chaos, gets no finding. `TestBusyFindings` covers it on songs
+built in code, and `TestWhatNextLoop`'s walks end without one.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

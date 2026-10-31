@@ -20327,11 +20327,12 @@ void TestWhatNextLoop()
 		Reused += Motifs["A"] == Motifs[Other] ? 1 : 0;
 		CHECK(CallIndex(Made, "add_counter_melody") < 0);
 		Check(Made.size() >= 18 && Made.size() <= 30, K.Asked, __LINE__);
-		// Clean: nothing vanishes, clicks, clashes or plays out of range; the review hears depth
+		// Clean: nothing vanishes, clicks, clashes, plays out of range or is too busy for the NES (what_next's own steps, a
+		// harmony and a varied repeat, don't make a part so); the review hears depth
 		const std::string Style = *K.Style ? std::string("\"style\": \"") + K.Style + "\"" : std::string();
 		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + (Style.empty() ? std::string() : ", " + Style) +
 			"}").Text);
-		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro" };
+		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy" };
 		for (const char *Kind : CLEAN)
 			Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(K.Asked) + " " + Kind).c_str(), __LINE__);
 		// The intro leads into A (GitHub issue #1): with drums, A's last bar of them comes in during its last bar
@@ -27081,6 +27082,112 @@ void TestAgentLog()
 	CHECK_LACKS(Song.Files["Shop agent log.md"], "A new song");
 }
 
+// Too busy for the NES (from feat-busy-check): a line that never settles into a rhythm is found, with vary_part's simplify
+// as its fix; a busy part that repeats its rhythm, a steady arpeggio, a harmony in the tune's rhythm and an echo aren't
+void BusyBase(FakeSong &Song)
+{
+	Song.Info.DirectChanges = true;
+	const char *const ROOTS[4] = { "C-2", "A-1", "F-1", "G-1" };
+	for (int Bar = 1; Bar <= 16; ++Bar) {
+		const int Row = (Bar - 1) * 16;
+		Song.Put(2, Row, ROOTS[(Bar - 1) % 4], Bar == 1 ? 1 : NO_INSTRUMENT);
+		Song.Put(2, Row + 8, ROOTS[(Bar - 1) % 4]);
+		Song.End(2, Row + 14, NOTE_RELEASE);
+	}
+}
+
+// Notes on Channel in every bar: Busy, eight a bar on rows that change from bar to bar (a new rhythm each bar), a step
+// apart around C-5 (Shift semitones and Delay rows off, for a harmony or an echo); otherwise eight a bar on the same rows
+void BusyLine(FakeSong &Song, int Channel, bool Busy, int Shift = 0, int Delay = 0)
+{
+	static const int SCALE[] = { 0, 2, 4, 5, 7, 9, 11, 12, 14, 16 };
+	unsigned int Seed = 7;
+	int Degree = 3;
+	for (int Bar = 1; Bar <= 16; ++Bar) {
+		std::set<int> Rows;
+		Rows.insert(0);
+		while (Rows.size() < 8) {
+			Seed = Seed * 1103515245u + 12345u;
+			Rows.insert(Busy ? static_cast<int>((Seed >> 16) % 15) + 1 : static_cast<int>(Rows.size()) * 2);
+		}
+		for (std::set<int>::const_iterator it = Rows.begin(); it != Rows.end(); ++it) {
+			Seed = Seed * 1103515245u + 12345u;
+			Degree = std::max(0, std::min(9, Degree + ((Seed >> 16) % 3 == 0 ? -1 : 1) * ((Seed >> 20) % 2 == 0 ? 1 : 2)));
+			const int Row = (Bar - 1) * 16 + *it + Delay;
+			if (Row < 16 * 16)
+				Song.Rows[static_cast<size_t>(Channel)][static_cast<size_t>(Row)].SetPitch(60 + SCALE[Degree] - Shift);
+		}
+	}
+	Song.Rows[static_cast<size_t>(Channel)][static_cast<size_t>(Delay)].Instrument = 0;
+}
+
+void TestBusyFindings()
+{
+	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	// A melody of eight notes a bar with a new rhythm in each bar: found, on its channel, and simplified it settles
+	{
+		FakeSong Song(4);
+		BusyBase(Song);
+		BusyLine(Song, 5, true);
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "too_busy", "never_settles");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "too_busy"), 1);
+		if (!Found.empty()) {
+			CHECK_EQ(IntegerOf(Found[0], "channel"), 6);
+			CHECK_EQ(TextOf(Found[0], "severity"), std::string("medium"));
+			CHECK_EQ(IntegerOf(Found[0], "bars"), 16);
+			CHECK_HAS(TextOf(Found[0], "message"), "Too busy for the NES: VRC6 Pulse 1 (the melody) plays about 8 notes a bar");
+			const Json *pFix = Found[0]->Get("fix");
+			CHECK(pFix != 0 && TextOf(pFix, "tool") == "vary_part" && TextOf(pFix->Get("arguments"), "variation") == "simplify");
+		}
+		ProblemList List;
+		std::string Error;
+		CHECK(List.Read(Run(Song, "check_song", Args).Text, Error));
+		CHECK_EQ(List.Count(PROBLEM_TOO_BUSY), 1);
+		CHECK_EQ(std::string(ProblemKindId(PROBLEM_TOO_BUSY)), std::string("too_busy"));
+		CHECK_EQ(ProblemSeverity(PROBLEM_TOO_BUSY), 2);
+		// The review weighs it in, without asking for a counter-melody; what_next gives its fix as a step
+		const std::string Review = Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+		CHECK_HAS(Review, "Too busy for the NES");
+		CHECK_LACKS(Review, "The melody has no company");
+		CHECK_HAS(Run(Song, "what_next", "{\"all\": true, \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+			"vary_part {\"channel\":\"VRC6 Pulse 1\",\"variation\":\"simplify\"");
+		Run(Song, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"simplify\", \"from_bar\": 1, \"to_bar\": 16}");
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "too_busy").empty());
+	}
+	// Eight notes a bar on the same rows every bar (pitches that move): busy, but its rhythm comes back
+	{
+		FakeSong Song(4);
+		BusyBase(Song);
+		BusyLine(Song, 5, false);
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "too_busy").empty());
+	}
+	// A steady arpeggio in sixteenths under a plain tune, and broken chords that change every bar
+	{
+		FakeSong Song(4);
+		BusyBase(Song);
+		BusyLine(Song, 5, false);
+		static const int CHORDS[4][3] = { { 48, 52, 55 }, { 45, 48, 52 }, { 41, 45, 48 }, { 43, 47, 50 } };
+		for (int Bar = 1; Bar <= 16; ++Bar)
+			for (int r = 0; r < 16; ++r)
+				Song.Rows[6][static_cast<size_t>((Bar - 1) * 16 + r)].SetPitch(CHORDS[(Bar - 1) % 4][(r + Bar) % 3] + ((r / 3) % 2) * 12);
+		Song.Rows[6][0].Instrument = 0;
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "too_busy").empty());
+	}
+	// A harmony a third under the busy tune, in its rhythm, and an echo of it two rows on: only the tune is found
+	for (int Kind = 0; Kind < 2; ++Kind) {
+		FakeSong Song(4);
+		BusyBase(Song);
+		BusyLine(Song, 5, true);
+		BusyLine(Song, 6, true, Kind == 0 ? 4 : 0, Kind == 0 ? 0 : 2);
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "too_busy");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		CHECK(!Found.empty() && IntegerOf(Found[0], "channel") == 6);
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -27346,6 +27453,7 @@ int main()
 	TestNewSongs();
 	TestClashFix();
 	TestAgentLog();
+	TestBusyFindings();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
