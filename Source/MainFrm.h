@@ -88,6 +88,8 @@ public:
 	void	UpdateTrackBox();
 	void	UpdateControls();
 	void	ResizeFrameWindow();
+	CRect	FrameColumnRect(int Width);	// the frame editor's place in the column on the left
+	void	FitFrameColumn();				// after a layout: its rows and height in the column
 
 	void	SetFirstHighlightRow(int Rows);
 	void	SetSecondHighlightRow(int Rows);

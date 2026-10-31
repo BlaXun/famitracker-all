@@ -824,21 +824,18 @@ void CMainFrame::ResizeFrameWindow()
 		}
 		// Located to the left
 		else {
-			// Frame editor window
-			CRect rect;
-			m_wndVerticalControlBar.GetClientRect(&rect);
-
-			Height = rect.Height() - CPatternEditor::HEADER_HEIGHT - 2;
+			// Frame editor window, down to the column's bottom (in pixels: 0.4.6 scaled the column's
+			// height again, which put the list's middle row under the column's bottom above 96 DPI)
 			Width = m_pFrameEditor->CalcWidth(Channels);
 
-			m_pFrameEditor->MoveWindow(SX(2), SY(CPatternEditor::HEADER_HEIGHT + 1), SX(Width), SY(Height));
+			m_pFrameEditor->MoveWindow(FrameColumnRect(Width));
 
 			// Move frame controls
 			m_wndFrameControls.MoveWindow(SX(4), SY(10), SX(150), SY(26));
 		}
 
-		// Vertical control bar
-		m_wndVerticalControlBar.m_sizeDefault.cx = Width + 4;
+		// Vertical control bar (in pixels, as wide as the frame editor at any DPI)
+		m_wndVerticalControlBar.m_sizeDefault.cx = SX(Width + 4);
 		m_wndVerticalControlBar.CalcFixedLayout(TRUE, FALSE);
 		RecalcLayout();
 	}
@@ -2834,6 +2831,8 @@ void CMainFrame::RecalcLayout(BOOL bNotify)
 		m_bBottomPlanned = false;
 	}
 	CFrameWnd::RecalcLayout(bNotify);
+	if (!m_bInRecalcLayout)
+		FitFrameColumn();
 }
 
 bool CMainFrame::PlaceBottomPanel(CControlBar *pBar, AFX_SIZEPARENTPARAMS *pLayout)
@@ -3947,6 +3946,35 @@ void CMainFrame::OnUpdateSelectionEnabled(CCmdUI *pCmdUI)
 {
 	CFamiTrackerView *pView	= static_cast<CFamiTrackerView*>(GetActiveView());
 	pCmdUI->Enable((pView->IsSelecting()) ? 1 : 0);
+}
+
+CRect CMainFrame::FrameColumnRect(int Width)
+{
+	// The frame editor's place in the column on the left: under the frame controls, at the pattern editor's
+	// header height, to the column's bottom
+	CRect Column;
+	m_wndVerticalControlBar.GetClientRect(&Column);
+	const int Top = SY(CPatternEditor::HEADER_HEIGHT + 1);
+	return CRect(SX(2), Top, SX(2) + SX(Width), std::max(Top, static_cast<int>(Column.bottom) - SY(1)));
+}
+
+void CMainFrame::FitFrameColumn()
+{
+	// After every layout: the frame editor counts its rows in the column while it's on the left, as a list
+	// while the pattern editor is hidden, and follows the column's height (the toolbar, the control panel
+	// and the status bar change it without a WM_SIZE)
+	if (m_pFrameEditor == NULL || m_pFrameEditor->GetSafeHwnd() == NULL)
+		return;
+	const bool Left = m_iFrameEditorPos == FRAME_EDIT_POS_LEFT;
+	m_pFrameEditor->SetColumnLayout(Left, !m_bPatternShown);
+	if (!Left || m_wndVerticalControlBar.GetSafeHwnd() == NULL || (m_wndVerticalControlBar.GetStyle() & WS_VISIBLE) == 0)
+		return;
+	CRect Now;
+	m_pFrameEditor->GetWindowRect(&Now);
+	m_wndVerticalControlBar.ScreenToClient(&Now);
+	const CRect Wanted = FrameColumnRect(0);		// its height (ResizeFrameWindow gives its width)
+	if (Now.top != Wanted.top || Now.bottom != Wanted.bottom)
+		m_pFrameEditor->SetWindowPos(NULL, Now.left, Wanted.top, Now.Width(), Wanted.Height(), SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void CMainFrame::SetFrameEditorPosition(int Position)

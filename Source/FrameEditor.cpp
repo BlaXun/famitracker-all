@@ -157,6 +157,9 @@ CFrameEditor::CFrameEditor(CMainFrame *pMainFrm) :
 	m_iNewPattern(0),
 	m_iRowsVisible(0),
 	m_iMiddleRow(0),
+	m_iFullRowsVisible(0),
+	m_bColumn(false),
+	m_bListRows(false),
 	m_bInputEnable(false),
 	m_bCursor(false),
 	m_bInvalidated(false),
@@ -382,17 +385,18 @@ void CFrameEditor::DrawFrameEditor(CDC *pDC)
 	}
 
 	// Draw selected row
-	GradientBar(&m_dcBack, 0, SY(m_iMiddleRow * ROW_HEIGHT + 3), m_iWinWidth, SY(ROW_HEIGHT + 1), RowColor, ColBackground);	
+	const int CursorAt = CursorRow(ActiveFrame, FrameCount);
+	GradientBar(&m_dcBack, 0, SY(CursorAt * ROW_HEIGHT + 3), m_iWinWidth, SY(ROW_HEIGHT + 1), RowColor, ColBackground);	
 
-	int FirstVisibleFrame = ActiveFrame - m_iMiddleRow;
+	int FirstVisibleFrame = ActiveFrame - CursorAt;
 	int Frame = 0;
 	int Start = 0;
 	int End = m_iRowsVisible;
 
 	int PlayFrame = theApp.GetSoundGenerator()->GetPlayerFrame();
 
-	if (ActiveFrame > m_iMiddleRow)
-		Frame = ActiveFrame - m_iMiddleRow;
+	if (ActiveFrame > CursorAt)
+		Frame = ActiveFrame - CursorAt;
 	if (FirstVisibleFrame + Start < 0)
 		Start = -FirstVisibleFrame;
 	if (FirstVisibleFrame + End >= FrameCount)
@@ -422,10 +426,10 @@ void CFrameEditor::DrawFrameEditor(CDC *pDC)
 				m_dcBack.FillSolidRect(SX(ROW_COLUMN_WIDTH), SY((i + 1) * ROW_HEIGHT + 3 - 1), SX(PatternAreaWidth), SY(1), ColSelectEdge);
 		}
 
-		if (i == m_iMiddleRow) {
+		if (i == CursorAt) {
 			// Cursor box
 			int x = ((ActiveChannel - m_iFirstChannel) * FRAME_ITEM_WIDTH);
-			int y = m_iMiddleRow * ROW_HEIGHT + 3;
+			int y = CursorAt * ROW_HEIGHT + 3;
 			
 			GradientBar(&m_dcBack, SX(ROW_COLUMN_WIDTH + 2 + x), SY(y), SX(FRAME_ITEM_WIDTH), SY(ROW_HEIGHT + 1), ColCursor, ColBackground);
 			m_dcBack.Draw3dRect(SX(ROW_COLUMN_WIDTH + 2 + x), SY(y), SX(FRAME_ITEM_WIDTH), SY(ROW_HEIGHT + 1), BLEND(ColCursor, 0xFFFFFF, 90), BLEND(ColCursor, ColBackground, 60));
@@ -893,9 +897,9 @@ BOOL CFrameEditor::PreTranslateMessage(MSG* pMsg)
 int CFrameEditor::GetRowFromPoint(const CPoint &point, bool DropTarget) const
 {
 	// Translate a point value to a row
-	int Delta = ((point.y - TOP_OFFSET) / ROW_HEIGHT) - m_iMiddleRow;
-	int NewFrame = m_pView->GetSelectedFrame() + Delta;
 	int FrameCount = m_pDocument->GetFrameCount(m_pMainFrame->GetSelectedTrack());
+	int Delta = ((point.y - TOP_OFFSET) / ROW_HEIGHT) - CursorRow(m_pView->GetSelectedFrame(), FrameCount);
+	int NewFrame = m_pView->GetSelectedFrame() + Delta;
 	
 	if (NewFrame < 0)
 		NewFrame = 0;
@@ -1155,7 +1159,8 @@ void CFrameEditor::OnContextMenu(CWnd* /*pWnd*/, CPoint point)
 		CPoint Client(point);
 		ScreenToClient(&Client);
 		ScaleMouse(Client);
-		const int Frame = m_pView->GetSelectedFrame() + (Client.y - TOP_OFFSET) / ROW_HEIGHT - m_iMiddleRow;
+		const int Frame = m_pView->GetSelectedFrame() + (Client.y - TOP_OFFSET) / ROW_HEIGHT -
+			CursorRow(m_pView->GetSelectedFrame(), Frames);
 		if (Client.y >= TOP_OFFSET && Frame >= 0 && Frame < Frames)
 			m_iMenuFrame = Frame;
 	}
@@ -1200,7 +1205,7 @@ INT_PTR CFrameEditor::OnToolHitTest(CPoint point, TOOLINFO *pTI) const
 	if (Logical.x < Left || Logical.y < TOP_OFFSET)
 		return -1;
 	const int Active = std::max(0, std::min(Frames - 1, static_cast<int>(m_pView->GetSelectedFrame())));
-	const int FirstVisible = Active - m_iMiddleRow;
+	const int FirstVisible = Active - CursorRow(Active, Frames);
 	const int Row = (Logical.y - TOP_OFFSET) / ROW_HEIGHT, Frame = FirstVisible + Row;
 	if (Row >= m_iRowsVisible || Frame < 0 || Frame >= Frames)
 		return -1;
@@ -1598,6 +1603,37 @@ void CFrameEditor::OnModuleMoveFrameDown()
 	m_pMainFrame->OnModuleMoveframedown();
 }
 
+int CFrameEditor::CursorRow(int ActiveFrame, int FrameCount) const
+{
+	// 0.4.6 keeps the selected frame on the middle row, beside the pattern editor's cursor row. As a list (the
+	// column with the pattern editor hidden) the first frame is on the top row and the last as low as the
+	// rows reach: centred only where frames lie on both sides of it
+	if (!m_bListRows)
+		return m_iMiddleRow;
+	const int Full = std::max(1, m_iFullRowsVisible);
+	const int First = std::max(0, std::min(ActiveFrame - m_iMiddleRow, FrameCount - Full));
+	return std::max(0, ActiveFrame - First);
+}
+
+void CFrameEditor::SetColumnLayout(bool Column, bool List)
+{
+	List = List && Column;
+	if (Column == m_bColumn && List == m_bListRows)
+		return;
+	const bool Recount = Column != m_bColumn;
+	m_bColumn = Column;
+	m_bListRows = List;
+	if (Recount && m_hWnd != NULL) {
+		CRect Client;
+		GetClientRect(&Client);
+		CountRows(Client.Width(), Client.Height());
+	}
+	if (m_hWnd != NULL) {
+		InvalidateFrameData();
+		Invalidate();
+	}
+}
+
 void CFrameEditor::OnModuleMoveFrameUp()
 {
 	m_pMainFrame->OnModuleMoveframeup();
@@ -1609,18 +1645,30 @@ void CFrameEditor::OnSize(UINT nType, int cx, int cy)
 
 	m_iWinWidth = cx;
 	m_iWinHeight = cy;
+	CountRows(cx, cy);
+
+	// Delete the back buffer
+	m_bmpBack.DeleteObject();
+	m_dcBack.DeleteDC();
+}
+
+void CFrameEditor::CountRows(int cx, int cy)
+{
+	// Rows are counted in unscaled units (they're drawn at SY), so in the column the height is too, which
+	// keeps the middle row in the middle at any DPI; the top position keeps 0.4.6's count of its pixels
+	if (m_bColumn) {
+		CPoint Logical(cx, cy);
+		ScaleMouse(Logical);
+		cy = Logical.y;
+	}
 
 	// Get number of rows visible
-	int FullRowsVisible = (cy - TOP_OFFSET * 2) / ROW_HEIGHT;
+	m_iFullRowsVisible = (cy - TOP_OFFSET * 2) / ROW_HEIGHT;
 	m_iRowsVisible = (cy - TOP_OFFSET * 2 + ROW_HEIGHT - TOP_OFFSET) / ROW_HEIGHT;
 	m_iMiddleRow = m_iRowsVisible / 2;
 
 	m_iTopScrollArea = ROW_HEIGHT;
 	m_iBottomScrollArea = cy - ROW_HEIGHT;
-
-	// Delete the back buffer
-	m_bmpBack.DeleteObject();
-	m_dcBack.DeleteDC();
 }
 
 void CFrameEditor::CancelSelection()

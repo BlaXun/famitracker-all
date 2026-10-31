@@ -138,10 +138,17 @@ public:
 	bool ShowsSections() const;
 	bool NeedsResize() const;	// since the last CalcWidth
 
+	// Placed in the column left of the notes (View > Frame editor position > Left), it counts its rows in
+	// the column's height; with List, while the pattern editor is hidden, its rows start at its top and the
+	// selected frame is centred only as far as the frames fill the column (no empty band above or below)
+	void SetColumnLayout(bool Column, bool List);
+
 private:
 	// Drawing
 	void DrawFrameEditor(CDC *pDC);
 	bool NeedUpdate() const;
+	int CursorRow(int ActiveFrame, int FrameCount) const;	// the row the selected frame is drawn on
+	void CountRows(int cx, int cy);							// the rows of a client area of that size
 
 	// Translation
 	int GetRowFromPoint(const CPoint &point, bool DropTarget) const;
@@ -194,6 +201,9 @@ private:
 	int		m_iNewPattern;
 	int		m_iRowsVisible;
 	int		m_iMiddleRow;
+	int		m_iFullRowsVisible;
+	bool	m_bColumn;					// in the column on the left (SetColumnLayout)
+	bool	m_bListRows;				// rows from the top, the selected frame centred within them
 	bool	m_bInputEnable;
 	bool	m_bCursor;
 
