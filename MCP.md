@@ -851,15 +851,41 @@ JSON as `fix`.
   three quarters of the melody's bars or more (16 at least), within 6 dB
   of the melody, and whose notes (the root and what its arpeggio adds) sit
   a semitone from the melody's note, in any octave, 30% of the time they
-  sound together or more, on a track that isn't calm. Fix:
-  `add_chords_and_bass` over those bars without `chords`, so the chords
-  (and the bass) are fitted to the melody again, under its lowest note. A
+  sound together or more, on a track that isn't calm. Fix: `polish` with
+  the touch `colors` over those bars, which takes out only the colors that
+  rub (see below), keeping every note, the progression and the bass; when
+  that alone would leave the chords rubbing 30% of the time or more (their
+  triads' own notes rub the tune), `add_chords_and_bass` over those bars
+  without `chords` follows it in the fix's `then`, so the chords (and the
+  bass) are fitted to the melody again, under its lowest note; with no
+  color to take out, that refit is the fix. A
   local model's lively stage put lush chords on Pulse 1 under the whole
   tune, and the user found that Pulse 1 irritating, distracting from the
   real track (struck again on a tresillo, no better); its arpeggio's add9
   and maj7 rubbed the melody 40% of the time, where the 43 songs the user
   keeps rub at most 21% (most 6-17%), though their chord parts play as
-  often, as loud and as high against the melody.
+  often, as loud and as high against the melody. On Ironworks2 the colors
+  touch took the rubs from 42% to 30% (Cm(add9) as Cm7, Dbmaj7 and Abmaj7
+  as their add9, a G7 as G); the rest is the progression's own (Db under
+  the tune's C, its Ab over the tune's G), so the refit follows there.
+- `polish` with the touch `colors` works on a chord part's lush chords
+  (instruments named as `add_chords_and_bass` names them, "Lush m(add9)")
+  and `0xy` chords. A color (an added ninth, a seventh, a sixth) rubs the
+  melody when one of its notes sits a semitone from it for half a beat or
+  more of the chord (the chord's first row weighing more, quick passing
+  notes less). Each chord with one gets the nearest color that doesn't rub:
+  the chord without the tones that rub where it keeps a color, else the
+  rich colors `add_chords_and_bass` tries for it, else the plain triad, on
+  the lush instrument of that shape (made when the song has none, named as
+  the others; one the song has no room for leaves the chord as it was). An
+  `0xy` chord gets its triad's third and fifth, and the next note that
+  carried the old arpeggio on gets it written. `colors` `add` does the
+  other way: plain lush chords get the first rich color that doesn't rub
+  the melody. One Ctrl+Z undoes either (the instruments made stay).
+  `what_next`'s lively recipe writes its chords plain before the melody
+  and gives this step (`colors`, after the form, before the harmony and the
+  echo) once the melody is there; a chord part with any color of its own
+  is left as the composer wrote it.
 
 `review_arrangement` weighs them into its score (a melody in pieces most)
 and lists them among its tips, most first. Its breath check counts a rest
@@ -1123,7 +1149,7 @@ before a batch of changes.
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one. Over a chord from outside the key (a borrowed bVI or bVII, a secondary dominant) the voice takes the scale that chord sounds in: under Ebadd9 in G major G aeolian's notes, under F G mixolydian's, never an Eb7's Db or an F7's Eb. Of the chords the other parts play, a note outside the key that no part plays isn't the chord's (an E bass under C and E is heard as an E augmented, whose G# nobody plays) |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line holds a note a bar, rests where the melody does and answers only in rests of two beats or more, briefly (under a melody with no such rest the reply says there was no room to answer); `rests` (fill, the default, answer or leave) chooses that directly |
 | `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively or action shapes them. See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
-| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; when asked, `clashes`: an accompaniment's note a semitone from another part moves onto the chord the others play (see [Clashes](#clashes)); style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents. Polishing again changes nothing it did: a part accented already keeps its volumes. `staccato` cuts the bass short only where the channel plays the bass (not a sawtooth counter-melody over the triangle's) and not in bars the melody rests in, where a break's long notes hold it up |
+| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; when asked, `clashes`: an accompaniment's note a semitone from another part moves onto the chord the others play (see [Clashes](#clashes)), and `colors`: a chord part's colors that rub the melody taken out, or with `colors` `add` plain lush chords given the rich colors that fit it (see [What drafts miss](#what-drafts-miss)); style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents. Polishing again changes nothing it did: a part accented already keeps its volumes. `staccato` cuts the bass short only where the channel plays the bass (not a sawtooth counter-melody over the triangle's) and not in bars the melody rests in, where a break's long notes hold it up |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it. A whole section copied becomes its repeat, numbered the way the song numbers it: `A 2`, or `A3` beside an `A2`, never a name that reads as another's |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start. Bars put in after a swing swing as the bars before them do (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |

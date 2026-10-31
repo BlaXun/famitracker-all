@@ -122,6 +122,17 @@ bool ParseColor(const std::string &Text, chord_color &Out);	// "plain", "seventh
 void ColorChords(std::vector<ChordAt> &Chords, const std::vector<NoteInfo> &Melody, const Key &K, int RowsPerBeat,
 	chord_color Color);
 
+// The colors ColorChords tries on Chords[i] in turn (each the chord's tones above its root, 0-11), its neighbours
+// deciding some (a secondary dominant's seventh); empty when the chord isn't a major, minor or diminished triad.
+// KeyOnly: the tones a color adds must be in the key
+std::vector<std::vector<int> > ColorCandidates(const std::vector<ChordAt> &Chords, size_t i, const Key &K, chord_color Color,
+	bool &KeyOnly);
+
+// Whether the tones of Tones that Base doesn't have fit the melody on [Row, End) as ColorChords fits them: none a
+// semitone from the melody's notes for three quarters of a beat or more (MelodyRub), and in the key when KeyOnly
+bool ColorFits(const Chord &Base, const std::vector<int> &Tones, const std::vector<NoteInfo> &Melody, int Row, int End, const Key &K,
+	bool KeyOnly, int RowsPerBeat, double Limit = 0.75);
+
 // How much the melody rubs against a pitch class on [Row, End): in beats, a
 // note a semitone away weighing its length, more on the chord's first row
 // and less for quick passing notes

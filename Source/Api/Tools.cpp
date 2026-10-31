@@ -12938,6 +12938,338 @@ std::string ClashesLeftText(const Session &S, const std::vector<ClashLeft> &Left
 		"clashes").c_str(), Left.size() == 1 ? "stays" : "stay", List.c_str(), Left.size() == 1 ? "it" : "them");
 }
 
+// Colors on chord parts (polish's touch colors). A chord part's chords are its notes' roots with what a looping arpeggio
+// adds over them (a lush chord's instrument, or 0xy): Ironworks2's lush chords on the 2A03's Pulse 1 were written rich
+// before its melody (what_next's lively recipe), Cm(add9), Dbmaj7, G7, and their added ninths and sevenths sat a
+// semitone from the melody's notes: most of the 42% of the time its chords rubbed the tune (check_song's chord_drone).
+// Taking out only the colors that rub keeps the notes, the progression and the bass, where fitting the chords and the
+// bass again (add_chords_and_bass) replaced the progression and left the bass root and fifth. A color rubs as
+// ColorChords hears it when it writes the chords (ColorFits: the melody a semitone from it for three quarters of a beat
+// or more of the chord, weighed as MelodyRub weighs it), so adding colors (the mode add, for chords written plain before
+// the melody) never puts in one that taking them out would take out again.
+
+// A chord the touch changes: the notes of one chord in a row (a chord struck again keeps its color) in S.Notes(Channel),
+// its root (a pitch), the tones above it it sounds (0-11, from 0) before and after, and its rows
+bool PlaysChordPart(Session &S, int Channel, int First, int End);
+
+// A color rubs the melody when a melody note a semitone from it sounds for half a beat or more of the chord (MelodyRub,
+// which weighs the chord's first row more and quick passing notes less): Ironworks2's bar 5, where the melody's Eb meets
+// the arpeggio's added ninth D for half a beat from its sixth row, which the user heard. ColorChords, writing chords over a
+// melody, allows three quarters of a beat; at that Ironworks2's chords rubbed 33% of the time after the touch, at half a
+// beat 30% (nothing lower took out more)
+const double COLOR_RUB_LIMIT = 0.5;
+
+int ColorClass(int Pitch)
+{
+	return (Pitch % 12 + 12) % 12;
+}
+
+struct ColorSwap {
+	std::vector<size_t> Notes;
+	int Row, End, Root;
+	std::vector<int> From, To;
+	bool Fx;	// 0xy, else a lush chord's instrument
+	ColorSwap() : Row(0), End(0), Root(0), Fx(false) {}
+};
+
+// The touch's plan for a chord channel over rows [First, End): the chords whose colors rub the melody, each given the
+// nearest color that doesn't (Add: plain chords given the rich color that fits), and how many chords that rub it stays
+// with (Left: a chord that isn't a triad with colors, an instrument that isn't a lush chord's, an 0xy carried on)
+std::vector<ColorSwap> PlanColors(Session &S, int Channel, int First, int End, int Melody, const Key &K, bool Add, int &Left)
+{
+	std::vector<ColorSwap> Out;
+	Left = 0;
+	if (Melody < 0 || Melody == Channel || !IsMelodic(S.Channel(Channel)))
+		return Out;
+	const int R = S.Time.RowsPerBeat;
+	const std::string Chip = InstrumentChip(S.Channel(Channel));
+	const std::vector<NoteInfo> Notes = S.Notes(Channel);
+	const std::vector<NoteInfo> &Tune = S.Notes(Melody);
+	const std::vector<Cell> &Cells = S.Cells(Channel);
+	const int Columns = S.Channel(Channel).EffectColumns;
+	const std::vector<int> Arps = StickyAt(Cells, Notes, Columns, EFF_ARPEGGIO);
+	// The chords in a row: notes of one root and one arpeggio, struck again within a beat of the last one's end
+	struct Span { std::vector<size_t> Notes; int Row, End, Root; std::vector<int> Tones; bool Fx, Lush; };
+	std::vector<Span> Spans;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Row >= End || N.Volume <= 0)
+			continue;
+		const std::vector<int> Above = ChordAbove(S, N, Arps[i]);
+		if (Above.empty())
+			continue;
+		std::vector<int> Tones(1, 0);
+		for (size_t a = 0; a < Above.size(); ++a)
+			Tones.push_back(ColorClass(Above[a]));
+		std::sort(Tones.begin(), Tones.end());
+		Tones.erase(std::unique(Tones.begin(), Tones.end()), Tones.end());
+		const bool Fx = Arps[i] != 0;
+		if (!Spans.empty() && Spans.back().Root % 12 == N.Pitch % 12 && Spans.back().Tones == Tones && Spans.back().Fx == Fx &&
+			N.Row - Spans.back().End < R && Spans.back().Notes.back() + 1 == i) {
+			Spans.back().Notes.push_back(i);
+			Spans.back().End = N.Row + N.Rows;
+			continue;
+		}
+		Span Sp;
+		Sp.Notes.push_back(i);
+		Sp.Row = N.Row;
+		Sp.End = N.Row + N.Rows;
+		Sp.Root = N.Pitch;
+		Sp.Tones = Tones;
+		Sp.Fx = Fx;
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+		const Preset *pSound = 0;
+		Preset Own;
+		int Pattern = 0, Frames = 0;
+		Sp.Lush = !Fx && pInfo != 0 && ParseLushName(S, Chip, pInfo->Name, pSound, Own, Pattern, Frames);
+		Spans.push_back(Sp);
+	}
+	// Each chord as its triad, for ColorCandidates (the next chord decides a secondary dominant's color)
+	std::vector<ChordAt> Bases;
+	std::vector<bool> Triad;
+	for (size_t s = 0; s < Spans.size(); ++s) {
+		const std::vector<int> &T = Spans[s].Tones;
+		auto Has = [&](int t) { return std::find(T.begin(), T.end(), t) != T.end(); };
+		const int Third = Has(4) && !Has(3) ? 4 : Has(3) && !Has(4) ? 3 : -1;
+		// (0xy holds two notes over the root: one with a third and a color has its fifth left out, Cmaj7 as 04B)
+		const int Fifth = Has(7) ? 7 : Third == 3 && Has(6) ? 6 : Spans[s].Fx && Third >= 0 ? 7 : -1;
+		ChordAt A;
+		A.Row = Spans[s].Row;
+		A.Rows = Spans[s].End - Spans[s].Row;
+		std::vector<int> Base(1, 0);
+		if (Third >= 0)
+			Base.push_back(Third);
+		if (Fifth >= 0)
+			Base.push_back(Fifth);
+		A.C = Chord(ColorClass(Spans[s].Root), Base);
+		Bases.push_back(A);
+		Triad.push_back(Third >= 0 && Fifth >= 0);
+	}
+	for (size_t s = 0; s < Spans.size(); ++s) {
+		const Span &Sp = Spans[s];
+		const Chord &Base = Bases[s].C;
+		bool Plain = true, Inverted = false;
+		for (size_t t = 0; t < Sp.Tones.size(); ++t) {
+			Plain = Plain && Base.Has(Sp.Tones[t]);
+			// (an 0xy of other tones is a chord over another root, 038 an Eb over G, rather than a color)
+			Inverted = Inverted || (Sp.Fx && !Base.Has(Sp.Tones[t]) && Sp.Tones[t] != 2 && Sp.Tones[t] != 10 && Sp.Tones[t] != 11);
+		}
+		if (Inverted)
+			continue;
+		std::vector<int> Wanted;
+		if (Add) {
+			// A plain lush chord (0xy holds two notes over the root, no room for a color) given the first rich color that
+			// fits, as add_chords_and_bass colors chords written over a melody
+			if (!Plain || !Triad[s] || !Sp.Lush)
+				continue;
+			bool KeyOnly = false;
+			const std::vector<std::vector<int> > Candidates = ColorCandidates(Bases, s, K, COLOR_RICH, KeyOnly);
+			for (size_t c = 0; c < Candidates.size() && Wanted.empty(); ++c)
+				if (ColorFits(Base, Candidates[c], Tune, Sp.Row, Sp.End, K, KeyOnly, R, COLOR_RUB_LIMIT))
+					Wanted = Candidates[c];
+			if (Wanted.empty())
+				continue;
+		}
+		else {
+			if (Plain || ColorFits(Base, Sp.Tones, Tune, Sp.Row, Sp.End, K, false, R, COLOR_RUB_LIMIT))
+				continue;	// no color, or none that rubs
+			if (!Triad[s] || (!Sp.Lush && !Sp.Fx)) {
+				++Left;
+				continue;
+			}
+			// The nearest color that fits: the chord without the tones that rub when it keeps a color (Cm9 as Cm7), then
+			// the rich colors in ColorChords' order (Cm(add9) as Cm7), then the triad
+			std::vector<std::vector<int> > Candidates;
+			std::vector<int> Kept;
+			for (size_t t = 0; t < Sp.Tones.size(); ++t)
+				if (Base.Has(Sp.Tones[t]) || ColorFits(Base, std::vector<int>(1, Sp.Tones[t]), Tune, Sp.Row, Sp.End, K, false, R, COLOR_RUB_LIMIT))
+					Kept.push_back(Sp.Tones[t]);
+			if (Kept != Base.Tones)
+				Candidates.push_back(Kept);
+			bool KeyOnly = false;
+			const std::vector<std::vector<int> > Rich = ColorCandidates(Bases, s, K, COLOR_RICH, KeyOnly);
+			for (size_t c = 0; c < Rich.size(); ++c)
+				if (Rich[c] != Sp.Tones && ColorFits(Base, Rich[c], Tune, Sp.Row, Sp.End, K, KeyOnly, R, COLOR_RUB_LIMIT))
+					Candidates.push_back(Rich[c]);
+			Candidates.push_back(Base.Tones);
+			for (size_t c = 0; c < Candidates.size() && Wanted.empty(); ++c)
+				if (ColorFits(Base, Candidates[c], Tune, Sp.Row, Sp.End, K, false, R, COLOR_RUB_LIMIT))
+					Wanted = Candidates[c];
+			// 0xy holds two notes over the root: the triad's third and fifth
+			if (Sp.Fx)
+				Wanted = Base.Tones;
+		}
+		if (Wanted.empty() || Wanted == Sp.Tones)
+			continue;
+		ColorSwap W;
+		W.Notes = Sp.Notes;
+		W.Row = Sp.Row;
+		W.End = Sp.End;
+		W.Root = Sp.Root;
+		W.From = Sp.Tones;
+		W.To = Wanted;
+		W.Fx = Sp.Fx;
+		Out.push_back(W);
+	}
+	return Out;
+}
+
+// The tones above each note's root as the plan leaves them (by the note's row), for ChordRubOf
+std::map<int, std::vector<int> > PlannedAbove(Session &S, int Channel, const std::vector<ColorSwap> &Swaps)
+{
+	std::map<int, std::vector<int> > Out;
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t w = 0; w < Swaps.size(); ++w)
+		for (size_t n = 0; n < Swaps[w].Notes.size(); ++n) {
+			std::vector<int> Above;
+			for (size_t t = 0; t < Swaps[w].To.size(); ++t)
+				if (Swaps[w].To[t] != 0)
+					Above.push_back(Swaps[w].To[t]);
+			Out[Notes[Swaps[w].Notes[n]].Row] = Above;
+		}
+	return Out;
+}
+
+// The plan written into the draft: each lush chord on the instrument of its new shape (made as LushInstruments makes
+// them, named as the others, when the song has none: LushInstrument), each 0xy chord's arpeggio changed on its row (the
+// old one written again on the next note that carried it on). The chords written go into Done (an instrument the song has
+// no room for, or an 0xy with no column to carry the old one on, leaves its chord: Left)
+void WriteColors(Session &S, Draft &D, int Channel, const std::vector<ColorSwap> &Swaps, std::vector<ColorSwap> &Done, int &Left)
+{
+	if (Swaps.empty())
+		return;
+	const std::string Chip = InstrumentChip(S.Channel(Channel));
+	const bool Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
+	const int Columns = S.Channel(Channel).EffectColumns;
+	const std::vector<NoteInfo> Notes = S.Notes(Channel);
+	const std::vector<Cell> Old = S.Cells(Channel);
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	std::map<int, int> Instruments;	// row: the instrument a lush chord's note plays there now
+	std::string Added, Made;
+	int Count = 0;
+	for (size_t w = 0; w < Swaps.size(); ++w) {
+		const ColorSwap &W = Swaps[w];
+		const NoteInfo &N = Notes[W.Notes.front()];
+		if (!W.Fx) {
+			const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+			const Preset *pSound = 0;
+			Preset Own;
+			int Pattern = BROKEN_UP, Frames = 2;
+			if (pInfo == 0 || !ParseLushName(S, Chip, pInfo->Name, pSound, Own, Pattern, Frames)) {
+				++Left;
+				continue;
+			}
+			int Index = -1;
+			try {
+				const int Before = Count;
+				Index = LushInstrument(S, Chip, Sawtooth, *pSound, LushShape(Chord(0, W.To), Pattern), Pattern, Frames, Added, Count);
+				if (Count > Before)
+					Made = pSound == &Own ? "the song's instrument \"" + pSound->Name + "\"" : "the preset \"" + pSound->Name + "\"";
+			}
+			catch (const Problem &) {
+				++Left;		// no room for another instrument
+				continue;
+			}
+			for (size_t n = 0; n < W.Notes.size(); ++n)
+				Instruments[Notes[W.Notes[n]].Row] = Index;
+			Done.push_back(W);
+			continue;
+		}
+		// 0xy: on the chord's notes' rows, the old arpeggio again where the next note carried it on
+		const int Param = (W.To.size() > 1 ? W.To[1] << 4 : 0) | (W.To.size() > 2 ? W.To[2] : 0);
+		bool Fits = true;
+		std::vector<std::pair<int, int> > Writes;	// rows and columns, Params their params
+		std::vector<int> Params;
+		int OldParam = 0;
+		for (size_t n = 0; n < W.Notes.size() && Fits; ++n) {
+			const int Row = Notes[W.Notes[n]].Row;
+			int Column = -1;
+			for (int k = 0; k < Columns && k < EFFECT_COLUMNS; ++k)
+				if (Cells[static_cast<size_t>(Row)].Effect[k] == EFF_ARPEGGIO) {
+					Column = k;
+					OldParam = Cells[static_cast<size_t>(Row)].Param[k];
+				}
+			if (Column < 0)
+				for (int k = 0; k < Columns && k < EFFECT_COLUMNS && Column < 0; ++k)
+					if (Cells[static_cast<size_t>(Row)].Effect[k] == 0)
+						Column = k;
+			Fits = Column >= 0;
+			Writes.push_back(std::make_pair(Row, Column));
+			Params.push_back(Param);
+		}
+		const size_t After = W.Notes.back() + 1;
+		if (Fits && After < Notes.size()) {
+			const int Row = Notes[After].Row;
+			bool Own = false;
+			int Free = -1;
+			for (int k = 0; k < Columns && k < EFFECT_COLUMNS; ++k) {
+				Own = Own || Cells[static_cast<size_t>(Row)].Effect[k] == EFF_ARPEGGIO;
+				if (Free < 0 && Cells[static_cast<size_t>(Row)].Effect[k] == 0)
+					Free = k;
+			}
+			if (!Own) {
+				Fits = Free >= 0;
+				Writes.push_back(std::make_pair(Row, Free));
+				Params.push_back(OldParam);
+			}
+		}
+		if (!Fits) {
+			++Left;
+			continue;
+		}
+		for (size_t i = 0; i < Writes.size(); ++i) {
+			Cell &C = Cells[static_cast<size_t>(Writes[i].first)];
+			C.Effect[Writes[i].second] = EFF_ARPEGGIO;
+			C.Param[Writes[i].second] = static_cast<unsigned char>(Params[i]);
+		}
+		Done.push_back(W);
+	}
+	// The lush chords' instruments, written where the instrument played changes (the notes after a chord changed get theirs
+	// again), as RevoiceLushChords writes them
+	if (!Instruments.empty()) {
+		int Instrument = StateAt(Old, std::max(0, Instruments.begin()->first), Columns).Instrument;	// as the song had it
+		int Playing = Instrument;	// as the draft has it
+		for (int r = Instruments.begin()->first; r < static_cast<int>(Old.size()) && r < static_cast<int>(Cells.size()); ++r) {
+			if (Old[r].Instrument != NO_INSTRUMENT && !Old[r].IsEnd())
+				Instrument = Old[r].Instrument;
+			if (!Old[r].HasNote())
+				continue;
+			std::map<int, int>::const_iterator Found = Instruments.find(r);
+			const int Wanted = Found != Instruments.end() ? Found->second : Instrument;
+			if (Wanted != Playing || (Old[r].Instrument != NO_INSTRUMENT && Cells[r].Instrument != Wanted)) {
+				Cells[r].Instrument = static_cast<unsigned char>(Wanted);
+				Playing = Wanted;
+			}
+		}
+	}
+	if (Count > 0)
+		S.Remarks.push_back(Format("Added %d lush chord instrument%s (%s, from %s): %s.", Count, Count == 1 ? "" : "s", Chip.c_str(),
+			Made.c_str(), Added.c_str()));
+}
+
+// "Cm(add9) to Cm7 (bars 5, 13), Dbmaj7 to Db (bars 6, 14, 22)": the chords the touch changed, alike ones together
+std::string ColorSwapsText(const Session &S, const std::vector<ColorSwap> &Swaps, const Key &K)
+{
+	std::vector<std::pair<std::string, std::vector<int> > > Kinds;
+	for (size_t w = 0; w < Swaps.size(); ++w) {
+		const std::string Text = ChordName(Chord(ColorClass(Swaps[w].Root), Swaps[w].From), K) + " to " +
+			ChordName(Chord(ColorClass(Swaps[w].Root), Swaps[w].To), K);
+		size_t k = 0;
+		while (k < Kinds.size() && Kinds[k].first != Text)
+			++k;
+		if (k == Kinds.size())
+			Kinds.push_back(std::make_pair(Text, std::vector<int>()));
+		const int Bar = S.Time.BarOf(Swaps[w].Row);
+		if (Kinds[k].second.empty() || Kinds[k].second.back() != Bar)
+			Kinds[k].second.push_back(Bar);
+	}
+	std::string Out;
+	for (size_t k = 0; k < Kinds.size(); ++k)
+		Out += Format("%s%s (%s %s)", k == 0 ? "" : ", ", Kinds[k].first.c_str(), Kinds[k].second.size() == 1 ? "bar" : "bars",
+			BarList(Kinds[k].second).c_str());
+	return Out;
+}
+
 std::string PolishTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -12971,8 +13303,8 @@ std::string PolishTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < Words.size(); ++i) {
 			const std::string Word = Squeezed(Words[i]);
 			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops" &&
-				Word != "staccato" && Word != "falls" && Word != "clicks" && Word != "clashes")
-				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls, staccato, clicks or clashes.");
+				Word != "staccato" && Word != "falls" && Word != "clicks" && Word != "clashes" && Word != "colors")
+				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes or colors.");
 			What.insert(Word);
 		}
 	}
@@ -13105,6 +13437,44 @@ std::string PolishTool(Session &S, const Json &Args)
 					S.Channel(c).FullName().c_str()));
 		}
 	}
+	// Colors: a chord part's colors that rub the melody taken out (the nearest color that doesn't), or with colors add, plain
+	// lush chords given the rich colors that fit (PlanColors); the melody the one given, else the song's
+	std::vector<ColorSwap> Recolored;
+	int ColorsLeft = 0;
+	bool ColorsAdded = false;
+	if (What.count("colors")) {
+		const std::string Mode = Lowercase(StringArg(Args, "colors", "fit"));
+		if (Mode != "fit" && Mode != "add")
+			throw Problem("colors: fit (take out the colors that rub the melody, the default) or add (give plain lush chords the "
+				"rich colors that fit it).");
+		ColorsAdded = Mode == "add";
+		bool KeyFound = false;
+		const Key K = KeyArg(S, Args, "key", 0, S.Time.TotalRows(), KeyFound);
+		const int Lead = Arg(Args, "melody_channel") != 0 ? Melody : GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		std::string Lists;
+		for (size_t i = 0; i < Channels.size(); ++i) {
+			const int c = Channels[i];
+			if (c == Lead || !PlaysChordPart(S, c, 0, S.Time.TotalRows()))
+				continue;
+			int Left = 0;
+			const std::vector<ColorSwap> Plan = PlanColors(S, c, First, End, Lead, K, ColorsAdded, Left);
+			std::vector<ColorSwap> Changed;
+			WriteColors(S, D, c, Plan, Changed, Left);
+			ColorsLeft += Left;
+			if (!Changed.empty())
+				Lists += Format("%s%s on %s: %s", Lists.empty() ? "" : "; ", Plural(static_cast<int>(Changed.size()), "chord",
+					"chords").c_str(), S.Channel(c).FullName().c_str(), ColorSwapsText(S, Changed, K).c_str());
+			Recolored.insert(Recolored.end(), Changed.begin(), Changed.end());
+		}
+		if (!Recolored.empty())
+			Done.push_back((ColorsAdded ? "rich colors where they fit the melody (the notes and the progression kept): " :
+				"the colors that rubbed the melody a semitone taken out (the notes, the progression and the bass kept): ") + Lists);
+		if (ColorsLeft > 0)
+			Warnings.push_back(Format("%s still %s the melody with a color this touch can't change (a chord that isn't a triad "
+				"with colors, an instrument that isn't a lush chord's, no room for another instrument or for the 0xy): "
+				"add_chords_and_bass fits chords to the melody again.", Plural(ColorsLeft, "chord", "chords").c_str(),
+				ColorsLeft == 1 ? "rubs" : "rub"));
+	}
 	// Clashes: an accompaniment's note a semitone from another part's moves onto the chord the others sound (FixClashes), the
 	// melody kept as written (the one given, else the song's: a bar or two alone can look like another's tune)
 	std::vector<ClashLeft> ClashesLeft;
@@ -13166,6 +13536,12 @@ std::string PolishTool(Session &S, const Json &Args)
 	std::vector<Change> Changes;
 	int Start;
 	if (!D.Collect(First, Direct(S, AsClip), Changes, Start, Warnings)) {
+		if (What.size() == 1 && What.count("colors"))
+			throw Problem(ColorsAdded ? "There was no plain lush chord there whose rich colors fit the melody (each would rub it a "
+				"semitone, or the chords have their colors already)." : ColorsLeft > 0 ? Format("No color there could change: %s "
+				"the melody with a color this touch can't change; add_chords_and_bass fits chords to the melody again.",
+				Plural(ColorsLeft, "chord rubs", "chords rub").c_str()) : "There was no color there that rubs the melody: no "
+				"chord part's added ninth, seventh or sixth a semitone from its notes for three quarters of a beat or more.");
 		if (What.size() == 1 && What.count("clashes"))
 			throw Problem(ClashesLeft.empty() ? "There was no clash there: no two parts a semitone apart for half a beat or more, as "
 				"check_song hears one." : "No clash there could move: " + ClashesLeftText(S, ClashesLeft));
@@ -14960,7 +15336,8 @@ bool PlaysChordPart(Session &S, int Channel, int First, int End)
 	return Notes.size() >= 4 && Chords * 2 >= static_cast<int>(Notes.size());
 }
 
-ChordRub ChordRubOf(Session &S, Hearing &Ears, int Channel, int Melody, int From, int To)
+ChordRub ChordRubOf(Session &S, Hearing &Ears, int Channel, int Melody, int From, int To,
+	const std::map<int, std::vector<int> > *pAbove = 0)
 {
 	ChordRub Out;
 	const int Total = S.Time.TotalRows();
@@ -14986,9 +15363,11 @@ ChordRub ChordRubOf(Session &S, Hearing &Ears, int Channel, int Melody, int From
 		const NoteInfo &N = Notes[i];
 		if (N.Row >= End || N.Row + N.Rows <= First || N.Volume <= 0)
 			continue;
-		const std::vector<int> Above = ChordAbove(S, N, Arps[i]);
+		std::vector<int> Above = ChordAbove(S, N, Arps[i]);
 		if (!Above.empty())
 			++(Arps[i] != 0 ? Fx : Lush);
+		if (pAbove != 0 && pAbove->count(N.Row) != 0)
+			Above = pAbove->find(N.Row)->second;	// as the colors touch would leave it
 		std::vector<int> Chord(1, N.Pitch);
 		for (size_t a = 0; a < Above.size(); ++a)
 			Chord.push_back(N.Pitch + Above[a]);
@@ -15038,9 +15417,9 @@ ChordRub ChordRubOf(Session &S, Hearing &Ears, int Channel, int Melody, int From
 	return Out;
 }
 
-// The fix: the chords (and the bass under them) fitted to the melody again over the bars they play together in, as
+// The refit: the chords (and the bass under them) fitted to the melody again over the bars they play together in, as
 // add_chords_and_bass fits them (chord tones the melody plays, colors where it allows, the chords under its lowest note)
-Json DroneFix(Session &S, int Channel, int Melody, const ChordRub &R)
+Json DroneRefit(Session &S, int Channel, int Melody, const ChordRub &R)
 {
 	const std::string Name = S.Channel(Channel).FullName();
 	Json A = Json::MakeObject();
@@ -15077,8 +15456,47 @@ Json DroneFix(Session &S, int Channel, int Melody, const ChordRub &R)
 	return Fix;
 }
 
+// The fix: first polish's colors touch over those bars, which takes out only the colors that rub (the notes, the
+// progression and the bass kept). When the colors alone leave the chords rubbing DRONE_RUB of the time or more, the
+// triads' own notes rubbing the tune, the refit follows it in the fix's then; with no color to change, the refit is the
+// fix. On Ironworks2 the colors took the rubs from 42% to 30% (Cm(add9) as Cm7, Dbmaj7 and Abmaj7 as their add9, a G7 as
+// G); the rest is the progression's own: Db against the melody's C, its Ab over the melody's G, G7's B
+// under its C
+Json DroneFix(Session &S, Hearing &Ears, int Channel, int Melody, const ChordRub &R, const Key &K, double &After)
+{
+	const std::string Name = S.Channel(Channel).FullName();
+	const int First = S.Time.BarStart(R.FirstBar), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(R.LastBar));
+	int Left = 0;
+	const std::vector<ColorSwap> Plan = PlanColors(S, Channel, First, End, Melody, K, false, Left);
+	After = R.Rub();
+	if (Plan.empty())
+		return DroneRefit(S, Channel, Melody, R);
+	const std::map<int, std::vector<int> > Above = PlannedAbove(S, Channel, Plan);
+	After = ChordRubOf(S, Ears, Channel, Melody, R.FirstBar, R.LastBar, &Above).Rub();
+	Json A = Json::MakeObject();
+	Json Touches = Json::MakeArray();
+	Touches.Push("colors");
+	A.Set("touches", Touches);
+	A.Set("channels", Name);
+	A.Set("melody_channel", S.Channel(Melody).FullName());
+	A.Set("from_bar", R.FirstBar);
+	A.Set("to_bar", R.LastBar);
+	Json Fix = ToolCall("polish", A, Format("takes the colors that rub the melody out of %s of %s's chords in %s (%s), keeping their "
+		"notes, the progression and the bass: they then rub it %.0f%% of the time", Plural(static_cast<int>(Plan.size()), "chord",
+		"chords").c_str(), Name.c_str(), RangeText(R.FirstBar, R.LastBar).c_str(), ColorSwapsText(S, Plan, K).c_str(),
+		std::floor(After * 100.0 + 0.5)));
+	if (After >= DRONE_RUB) {
+		const Json Refit = DroneRefit(S, Channel, Melody, R);
+		ThenCall(Fix, ToolCall("add_chords_and_bass", *Refit.Get("arguments"), Refit.Get("does")->String()));
+		const Json *pThen = Refit.Get("then");
+		for (size_t i = 0; pThen != 0 && i < pThen->Size(); ++i)
+			ThenCall(Fix, pThen->At(i));
+	}
+	return Fix;
+}
+
 // A finding for a chord part that drones against the tune, or false
-bool DroneFinding(Session &S, Hearing &Ears, int Channel, int Melody, int From, int To, ArrangeFinding &F)
+bool DroneFinding(Session &S, Hearing &Ears, int Channel, int Melody, int From, int To, const Key &K, ArrangeFinding &F)
 {
 	const ChordRub R = ChordRubOf(S, Ears, Channel, Melody, From, To);
 	if (R.MelodyBars < DRONE_BARS || R.With() < DRONE_WITH || R.Rub() < DRONE_RUB || R.Under > DRONE_UNDER_DB)
@@ -15103,18 +15521,23 @@ bool DroneFinding(Session &S, Hearing &Ears, int Channel, int Melody, int From, 
 	F.Details.Set("bars_with_melody", R.WithBars);
 	F.Details.Set("rub_share", Json::NumberText(FormatNumber(std::floor(R.Rub() * 100.0 + 0.5) / 100)));
 	F.Details.Set("under_melody_db", Json::NumberText(FormatNumber(std::floor(std::max(0.0, R.Under) * 10 + 0.5) / 10)));
-	F.Fix = DroneFix(S, Channel, Melody, R);
+	double After = R.Rub();
+	F.Fix = DroneFix(S, Ears, Channel, Melody, R, K, After);
+	if (After < R.Rub() && After >= DRONE_RUB)
+		F.Text += Format(" Taking out the colors that rub leaves %.0f%%, so the chords are fitted to the melody again after it.",
+			std::floor(After * 100.0 + 0.5));
+	F.Details.Set("rub_share_after_colors", Json::NumberText(FormatNumber(std::floor(After * 100.0 + 0.5) / 100)));
 	return true;
 }
 
-void DroneFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, std::vector<ArrangeFinding> &Out)
+void DroneFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const Key &K, std::vector<ArrangeFinding> &Out)
 {
 	if (Style == STYLE_CALM || Melody < 0 || !IsMelodic(S.Channel(Melody)) || To - From + 1 < DRONE_BARS)
 		return;
 	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		ArrangeFinding F;
-		if (c != Melody && PlaysChordPart(S, c, First, End) && DroneFinding(S, Ears, c, Melody, From, To, F))
+		if (c != Melody && PlaysChordPart(S, c, First, End) && DroneFinding(S, Ears, c, Melody, From, To, K, F))
 			Out.push_back(F);
 	}
 }
@@ -15137,7 +15560,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	LoopFinding(S, Style, Use, Out);
 	IntroFinding(S, Ears, Melody, From, Style, Out);
 	BusyFindings(S, Melody, From, To, Out);
-	DroneFindings(S, Ears, Melody, From, To, Style, Out);
+	DroneFindings(S, Ears, Melody, From, To, Style, K, Out);
 	return Out;
 }
 
@@ -22310,16 +22733,19 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 		const int Lead = GuessMelodyChannel(View, 0, View.Time.TotalRows());
 		if (Lead >= 0 && IsMelodic(View.Channel(Lead)) && Bars >= DRONE_BARS) {
 			Hearing Ears(View);
+			Key DK;
+			TrackKey(View, 0, View.Time.TotalRows(), DK);
 			for (int c = 0; c < View.ChannelCount(); ++c) {
 				ArrangeFinding F;
 				if (c == Lead || (Channel != Lead && Channel != c) || !PlaysChordPart(View, c, 0, View.Time.TotalRows()) ||
-					!DroneFinding(View, Ears, c, Lead, 1, Bars, F))
+					!DroneFinding(View, Ears, c, Lead, 1, Bars, DK, F))
 					continue;
 				std::string Text = F.Summary + ".";
 				if (Direct)
 					Text += " Fix: " + CallText(F.Fix) + ".";
 				else
-					Text += " Once it's in the song, add_chords_and_bass over those bars (without chords) fits them to the melody.";
+					Text += " Once it's in the song, check_song gives the fix: polish's colors touch takes out the chords' colors that "
+						"rub it, else add_chords_and_bass over those bars (without chords) fits them to the melody.";
 				Out.push_back(Text);
 			}
 		}
@@ -27617,6 +28043,7 @@ private:
 	void PartFixes();
 	void Frame();
 	void Parts();
+	void Colors();
 	void Depth();
 	void Tips();
 	void Echo();
@@ -27704,7 +28131,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		throw Problem("skip: a list of the steps to leave out, like [\"drums\", \"echo\"].");
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
 	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
-		"variation", "break", "intro", "loop", "tips", "echo", "listen", "polish", "mix", "seam", "save", "export" };
+		"variation", "break", "intro", "loop", "tips", "colors", "echo", "listen", "polish", "mix", "seam", "save", "export" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
 		if (Word == "counter" || Word == "countermelody" || Word == "harmony" || Word == "secondline")
@@ -27717,6 +28144,8 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 			Word = "tips";
 		else if (Word == "ogg")
 			Word = "export";
+		else if (Word == "colours" || Word == "color")
+			Word = "colors";
 		else if (Word == "clicks")
 			Word = "click";
 		else if (Word == "vanish")
@@ -27939,6 +28368,11 @@ bool WhatNext::Fixes(const NextStep &N)
 {
 	if (!Wanted(N.Id) || !Looking())
 		return false;
+	// (polish's colors touch makes instruments, which a dry run doesn't: chord_drone gives it only when its plan changes a chord)
+	const Json *pTouches = N.Arguments.Get("touches");
+	if (N.Tool == "polish" && pTouches != 0 && pTouches->IsArray() && pTouches->Size() == 1 && pTouches->At(0).IsString() &&
+		pTouches->At(0).String() == "colors")
+		return true;
 	if (N.Tool == "mix" || N.Tool == "polish" || N.Tool == "vary_part" || N.Tool == "fix_loop")
 		return WouldChange(S, N.Tool, N.Arguments);
 	return true;
@@ -28653,7 +29087,7 @@ void WhatNext::GrowForm()
 	B.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : K.ChordStyle);
 	if (std::string(K.ChordStyle) == "lush" && !(Calm() && S.Song.Vrc6Plus))
 		B.Set("arp_frames", LushFrames());
-	B.Set("color", Calm() || m_KindId == NEXT_LIVELY ? "rich" : "sevenths");
+	B.Set("color", Calm() ? "rich" : m_KindId == NEXT_LIVELY ? "plain" : "sevenths");	// (lively: Colors gives them theirs)
 	B.Set("bass_style", K.BassStyle);
 	if (m_KindId == NEXT_ACTION)
 		B.Set("bass_instrument", "thump bass");
@@ -28750,7 +29184,9 @@ void WhatNext::Parts()
 			A.Set("chord_style", Calm() && S.Song.Vrc6Plus ? "voices" : K.ChordStyle);
 			if (std::string(K.ChordStyle) == "lush" && !(Calm() && S.Song.Vrc6Plus))
 				A.Set("arp_frames", LushFrames());
-			A.Set("color", Calm() || m_KindId == NEXT_LIVELY ? "rich" : "sevenths");
+			// A lively stage's chords plain before the melody, their colors given once it's there (Colors): rich chords
+			// written first put ninths and sevenths where the tune then rubbed them (Ironworks2)
+			A.Set("color", Calm() || (m_KindId == NEXT_LIVELY && m_HasNotes) ? "rich" : m_KindId == NEXT_LIVELY ? "plain" : "sevenths");
 		}
 		if (A.Get("bass_channel") == 0 || A.Get("bass_channel")->String() != "none") {
 			A.Set("bass_style", K.BassStyle);
@@ -28838,6 +29274,51 @@ void WhatNext::Parts()
 
 // Depth: a second line in the repeat, the repeats made different, a break, an intro, the loop after the intro (the echo
 // comes after the review's tips: Echo)
+// A lively stage's chords, written plain before the melody (Parts, GrowForm), get the rich colors that fit it once the
+// form has its melody, before a harmony or an echo hears them: polish's colors touch with colors add over each lush chord
+// part none of whose chords has a color yet (a composer's own colors are theirs), when the touch's plan changes a chord.
+// No milestone: once a chord has its color the step is done, and a song whose chords can take none has nothing to do
+void WhatNext::Colors()
+{
+	if (m_KindId != NEXT_LIVELY || !m_HasMelody || m_Unmet.count("melody") != 0 || m_Unmet.count("form") != 0 || !Wanted("colors"))
+		return;
+	const int Total = S.Time.TotalRows();
+	for (size_t i = 0; i < m_Parts.Chords.size(); ++i) {
+		const int c = m_Parts.Chords[i];
+		if (c == m_Melody || !PlaysChordPart(S, c, 0, Total))
+			continue;
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		const std::vector<int> Arps = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
+		bool Colored = false;
+		for (size_t n = 0; n < Notes.size() && !Colored; ++n) {
+			const std::vector<int> Above = ChordAbove(S, Notes[n], Arps[n]);
+			for (size_t a = 0; a < Above.size() && !Colored; ++a) {
+				const int Tone = Above[a] % 12;
+				Colored = Tone != 0 && Tone != 3 && Tone != 4 && Tone != 6 && Tone != 7;
+			}
+		}
+		if (Colored)
+			continue;
+		Json A = Json::MakeObject();
+		Json T = Json::MakeArray();
+		T.Push("colors");
+		A.Set("touches", T);
+		A.Set("colors", "add");
+		A.Set("channels", ChannelName(c));
+		A.Set("melody_channel", ChannelName(m_Melody));
+		// (planned here, not on a dry run, which adds no instrument)
+		Key K;
+		TrackKey(S, 0, Total, K);
+		int Left = 0;
+		if (PlanColors(S, c, 0, Total, m_Melody, K, true, Left).empty())
+			continue;
+		Step("colors", "polish", A, "The chords were written plain, before the melody: now that it's there, each chord gets the rich "
+			"color that fits it (an added ninth, a major seventh, a minor seventh) where that color doesn't rub the melody a "
+			"semitone; colors written before the tune sat a semitone from its notes and rubbed it all through the song.");
+		return;
+	}
+}
+
 void WhatNext::Depth()
 {
 	const int Total = S.Time.TotalRows();
@@ -29704,6 +30185,8 @@ void WhatNext::Work()
 		Frame();
 		Parts();
 		if (Looking())
+			Colors();
+		if (Looking())
 			PartFixes();
 		Depth();
 		if (Looking())
@@ -29923,7 +30406,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 	if (Id == "climax_repeats")
 		return Where("Lift the climax's melody an octave", true);
 	if (Id == "chord_drone")
-		return Where("Fit the chords to the melody so they stop rubbing it", true);
+		return Where(Tool == "polish" ? "Take out the chords' colors that rub the melody" :
+			"Fit the chords to the melody so they stop rubbing it", true);
 	// The recipe's steps
 	if (Id == "tempo")
 		return "Set the tempo to " + FormatNumber(Number("bpm")) + " BPM";
@@ -30014,6 +30498,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 	}
 	if (Id == "echo")
 		return "Add an echo of the melody";
+	if (Id == "colors")
+		return Where("Give the chords colors that fit the melody", false);
 	if (Id == "listen")
 		return N.Tool == "listen" ? "Listen to the song as FamiTracker plays it" : "Fix what listen heard";
 	if (Id == "polish")
@@ -30608,7 +31094,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("kind", EnumProp("calm, lively or action, as get_recipe has them (default: calm when the track's name says so, else "
 				"the general recipe). Give the same kind every time.", std::vector<std::string>{ "calm", "lively", "action" }))
 			.Add("skip", WordListProp("Steps to leave out, like [\"drums\"] when the user wants none: tempo, key, lead, chords, "
-				"sections, melody, form, drums, second_line, variation, break, intro, loop, tips, echo, polish, mix, seam, save, export, "
+				"sections, melody, form, drums, second_line, variation, break, intro, loop, tips, colors, echo, polish, mix, seam, save, "
+				"export, "
 				"or a kind of check_song's finding (click, vanishing, range...)."))
 			.Add("melody_channel", ChannelProp("The melody (default: where the lead it designed plays, else the busiest line)."))
 			.Add("all", Prop("boolean", "Also list every step found now, in order, a line each (default false)."))
@@ -31089,7 +31576,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"accompaniment's note moves to the nearest note of the chord the other parts sound that rubs against nothing: an "
 			"arpeggio keeps its shape, the melody never moves, a held note only while the chord keeps its third, and the "
 			"chords keep their names; a tone of an arpeggio instrument's chord is its color and stays; check_song's clash "
-			"findings give it over their bars, what_next over the song). Default: accents, vibrato, separate and clicks. "
+			"findings give it over their bars, what_next over the song) and colors (chords' added tones that rub the melody "
+			"a semitone go: the nearest color that doesn't, Cm(add9) as Cm7; notes and bass kept). Default: accents, "
+			"vibrato, separate and clicks. "
 			"Polish again changes nothing it did: a part accented already keeps its volumes.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
@@ -31103,6 +31592,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		TouchNames.Push("staccato");
 		TouchNames.Push("clicks");
 		TouchNames.Push("clashes");
+		TouchNames.Push("colors");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
 		AddTool("polish", "Finishing touches",
@@ -31117,8 +31607,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 					"default touches, accents and all (a stage's lead is a step louder on a bar's first note). Default: calm when the "
 					"track's name says so.", std::vector<std::string>{ "any", "calm", "ambient", "lively" }))
 				.Add("channels", ChannelListProp("A channel, a list, or \"all\" (default: every melodic channel)."))
-				.Add("melody_channel", ChannelProp("The melody, for the vibrato, and the part clashes leaves as written. Default: "
-					"the busiest channel (for clashes, the song's)."))
+				.Add("melody_channel", ChannelProp("The melody, for the vibrato, and the part clashes and colors leave as written. "
+					"Default: the busiest channel (for clashes and colors, the song's)."))
+				.Add("colors", EnumProp("colors touch: fit (default) or add (plain lush chords get rich colors that fit).",
+					std::vector<std::string>{ "fit", "add" }))
 				.Range().ClipChoice(),
 			false, true);
 	}

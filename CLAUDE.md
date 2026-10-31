@@ -2140,9 +2140,10 @@ melody's Eb meets the arpeggio's add9 D. `DroneFindings` (with
 panel's `WORDS` say "chord part rubbing the tune"): a chord part sounding in
 `DRONE_WITH` of the melody's bars (`DRONE_BARS` at least), within
 `DRONE_UNDER_DB` of it, rubbing it `DRONE_RUB` (0.30) of the time, not calm.
-Its fix (`DroneFix`) is `add_chords_and_bass` over those bars without
-`chords`, so the chords and the bass are fitted to the melody again under
-its lowest note, then the same for a second bass there (Ironworks'
+Its fix (`DroneFix`) is polish's `colors` touch since `feat-color-rubs`
+(below); the refit (`DroneRefit`) is `add_chords_and_bass` over those bars
+without `chords`, so the chords and the bass are fitted to the melody again
+under its lowest note, then the same for a second bass there (Ironworks'
 triangle in the climax); on Ironworks2 that left 0.15. `write_notes` warns
 with the same rule and fix when the part written is the melody or the chord
 part (`WritingWarnings`). The rhythm went: what_next gives no kind a
@@ -2152,6 +2153,49 @@ only. `song_file_checks` checks `too_busy` and `chord_drone` on keep/ and
 flag/ (none on the kept songs, both Ironworks flagged with a what_next
 step); `TestChordDrones` and `TestWhatNextLoop` (no `rhythm` in a walk's
 calls, no `chord_drone` after it) cover it.
+
+Colors that rub the tune (from `feat-color-rubs`): the refit replaced
+Ironworks2's progression (Db as Cm or Fm), left the bass root and fifth and
+~6 clashes. Its chords were written rich before the melody (what_next's
+lively recipe: Cm(add9), Dbmaj7, G7), and their added ninths and sevenths
+sat a semitone from the tune's notes. polish's touch `colors`
+(`PlanColors`, `WriteColors` and `ColorSwapsText` before `PolishTool` in
+`Tools.cpp`) keeps every note, the progression and the bass and changes
+only a chord part's chords (a lush chord's instrument, `ParseLushName`, or
+an `0xy`; a chord is a run of notes of one root and arpeggio): a color
+rubs when a melody note a semitone from it sounds `COLOR_RUB_LIMIT` (half a
+beat) or more of the chord, as `MelodyRub` weighs it (`ColorFits` in
+`Chords.cpp`, with `ColorCandidates`, both taken out of `ColorChords`,
+which allows three quarters); such a chord gets the nearest color that
+doesn't rub (the chord without the tones that rub where it keeps a color,
+else `ColorCandidates`' rich colors, else the triad) on the lush instrument
+of that shape (`LushInstrument`; no room leaves the chord), an `0xy` chord
+its triad (the next note that carried the old `0xy` on gets it written;
+an `0xy` of other tones, `038` on G, is a chord over another root and
+stays).
+With `colors` `add`, plain lush chords get the first rich color that fits,
+by the same limit, so neither mode undoes the other. `DroneFix` plans the
+touch (`ChordRubOf` takes the planned tones, `PlannedAbove`): the fix is
+polish, then the refit in `then` while the plan leaves `DRONE_RUB` or more
+(`rub_share_after_colors` in the finding), the refit alone with nothing to
+change. On Ironworks2 the colors took 0.42 to 0.30 (0.33 at three quarters
+of a beat; bar 5's Eb over the add9's D, which the user heard, weighs half
+a beat), the rest the progression's own (Db under the tune's C, its Ab over
+G, G7's B under C), so the refit follows there; Ironworks' 0.40 went under
+by the colors alone. `WhatNext::Fixes` takes a colors call without a dry
+run (`DryRunHost` adds no instrument). Prevention: what_next's lively kind
+writes A's and B's chords `color` plain before the melody (`Parts`,
+`GrowForm`; with a melody, add_chords_and_bass's rich colors hear it), and
+`WhatNext::Colors` (after `Parts`, before `PartFixes` and `Depth`, so the
+harmony and the echo hear the colors) gives polish `colors` `add` once the
+form has its melody, on a lush chord part none of whose chords has a color
+(a composer's own colors stay), step id and skip word `colors` (stage
+depth in `NextSteps.cpp`), no milestone. The touch over the kept songs (a
+copy in memory) would change 28 chords in 8 of their tracks (Verdant Run 9,
+Applefall Lane 6; none has a `chord_drone` finding, so nothing gives it
+there), and `add` 50 in 4 (City's third track 26). `TestColorRubs` and `TestWhatNextLoop` (lively:
+plain chords, the colors step after the melody and before the harmony)
+cover it.
 
 ## What this repository is
 
