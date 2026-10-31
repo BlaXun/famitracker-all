@@ -343,15 +343,62 @@ namespace {
 
 const NextKind KINDS[] = {
 	{ NEXT_GENERAL, "general", 0.0, 0.0, 150.0, "Melody lead", "lead", "arpeggio", "arpeggio", "arpeggio", "basic", "soft", "any",
-		-20.0, { "C major", "G major", "D major" } },
+		-20.0, { "C major", "G major", "D major" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0 },
 	{ NEXT_CALM, "calm", 60.0, 90.0, 75.0, "Calm lead", "music box", "lush", "roots", "half", "", "calm", "calm", -22.0,
-		{ "F major", "D major", "G major" } },
+		{ "F major", "D major", "G major" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0 },
 	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "bloom lead", "lush", "arpeggio", "arpeggio", "basic", "lively",
-		"lively", -20.0, { "G major", "D major", "A major" } },
+		"lively", -20.0, { "G major", "D major", "A major" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0 },
 	{ NEXT_ACTION, "action", 135.0, 195.0, 150.0, "Action lead", "bloom lead", "stabs", "octaves", "octaves", "driving", "soft", "any",
-		-19.0, { "A minor", "D minor", "E minor" } },
+		-19.0, { "A minor", "D minor", "E minor" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0 },
 	{ NEXT_COZY, "cozy", 85.0, 112.5, 100.0, "Cozy lead", "falling strike", "broken", "root_fifth", "walking", "lively", "calm", "calm",
-		-20.0, { "F major", "Bb major", "C major" } },
+		-20.0, { "F major", "Bb major", "C major" }, "cosy warm homey homely indoors shop inn house", 1, 0, 0, false, 0, 0, 0, 0,
+		{ 0, 0 }, { 0, 0 }, 0, 0, 0, 0 },
+	// Caves, sewers, ruins, forgotten places: curious rather than scary. Minor or dorian (not sad: dorian's raised sixth;
+	// its chords the ones both share, i III v VII, so a dorian key's B major doesn't put a D# over the D drone),
+	// a slow walk (90 BPM, speed 10), a lead that breathes in over a drone (the pedal bass) with soft, slow chords, the
+	// tune sparse with long notes and gaps for the echo, no beat; calm's style and checks; -21 LUFS, a little under a stage
+	{ NEXT_MYSTERIOUS, "mysterious", 85.0, 100.0, 90.0, "Mystery lead", "breath", "lush", "pedal", "roots", "", "calm", "calm", -21.0,
+		{ "D dorian", "A minor", "E dorian" }, "mystery mystic cave caves sewer sewers ruin ruins crypt hidden secret", -1, "plain",
+		"", false, 1, "a mysterious track", "the tune's long notes over the drone, the echo answering in the gaps, nothing louder "
+		"than a curious step",
+		"a mysterious place's lead breathes in and holds low (kind breath): long notes over the drone that leave gaps for "
+		"the echo, curious rather than scary.", { 0, 0 },
+		{ "| i | VII | III | VII | i | VII | v | VII |", "| III | VII | i | v | III | VII | v | v |" },
+		"caves, sewers, ruins, forgotten places", "curious rather than scary: a place that hides something, minor or dorian but "
+		"not sad, slow and spacious, a drone underneath and an echo in the gaps",
+		"sparse: 1-3 notes a bar, long notes and gaps of a beat or more for the echo to answer, steps and a rising fourth "
+		"or a tritone's lean now and then, the high note rare",
+		"the echo joining in the repeat, a second voice in long notes, a bar of the drone alone in the break; no backbeat (a "
+		"soft tick on the noise at most)" },
+	// Open fields, travel, an airship flight: a wide tune that leaps upward over a rolling bass and a steady march, major,
+	// 128.6 BPM (speed 7); a lively stage's band (lively's style, mix and checks), broken chords plain under the leaps,
+	// the march groove with kit samples; -20 LUFS
+	{ NEXT_ADVENTURE, "adventure", 110.0, 132.0, 128.6, "Adventure lead", "bloom lead", "broken", "arpeggio", "octaves", "basic",
+		"lively", "lively", -20.0, { "D major", "G major", "Bb major" }, "adventurous journey travel travelling traveling voyage "
+		"overworld airship flight flying", 1, "plain", "", true, 2, "an adventure track", "the tune leaping wide over the band, "
+		"the bass rolling under it and the march steady",
+		"an adventure's lead blooms in and settles (kind bloom lead), bold enough for a tune that leaps upward.",
+		{ "| I | V | IV | V | I | vi | IV | V |", "| IV | I | V | vi | IV | I | ii | V |" }, { 0, 0 },
+		"open fields, travel, an airship flight", "wide and hopeful: the road ahead, a tune that leaps upward over a rolling bass "
+		"and a steady march",
+		"wide: a leap up of a fifth or a sixth (an octave at the high point) and steps back down, phrases of 2 or 4 bars that "
+		"end on a held note, a dotted rhythm that marches, mostly octave 3, reaching into 4 at each part's high point",
+		"a harmony a third or sixth under the tune in the repeat, the drums busier, the bass in octaves for the last time "
+		"round, a fill and a crash into each part" },
+	// The sky, clouds, underwater, waiting at a dock: a slow pulse (90 BPM, speed 10), major (lydian's raised fourth for
+	// color), rolling broken chords, a bass on half bars, a lead that breathes, no drums, an echo; calm's style; -21 LUFS
+	{ NEXT_FLOATING, "floating", 80.0, 95.0, 90.0, "Floating lead", "breath", "broken", "half", "roots", "", "calm", "calm", -21.0,
+		{ "F major", "D major", "G major" }, "float floaty afloat sky skies cloud clouds underwater drifting drift", 1, "plain", "",
+		false, 1, "a floating track", "the arpeggios rolling on like water, the tune drifting a little over them, the echo "
+		"wide",
+		"a floating lead breathes in and holds a soft level (kind breath), drifting over rolling chords.",
+		{ "| I | iii | IV | I | vi | iii | IV | IV |", "| IV | I | vi | V | IV | I | ii | IV |" }, { 0, 0 },
+		"the sky, clouds, underwater, waiting at a dock", "weightless: a slow pulse, arpeggios rolling on like water or "
+		"wind, the tune drifting over them, plenty of echo, major (or lydian, its raised fourth floating)",
+		"drifting: long notes over the rolling chords, 2-3 a bar, rising and settling by step, a phrase of two bars that ends "
+		"held, as if carried",
+		"an echo a beat behind from the first repeat, a second voice in long notes, the arpeggios moved up an octave in B; "
+		"no drums (a soft shaker of hi-hats at most)" },
 };
 
 }	// namespace
@@ -362,6 +409,14 @@ const NextKind &NextKindInfo(int Kind)
 		if (KINDS[i].Kind == Kind)
 			return KINDS[i];
 	return KINDS[0];
+}
+
+std::string NextKindNames()
+{
+	std::string Out;
+	for (int k = NEXT_CALM; k < NEXT_KIND_COUNT; ++k)
+		Out += (k == NEXT_CALM ? "" : k + 1 == NEXT_KIND_COUNT ? " or " : ", ") + std::string(NextKindInfo(k).Name);
+	return Out;
 }
 
 bool ParseNextKind(const std::string &Text, int &Kind)
@@ -376,17 +431,29 @@ bool ParseNextKind(const std::string &Text, int &Kind)
 		Kind = NEXT_LIVELY;
 	else if (Word == "action" || Word == "battle" || Word == "boss" || Word == "fight")
 		Kind = NEXT_ACTION;
-	else if (Word == "cozy" || Word == "cosy" || Word == "warm" || Word == "homey" || Word == "homely" || Word == "indoors" ||
-		Word == "shop" || Word == "inn" || Word == "house")
-		Kind = NEXT_COZY;
-	else
+	else {
+		// The later kinds: their names and aliases
+		for (int k = NEXT_COZY; k < NEXT_KIND_COUNT; ++k) {
+			const NextKind &K = NextKindInfo(k);
+			std::string Words = std::string(K.Name) + " " + (K.Aliases != 0 ? K.Aliases : "") + " ";
+			if (Words.find(Word + " ") == 0 || Words.find(" " + Word + " ") != std::string::npos) {
+				Kind = k;
+				return true;
+			}
+		}
 		return false;
+	}
 	return true;
 }
 
 bool KindWantsMajor(int Kind)
 {
-	return Kind == NEXT_CALM || Kind == NEXT_COZY;
+	return Kind == NEXT_CALM || NextKindInfo(Kind).KeyMode > 0;
+}
+
+bool KindWantsMinor(int Kind)
+{
+	return NextKindInfo(Kind).KeyMode < 0;
 }
 
 // Eight bars each, ending open (on V, or IV for a calm song), so a repeat, a break or the loop leads back in
@@ -405,6 +472,11 @@ std::string NextProgression(int Kind, bool Minor, bool B)
 	// A cozy song's: the friendly turnaround (I vi ii V) and plain steps home; B leans on IV and the relative minor
 	if (Kind == NEXT_COZY && !Minor)
 		return B ? "| IV | I | ii | V | IV | I | vi | V |" : "| I | vi | IV | V | I | vi | ii | V |";
+	// The later kinds' own, where they have them
+	const NextKind &K = NextKindInfo(Kind);
+	const char *const *pOwn = Minor ? K.ProgMinor : K.ProgMajor;
+	if (Kind > NEXT_COZY && pOwn[B ? 1 : 0] != 0)
+		return pOwn[B ? 1 : 0];
 	if (Minor)
 		return B ? "| iv | VI | VII | III | iv | VI | VII | V |" : "| i | VI | III | VII | i | VI | iv | V |";
 	return B ? "| IV | V | iii | vi | IV | V | ii | V |" : "| I | V | vi | IV | I | V | IV | V |";

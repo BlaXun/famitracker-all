@@ -2287,6 +2287,43 @@ when their kind agrees; `ShapeChoice::Kind` and `FromWords` say so.
 next panel's kind menu (`KIND_IDS`) have it. `TestCozyKind` and
 `TestWhatNextLoop`'s cozy walk cover it.
 
+Mysterious, adventure and floating (from `feat-cozy-kind`, its second
+commit): the kinds after cozy are rows of `KINDS` alone, appended to
+`next_kind` before `NEXT_KIND_COUNT` (keep it last): `NextKind`'s later
+fields (`Aliases` for `ParseNextKind`, `KeyMode` for `KindWantsMajor` and
+`KindWantsMinor`, `Color`, `Intensity`, `Samples`, `Grow` for grow_melody,
+`Title` and `Listen` for finish_song's `FINISH_LATER`, `LeadWhy`, its own
+`ProgMajor` and `ProgMinor`, and the recipes' `Place`, `Feel`, `Melody` and
+`Depth`) say what `WhatNext::Later()` reads, `LaterKindRecipe` and
+`LaterCoreRecipe` in `Tools.cpp` write, `LaterKindsList` lists and
+`NextKindNames` names; the older kinds keep their own code and leave them 0.
+Mysterious (caves, sewers, ruins: D or E dorian or A minor, 90 BPM, a
+breath lead over a pedal bass and slow lush chords, i III v VII so a dorian
+key's VI puts no D# over the drone, no drums, calm's style, -21 LUFS),
+adventure (fields, travel, an airship flight: major, 128.6 BPM, a bloom lead,
+broken chords over a rolling arpeggio bass, the basic groove with kit
+samples, lively's style, -20; the march groove leaves the noise channel
+empty, so the drums step came again) and floating (the sky, underwater,
+waiting at a dock: major, 90 BPM, a breath lead over broken chords and a
+bass on half bars, no drums, calm's style, -21). Words pick a kind with
+`KIND_WORDS` in `SongShapes.cpp`: the kind most of the words ask for, the
+first of the table on a tie (mysterious, floating, cozy, adventure: "Waiting
+for the Airship" is floating, "Hut in a Field" cozy), never over a fight's
+or a jingle's words, a gentle one not over intense words, cozy only over a
+night's, a town's or a small place's (`KindWordRow::Over`); the shape is the
+words' own where the kind takes it (`Shapes`), else the first of its shapes
+whose words are there, else its own. A track's name picks a kind the same
+way (`ReadShapeWords` with `Name`, which leaves out the place nouns that
+only name a small place's shape, so a "Shop" stays general) after calm by
+name; what_next then says so with `KindFromWordsLine` ("Kind: mysterious
+(from the words hidden, cave). Pass kind ..."), as it does for `about`, and
+asks again with the kind (`AgainArgs`). get_recipe takes `about` too. The
+kind props of what_next, grow_melody, finish_song and get_recipe are plain
+strings now, the kinds listed once in get_recipe's reply, since the small
+set's list must stay under three fifths of the full one. The What next
+panel's kind menu starts at `MENU_KIND` 200. `TestLaterKinds` and
+`TestWhatNextLoop`'s walks cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

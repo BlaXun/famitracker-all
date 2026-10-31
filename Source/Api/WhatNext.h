@@ -108,7 +108,8 @@ private:
 
 // The kinds of song what_next follows, as get_recipe has them; general when
 // none is given and the track's name doesn't say calm (append only)
-enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION, NEXT_COZY };
+enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION, NEXT_COZY, NEXT_MYSTERIOUS, NEXT_ADVENTURE, NEXT_FLOATING,
+	NEXT_KIND_COUNT };
 
 struct NextKind {
 	int Kind;					// next_kind
@@ -125,14 +126,34 @@ struct NextKind {
 	const char *Style;			// check_song's, review_arrangement's and polish's: "calm", "lively" or "any"
 	double Loudness;			// export_for_game's, in LUFS
 	const char *Keys[3];		// a new song's key, one of these (by its name)
+	// The kinds after cozy (feat-cozy-kind) say the rest here, so what_next, finish_song and the recipes need no code of
+	// their own for each (null or 0 for the older kinds, which keep theirs)
+	const char *Aliases;		// other words ParseNextKind takes for it, a space between
+	int KeyMode;				// +1: a major key (major or lydian), -1: a minor one (minor, dorian...), 0: either
+	const char *Color;			// add_chords_and_bass's color for the chords written before the melody
+	const char *Intensity;		// add_drums's ("" normal)
+	bool Samples;				// add_drums with kit samples
+	int Grow;					// grow_melody's kind: 1 calm (few, long notes, by step), 2 lively, 3 action; 0 lively
+	const char *Title;			// "a mysterious track", as finish_song names it
+	const char *Listen;			// what to listen for once it's finished
+	const char *LeadWhy;		// the lead step's why: the sound and what it's for
+	const char *ProgMajor[2];	// its A's and B's chords (NextProgression), in a major key and a minor one; null: the
+	const char *ProgMinor[2];	// general recipe's
+	const char *Place;			// what it's for: "caves, sewers, ruins, forgotten places"
+	const char *Feel;			// the recipe's line on how it should feel
+	const char *Melody;			// the recipe's line on its tune
+	const char *Depth;			// the recipe's line on its repeats and depth
 };
 
 const NextKind &NextKindInfo(int Kind);
-// A kind as asked ("calm", "Lively", "cosy"); false when it's none of the four
+// A kind as asked ("calm", "Lively", "cosy", "caves"); false when it's none of them
 bool ParseNextKind(const std::string &Text, int &Kind);
-// Whether a kind's songs want a major key (calm and cozy, whose keys are all major), for what_next's note on a track
-// whose key is minor
+// The kinds' names, "calm, lively, cozy, ... or floating"
+std::string NextKindNames();
+// Whether a kind's songs want a major key (calm, cozy and others whose keys are all major), or a minor one (minor or a
+// minor mode: mysterious and others), for what_next's note on a track whose key goes against it
 bool KindWantsMajor(int Kind);
+bool KindWantsMinor(int Kind);
 
 // The chords what_next gives a new song's A part (or its B part, on other
 // chords), eight bars as degrees of its key: "| I | V | vi | IV | ... |"

@@ -98,8 +98,9 @@ enum action_t {
 
 // The menus' items
 enum {
-	MENU_ASK = 1, MENU_NOTES, MENU_CLOSE, MENU_KIND = 10, MENU_UNSKIP = 20, MENU_VERSION = 60, MENU_MIC = 70,
-	MENU_PHONE, MENU_PLACE = 100	// three: CPanelBar::AddPlaceItems
+	MENU_ASK = 1, MENU_NOTES, MENU_CLOSE, MENU_UNSKIP = 20, MENU_VERSION = 60, MENU_MIC = 70,
+	MENU_PHONE, MENU_PLACE = 100,	// three: CPanelBar::AddPlaceItems
+	MENU_KIND = 200					// a kind each (KIND_COUNT; it was 10, which more than ten kinds would take past MENU_UNSKIP)
 };
 
 const int HOVER_STAGE = 1000;			// Hover: a stage's pill, from here on
@@ -109,12 +110,15 @@ const LPCTSTR STAGE_LABELS[ftapi::NEXT_STAGES] = {
 };
 
 // The kinds of song what_next knows ("" is its own choice: the general recipe, or calm when the track's name says so)
-const char *const KIND_IDS[] = { "", "calm", "lively", "cozy", "action" };
+// (what_next's kinds, NextKindInfo in Api/WhatNext.cpp, in the order of next_kind but general first)
+const char *const KIND_IDS[] = { "", "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating" };
 const LPCTSTR KIND_ITEMS[] = {
 	_T("General: the recipe for any song"), _T("Calm: a night or an ambient place"), _T("Lively: a stage"),
-	_T("Cozy: a warm place indoors (a shop, a hut, an inn)"), _T("Action: a boss or a battle")
+	_T("Cozy: a warm place indoors (a shop, a hut, an inn)"), _T("Action: a boss or a battle"),
+	_T("Mysterious: caves, sewers, ruins, forgotten places"), _T("Adventure: open fields, travel, an airship flight"),
+	_T("Floating: the sky, clouds, underwater, waiting at a dock")
 };
-const int KIND_COUNT = 5;
+const int KIND_COUNT = sizeof(KIND_IDS) / sizeof(KIND_IDS[0]);
 
 // Text from the tools (UTF-8) as FamiTracker shows it (the Windows code page), and back
 CString FromUtf8(const std::string &Text)

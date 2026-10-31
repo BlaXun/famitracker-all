@@ -537,11 +537,25 @@ work, to reuse its ideas.
   exported at -20 LUFS, beside the towns and stages.
 - **action**, for fights, bosses and chases. These stay punchy: the melody
   on top, a backbeat, accents.
+- **mysterious**, for caves, sewers, ruins and forgotten places: curious
+  rather than scary, in a minor key or dorian, slow, a sparse tune over a
+  drone, an echo in the gaps, no drums.
+- **adventure**, for open fields, travel and an airship flight: major, a
+  wide tune that leaps upward over a rolling bass and a steady beat.
+- **floating**, for the sky, clouds, underwater or waiting at a dock: major
+  (or lydian), a slow pulse, rolling arpeggios, no drums, plenty of echo.
 
-Each recipe ends with its numbers from the built-in guide (topics `calm`,
-`lively`, `cozy` and `action`), so Claude reads them once instead of looking
-them up. Without a kind, the general recipe points at the four when your
-idea asks for one.
+Each recipe ends with its numbers from the built-in guide (a topic of each
+kind's name), so Claude reads them once instead of looking them up. Without
+a kind, the general recipe points at them when your idea asks for one, and
+`get_recipe` with `about` (words about the place) picks the kind and says
+which: "Kind: mysterious (from the words hidden, cave). Pass kind
+"mysterious" to get_recipe, what_next and finish_song." `what_next` and
+`song_shape` say the same when their `about` picks a kind, and `what_next`
+without `about` or a kind takes one from the track's name ("The Caves",
+"Flying the airship", "Waiting for the Airship", "Hut in a Field"). On a
+tie the words' kinds go mysterious, floating, cozy, adventure; a fight's
+words stay action.
 
 ### Arguments a tool doesn't take
 

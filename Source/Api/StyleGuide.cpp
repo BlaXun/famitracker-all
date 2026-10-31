@@ -457,6 +457,47 @@ const Section SECTIONS[] = {
 		"- Mix and checks in calm's style: polish style calm (no accents), mix style calm (the melody 2-3 dB over the chords, "
 		"soft drums kept as soft as written), review_arrangement and check_song style calm. export_for_game at -20 LUFS, "
 		"beside the towns and the stages (a night song's -22 is for the quiet scenes)." },
+	{ "mysterious", "Mysterious places (caves, sewers, ruins, forgotten places)",
+		"mysterious mystery cave caves cavern sewer sewers ruin ruins crypt mine hidden secret forgotten underground eerie",
+		"A place that hides something: the player is curious, not frightened. Not a dungeon's dread (the dark topic) and not "
+		"sad:\n"
+		"- Minor or dorian (dorian's raised sixth keeps it from sounding sad): D dorian, A minor, E dorian. A tritone's lean or "
+		"a flat second now and then, resolved.\n"
+		"- A slow walk: 85-100 BPM at an even tempo (90 is speed 10 at tempo 150).\n"
+		"- A drone underneath: the bass on the tonic held (bass_style pedal), or a pulsing bass on one note; soft, slow chords "
+		"over it (chord_style lush with arp_frames 3, color plain).\n"
+		"- A sparse tune: 1-3 notes a bar, long notes, gaps of a beat or more where the echo answers (add_echo a beat behind, "
+		"on the other side); the high note rare.\n"
+		"- A lead that breathes in and holds low (design_instrument kind breath), or a soft pulse at 25%; a faint vibrato that "
+		"waits.\n"
+		"- No backbeat: no drums, or a soft tick on the noise in one section; a drip or a far-off clank in the break is the "
+		"charm.\n"
+		"- Calm's style: polish, mix, check_song and review_arrangement with style calm. export_for_game at -21 LUFS." },
+	{ "adventure", "Adventure (open fields, travel, an airship flight)",
+		"adventure journey travel voyage field fields road overworld airship flight flying explore quest plains",
+		"The road ahead: wide, hopeful, on the move.\n"
+		"- Major: D, G or Bb major; I-V-IV-V, a bVII or a IV-V lift into each part.\n"
+		"- 110-130 BPM at an even tempo (128.6 is speed 7, 112.5 speed 8, at tempo 150).\n"
+		"- A wide tune: a leap up of a fifth or a sixth (an octave at the high point) and steps back down, a dotted rhythm "
+		"that marches, phrases of 2 or 4 bars ending on a held note, reaching into octave 4 at each part's high point.\n"
+		"- A bass that marches or gallops: bass_style arpeggio (rolling) or octaves on the triangle.\n"
+		"- Steady drums: add_drums groove march (or basic) with kit samples, fills and a crash into each part.\n"
+		"- A lead that blooms in and settles (design_instrument kind bloom lead); broken chords under the leaps (chord_style "
+		"broken, color plain while the tune is written).\n"
+		"- A harmony a third or sixth under the tune in the repeat, the bass in octaves the last time round.\n"
+		"- Lively's style: polish, mix and the checks with style lively. export_for_game at -20 LUFS." },
+	{ "floating", "Floating (the sky, clouds, underwater, waiting at a dock)",
+		"floating float sky skies cloud clouds underwater drift drifting waiting dock pier lagoon dawn weightless",
+		"Weightless: carried by wind or water, waiting without hurry.\n"
+		"- Major or lydian (its raised fourth floats): F, D or G major, or F lydian; I-iii-IV, IV-I, the loop's last bar on IV.\n"
+		"- A slow pulse: 80-95 BPM (90 is speed 10 at tempo 150).\n"
+		"- Rolling arpeggios: chord_style broken (up or rolling, a soft pluck), the bass on half bars or held roots.\n"
+		"- A lead that breathes in and holds a soft level (design_instrument kind breath), long notes rising and settling by "
+		"step, 2-3 a bar.\n"
+		"- Plenty of echo: add_echo a beat behind on the other side from the first repeat, Space on the lead and the chords "
+		"(set_mixer room hall).\n"
+		"- Soft or no drums: none, or soft hi-hats like a shaker.\n"
+		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -21 LUFS." },
 	{ "action", "Action: battles, bosses and chases (punchy and driving)",
 		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
 		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"

@@ -131,14 +131,20 @@ bool ReadShapeParts(const std::string &Text, std::vector<ShapePart> &Parts, std:
 // and a line on why
 struct ShapeWords {
 	const SongShape *pShape;
-	std::string Kind;		// what_next's kind the words ask for: the shape's, or "cozy" for a warm place indoors (a shop, a
-							// hut, an inn) by day; "" without a shape
+	std::string Kind;		// what_next's kind the words ask for: a kind's own words' (cozy for a warm place indoors by day,
+							// a shop, a hut, an inn; mysterious for a cave...), else the shape's; "" without a shape
+	std::vector<std::string> KindWords;	// the words that asked for a kind of their own ("cave", "hidden"); empty when the
+										// shape's kind is the kind
 	std::vector<std::string> Add, Drop;
 	double Length;			// a factor on the shape's bars, 1 for none
 	std::string Why;
 	ShapeWords() : pShape(0), Length(1.0) {}
 };
-ShapeWords ReadShapeWords(const std::string &About);
+// Name: the words are a track's name, where the nouns that only name a small place's shape (shop, inn) pick no kind
+ShapeWords ReadShapeWords(const std::string &About, bool Name = false);
+// The line that says the kind words picked and to keep passing it: "Kind: mysterious (from the words cave, hidden). Pass
+// kind "mysterious" to get_recipe, what_next and finish_song." (Words.KindWords not empty)
+std::string KindFromWordsLine(const ShapeWords &Words);
 
 // The shape a track's sections were laid out in by song_shape, varied or not: MatchSongShape's, else (sections that
 // read as a laid-out form: from the first frame on without a gap, every name a shape's part, A's repeats marked with

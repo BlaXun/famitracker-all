@@ -434,10 +434,21 @@ std::string SongShapeIds()
 	return Out;
 }
 
+std::string KindFromWordsLine(const ShapeWords &Words)
+{
+	std::string Listed;
+	for (size_t i = 0; i < Words.KindWords.size(); ++i)
+		Listed += (i == 0 ? "" : ", ") + Words.KindWords[i];
+	return "Kind: " + Words.Kind + " (from the words " + Listed + "). Pass kind \"" + Words.Kind + "\" to get_recipe, what_next and "
+		"finish_song.";
+}
+
 const SongShape &ShapeForKind(const std::string &Kind)
 {
 	const std::string Word = Lower(Trimmed(Kind));
-	const char *Id = Word == "lively" ? "stage" : Word == "calm" ? "night" : Word == "action" ? "boss" : "town";	// (cozy: town)
+	// (the later kinds: their words' own shape, KIND_WORDS' first)
+	const char *Id = Word == "lively" || Word == "adventure" ? "stage" : Word == "calm" || Word == "mysterious" ||
+		Word == "floating" ? "night" : Word == "action" ? "boss" : "town";	// (cozy: town)
 	const SongShape *pShape = ShapeById(Id);
 	return pShape != 0 ? *pShape : SongShapes()[0];
 }
@@ -1181,7 +1192,37 @@ bool ReadShapeParts(const std::string &Text, std::vector<ShapePart> &Parts, std:
 	return true;
 }
 
-ShapeWords ReadShapeWords(const std::string &About)
+namespace {
+
+// The kinds words about a place ask for, in their order on a tie (KindWordRow::Words, a space between; ReadShapeWords)
+struct KindWordRow {
+	const char *Kind;		// what_next's
+	const char *Label;		// what the reply says it is
+	const char *Words;
+	const char *Pairs;		// two words together, a comma after each: " market day, eerie silence,"
+	const char *NameLess;	// of Words, those a track's name doesn't count (they only name a shape's place)
+	const char *Shapes;		// the shapes it takes, its own first
+	bool Gentle;			// not over intense words
+	const char *Over;		// the shapes whose words it may be over (0: any but a fight's or a jingle's)
+};
+
+const KindWordRow KIND_WORDS[] = {
+	{ "mysterious", "mysterious", "mystery mysteries mysterious mystic cave caves cavern caverns sewer sewers ruin ruins crypt "
+		"crypts catacomb catacombs tomb tombs mine mines eerie hidden secret secrets forgotten labyrinth underground grotto", 0, 0,
+		"night town", true, 0 },
+	{ "floating", "floating", "float floats floating floaty afloat sky skies cloud clouds underwater drift drifting waiting wait "
+		"dock docks pier lagoon dawn", 0, 0, "night town", true, 0 },
+	{ "cozy", "a warm place, cozy", "cozy cosy homey homely warm warmth friendly hut cabin cottage shop store inn tavern bakery cafe "
+		"teahouse house kitchen hearth fireplace indoors indoor granny grandma grandmother grandpa elderly shopkeeper", 0,
+		"shop store inn tavern cafe house", "town small", true, "night town small" },
+	{ "adventure", "adventure", "adventure adventures adventurous journey journeys travel travels traveling travelling voyage "
+		"field fields road roads flying flight airship airships explore exploring exploration overworld quest plains", 0, 0,
+		"stage town", false, 0 },
+};
+
+}	// namespace
+
+ShapeWords ReadShapeWords(const std::string &About, bool Name)
 {
 	ShapeWords Out;
 	const std::vector<std::string> Words = WordsOf(About);
@@ -1245,38 +1286,65 @@ ShapeWords ReadShapeWords(const std::string &About)
 		pShape = ShapeById("stage");
 		Why.push_back("\"" + Intense + "\"");
 	}
-	// A warm place indoors (a shop, a hut, an inn, a grandmother keeping the place), not at night, not a dark one and not
-	// a fight: the cozy kind, in its shape (a small place's short loop where the words name one, a shop or an inn, else a
-	// town's, which a hut gets: 40 bars). Its words were gentle ones, which took it for a night song: "Lost n Found", a
-	// cozy, run-down hut, came out in C minor and sounded depressing
-	static const char *const COZY[] = { "cozy", "cosy", "homey", "homely", "warm", "warmth", "friendly", "hut", "cabin", "cottage",
-		"shop", "store", "inn", "tavern", "bakery", "cafe", "teahouse", "house", "kitchen", "hearth", "fireplace", "indoors", "indoor",
-		"granny", "grandma", "grandmother", "grandpa", "elderly", "shopkeeper" };
+	// The kinds of place words name (what_next's kinds after the first four, and cozy): the one most of the words ask for,
+	// the first of KIND_WORDS on a tie, over the shape's own kind. Not over a fight (a boss's words, not said to be
+	// gentle) or a jingle; a gentle kind not over intense words. Cozy, a warm place indoors (a shop, a hut, an inn, a
+	// grandmother keeping it), not at night or in a dark place either: its words were gentle ones, which took it for a
+	// night song ("Lost n Found", a cozy, run-down hut, came out in C minor and sounded depressing). A track's name
+	// (Name) leaves out the place nouns that only name a small place's shape (a "Shop" stays the general recipe's)
 	static const char *const NIGHT[] = { "night", "nights", "nighttime", "sleep", "sleeping", "sleepy", "asleep", "dream", "dreams",
 		"dreamy", "dreaming", "lullaby", "rest", "resting", "moon", "moonlit", "starry" };
 	static const char *const DARK[] = { "haunted", "spooky", "creepy", "scary", "eerie", "abandoned", "cursed", "dark", "sinister" };
-	std::string Cozy;
-	if (ANY(COZY, true, &Cozy) && !ANY(NIGHT, true, 0) && !ANY(DARK, true, 0) && !IsIntense &&
-		(pAsked == 0 || pAsked->Id == "night" || pAsked->Id == "town" || pAsked->Id == "small")) {
-		Out.Kind = "cozy";
-		if (pShape == 0 || pShape->Id == "night") {
-			const SongShape *pSmall = ShapeById("small");
-			const ShapeRow *pRow = pSmall != 0 ? RowOf(*pSmall) : 0;
-			const std::vector<std::string> Own = pRow != 0 ? WordsOf(pRow->Words) : std::vector<std::string>();
-			std::string Place;
-			for (size_t i = 0; i < Words.size() && Place.empty(); ++i)
-				if (!Negated(Words, i) && std::find(Own.begin(), Own.end(), Words[i]) != Own.end())
-					Place = Words[i];
-			pShape = ShapeById(Place.empty() ? "town" : "small");
-			Why.clear();
-			Why.push_back("\"" + Cozy + "\": a warm place, cozy" + (Place.empty() ? std::string() : ", \"" + Place + "\" a small one"));
+	const bool Night = ANY(NIGHT, true, 0), Dark = ANY(DARK, true, 0);
+	const bool Fight = pAsked != 0 && ((pAsked->Id == "boss" && !IsGentle) || pAsked->Id == "jingle");
+	const KindWordRow *pBest = 0;
+	std::vector<std::string> Said;
+	for (size_t k = 0; k < sizeof(KIND_WORDS) / sizeof(KIND_WORDS[0]) && !Fight; ++k) {
+		const KindWordRow &Row = KIND_WORDS[k];
+		const std::string Kind = Row.Kind;
+		if ((Row.Gentle && IsIntense) || (Kind == "cozy" && (Night || Dark)) || (Row.Over != 0 && pAsked != 0 &&
+			(std::string(" ") + Row.Over + " ").find(" " + pAsked->Id + " ") == std::string::npos))
+			continue;
+		const std::vector<std::string> Own = WordsOf(Row.Words), Places = WordsOf(Row.NameLess != 0 ? Row.NameLess : "");
+		std::vector<std::string> Found;
+		for (size_t i = 0; i < Words.size(); ++i)
+			if (!Negated(Words, i) && std::find(Own.begin(), Own.end(), Words[i]) != Own.end() && !(Name && std::find(Places.begin(),
+				Places.end(), Words[i]) != Places.end()) && std::find(Found.begin(), Found.end(), Words[i]) == Found.end())
+				Found.push_back(Words[i]);
+		// Two words that ask for it only together ("market day", "eerie silence")
+		for (size_t i = 0; Row.Pairs != 0 && i + 1 < Words.size(); ++i) {
+			const std::string Pair = " " + Words[i] + " " + Words[i + 1] + ",";
+			if ((std::string(" ") + Row.Pairs + ",").find(Pair) != std::string::npos && !Negated(Words, i))
+				Found.push_back(Words[i] + " " + Words[i + 1]);
 		}
-		else if (!Why.empty() && Why.back() == "\"" + Cozy + "\"")
-			Why.back() += ": a warm place, cozy";
-		else if (!ShapeWord.empty())
-			Why.back() = "\"" + Cozy + "\" and \"" + ShapeWord + "\": a warm place, cozy";
-		else
-			Why.push_back("\"" + Cozy + "\": cozy");
+		if (Found.size() > Said.size()) {
+			Said = Found;
+			pBest = &Row;
+		}
+	}
+	if (pBest != 0) {
+		Out.Kind = pBest->Kind;
+		Out.KindWords = Said;
+		// Its shape: the words' own where it's one of the kind's, else the first of the kind's whose words are there, else
+		// the kind's own (the first)
+		const std::vector<std::string> Shapes = WordsOf(pBest->Shapes);
+		const SongShape *pOwn = 0;
+		if (pAsked != 0 && std::find(Shapes.begin(), Shapes.end(), pAsked->Id) != Shapes.end())
+			pOwn = pAsked;
+		for (size_t s = 0; s < Shapes.size() && pOwn == 0; ++s) {
+			const SongShape *pTry = ShapeById(Shapes[s]);
+			const ShapeRow *pRow = pTry != 0 ? RowOf(*pTry) : 0;
+			const std::vector<std::string> Own = pRow != 0 ? WordsOf(pRow->Words) : std::vector<std::string>();
+			for (size_t i = 0; i < Words.size() && pOwn == 0; ++i)
+				if (!Negated(Words, i) && std::find(Own.begin(), Own.end(), Words[i]) != Own.end())
+					pOwn = pTry;
+		}
+		pShape = pOwn != 0 ? pOwn : ShapeById(Shapes[0]);
+		std::string Quoted;
+		for (size_t i = 0; i < Said.size(); ++i)
+			Quoted += (i == 0 ? "\"" : ", \"") + Said[i] + "\"";
+		Why.clear();
+		Why.push_back(Quoted + ": " + pBest->Label);
 	}
 	else if (pShape != 0)
 		Out.Kind = pShape->Kind;
@@ -1364,8 +1432,8 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 			std::string(" (no word for a shape, so the general one)")) : "the " + Lower(pBase->Title) + " asked for";
 		Out.FromWords = "From the words: " + Line + (Words.Why.empty() ? std::string(".") : " (" + Words.Why + ").");
 		Out.Kind = Words.Kind;
-		if (Words.Kind == "cozy")
-			Out.FromWords += " A cozy place: what_next with the same about (or kind cozy) follows the cozy recipe, in a major key.";
+		if (!Words.KindWords.empty())
+			Out.FromWords += "\n" + KindFromWordsLine(Words);
 	}
 	const std::string &Title = pBase->Title;
 	FormList Form;
