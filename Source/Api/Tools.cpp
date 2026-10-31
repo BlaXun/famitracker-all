@@ -1930,7 +1930,11 @@ bool EchoesAnother(Session &S, int Channel, const std::vector<NoteInfo> &Notes, 
 }
 
 // A steady run of quick notes of one length (an arpeggio, broken chords, an
-// ostinato): accompaniment, however busy
+// ostinato): accompaniment, however busy. Its pace is counted where it plays: a
+// rest longer than a bar (a section it sits out, a break not yet filled) doesn't
+// slow it (broken chords in eighths with an empty break counted under two notes a
+// beat, as a line of their own, until the break got A's chords: what_next's second
+// line went from done to left)
 bool RunsSteadily(const Session &S, const std::vector<NoteInfo> &Notes)
 {
 	if (Notes.size() < 16)
@@ -1939,8 +1943,16 @@ bool RunsSteadily(const Session &S, const std::vector<NoteInfo> &Notes)
 	int Most = 0;
 	for (size_t i = 0; i + 1 < Notes.size(); ++i)
 		Most = std::max(Most, ++Lengths[Notes[i].Rows]);
-	const int Span = Notes.back().Row - Notes.front().Row;
-	const double PerBeat = Span > 0 ? (Notes.size() - 1) * static_cast<double>(std::max(1, S.Time.RowsPerBeat)) / Span : 0.0;
+	const int Bar = std::max(1, S.Time.RowsPerBar);
+	int Span = 0, Steps = 0;
+	for (size_t i = 0; i + 1 < Notes.size(); ++i) {
+		const int Gap = Notes[i + 1].Row - Notes[i].Row;
+		if (Gap <= Bar) {
+			Span += Gap;
+			++Steps;
+		}
+	}
+	const double PerBeat = Span > 0 ? Steps * static_cast<double>(std::max(1, S.Time.RowsPerBeat)) / Span : 0.0;
 	return Most * 20 >= static_cast<int>(Notes.size() - 1) * 17 && PerBeat >= 2.0;
 }
 
