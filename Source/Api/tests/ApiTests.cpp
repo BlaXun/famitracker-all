@@ -27296,7 +27296,8 @@ void TestChordDrones()
 	{
 		FakeSong Song(6);
 		DroneSong(Song, 8, false);
-		const std::vector<const Json *> Found = FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone");
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone");
 		CHECK_EQ(Found.size(), static_cast<size_t>(1));
 		const Json *pFix = Found.empty() ? 0 : Found[0]->Get("fix");
 		CHECK(pFix != 0 && IntegerOf(pFix->Get("arguments"), "to_bar") == 12 && pFix->Get("then") != 0 &&
