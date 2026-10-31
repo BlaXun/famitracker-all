@@ -56,6 +56,7 @@
 #include "SoundPreview.h"
 #include "PhoneDlg.h"
 #include "SongShapeDlg.h"
+#include "BackupsDlg.h"
 #include "PhoneLink.h"
 #include "GlossaryDlg.h"
 #include "GlossaryHear.h"
@@ -253,6 +254,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_FILE_GENERALSETTINGS, OnFileGeneralsettings)
 	ON_COMMAND(ID_FILE_CONNECTCLAUDE, OnFileConnectClaude)
 	ON_COMMAND(ID_FILE_EXPORTFORGAMES, OnFileExportForGames)
+	ON_COMMAND(ID_FILE_BACKUPS, OnFileBackups)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
 	ON_COMMAND(ID_EDIT_RECORDPHONE, OnEditRecordPhone)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
@@ -1893,6 +1895,11 @@ void CMainFrame::OnFileExportForGames()
 {
 	if (m_pMcpConnection != NULL)
 		m_pMcpConnection->ShowGameExport();
+}
+
+void CMainFrame::OnFileBackups()
+{
+	ShowBackups(this);	// BackupsDlg.h
 }
 
 void CMainFrame::OnEditVoiceEffect()

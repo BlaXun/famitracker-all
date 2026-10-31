@@ -517,6 +517,52 @@ public:
 		Error = "This FamiTracker can't open songs for the tools.";
 		return false;
 	}
+	// Backups (Backups.h; create_backup, list_backups, restore_backup and File > Backups...): files in the Backups folder
+	// beside the song's file (BACKUPS_FOLDER), which the songs in that folder share, each song's named after it. Names have
+	// no folders (IsPlainFileName). A song without a file has no such folder, and each of these refuses it with the reason.
+	// SaveBackup saves a copy of the song as it is now, its changes not saved yet too, as Name there (making the folder when
+	// needed), never over a file; the song itself keeps its file, its changes to save and its undo history. Path: the copy,
+	// as the tools are given paths. False with the reason
+	virtual bool SaveBackup(const std::string &Name, std::string &Path, std::string &Error)
+	{
+		(void)Name;
+		(void)Path;
+		Error = "This FamiTracker can't keep backups.";
+		return false;
+	}
+	// The names of the files in the Backups folder (none when there's no folder yet)
+	virtual bool ListBackups(std::vector<std::string> &Names, std::string &Error)
+	{
+		(void)Error;
+		Names.clear();
+		return true;
+	}
+	// A text file in the Backups folder (a song's index): false when there's none (Error empty) or it can't be read (Error
+	// says why); writing replaces it, making the folder when needed
+	virtual bool ReadBackupText(const std::string &Name, std::string &Bytes, std::string &Error)
+	{
+		(void)Name;
+		Bytes.clear();
+		Error.clear();
+		return false;
+	}
+	virtual bool WriteBackupText(const std::string &Name, const std::string &Bytes, std::string &Error)
+	{
+		(void)Name;
+		(void)Bytes;
+		Error = "This FamiTracker can't keep backups.";
+		return false;
+	}
+	// Opens the backup Name in the song's place, as File > Open opens a file, except that the song keeps its own file:
+	// saving goes back to it, never to the backup. The song then has changes to save (the backup isn't its file) and no undo
+	// history (opening clears it). The open song's changes not saved yet are dropped: the tools keep a backup of the song
+	// first. A backup FamiTracker can't read is refused before anything changes. False with the reason, the song as it was
+	virtual bool OpenBackup(const std::string &Name, std::string &Error)
+	{
+		(void)Name;
+		Error = "This FamiTracker can't restore backups.";
+		return false;
+	}
 	// listen's last result over a whole track (its JSON, which carries the song's print, SoundPrint), for what_next's listen
 	// before the finish: kept by the host while it runs, not in the song
 	void KeepListen(const std::string &Text) { m_LastListen = Text; }

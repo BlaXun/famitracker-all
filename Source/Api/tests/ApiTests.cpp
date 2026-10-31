@@ -23,6 +23,7 @@
 // protocol, the musical helpers and every tool, against a song in memory.
 
 #include "../Arrange.h"
+#include "../Backups.h"
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
 #include "../ChannelMix.h"
@@ -1539,6 +1540,94 @@ public:
 		Redoable = 0;
 		OpenPath = Path;
 		Remember(Path);
+		return true;
+	}
+
+	// The Backups folder beside the song (create_backup, list_backups, restore_backup), as CMcpLink keeps it: the songs
+	// saved there by name, and its text files (the index)
+	std::map<std::string, SavedSong> BackupSongs;
+	std::map<std::string, std::string> BackupTexts;
+	int BackupsOpened = 0;
+
+	bool SaveBackup(const std::string &Name, std::string &Path, std::string &Error) override
+	{
+		if (Info.FileName.empty()) {
+			Error = "The song has no file yet, so there's no folder for its backups: save it first.";	// as CMcpLink
+			return false;
+		}
+		if (!IsPlainFileName(Name) || BackupSongs.count(Name) != 0 || BackupTexts.count(Name) != 0) {
+			Error = "There's already a file called " + Name + " in the Backups folder.";
+			return false;
+		}
+		Switch(Current);	// the selected track's cells into Tracks
+		SavedSong &Copy = BackupSongs[Name];
+		Copy.Info = Info;
+		Copy.Rows = Rows;
+		Copy.Tracks = Tracks;
+		Copy.Current = Current;
+		Copy.Clips = Clips;
+		Copy.Mix = Mix;
+		Copy.Saved = ++Clock;
+		Path = "C:\\Music\\Backups\\" + Name;	// the song itself keeps its file, its changes to save and its undo history
+		return true;
+	}
+
+	bool ListBackups(std::vector<std::string> &Names, std::string &) override
+	{
+		Names.clear();
+		for (std::map<std::string, SavedSong>::const_iterator it = BackupSongs.begin(); it != BackupSongs.end(); ++it)
+			Names.push_back(it->first);
+		for (std::map<std::string, std::string>::const_iterator it = BackupTexts.begin(); it != BackupTexts.end(); ++it)
+			Names.push_back(it->first);
+		return true;
+	}
+
+	bool ReadBackupText(const std::string &Name, std::string &Bytes, std::string &Error) override
+	{
+		Error.clear();
+		const std::map<std::string, std::string>::const_iterator it = BackupTexts.find(Name);
+		if (it == BackupTexts.end())
+			return false;
+		Bytes = it->second;
+		return true;
+	}
+
+	bool WriteBackupText(const std::string &Name, const std::string &Bytes, std::string &Error) override
+	{
+		if (Info.FileName.empty() || !IsPlainFileName(Name)) {
+			Error = "The song has no file yet, so there's no folder for its backups.";
+			return false;
+		}
+		BackupTexts[Name] = Bytes;
+		return true;
+	}
+
+	// As CMcpLink opens one: the backup's song in the song's place, which keeps its own file and has changes to save, with no
+	// undo history; the files beside the song stay (it's the same folder)
+	bool OpenBackup(const std::string &Name, std::string &Error) override
+	{
+		if (!CanChange(Error))
+			return false;
+		const std::map<std::string, SavedSong>::const_iterator it = BackupSongs.find(Name);
+		if (it == BackupSongs.end()) {
+			Error = "There's no backup called " + Name + " in the Backups folder.";
+			return false;
+		}
+		++BackupsOpened;
+		++SongSerial;
+		const bool Direct = Info.DirectChanges;
+		const std::string File = Info.FileName;
+		Info = it->second.Info;
+		Info.DirectChanges = Direct;
+		Info.FileName = File;
+		Info.Modified = true;
+		Rows = it->second.Rows;
+		Tracks = it->second.Tracks;
+		Current = it->second.Current;
+		Clips = it->second.Clips;
+		Mix = it->second.Mix;
+		Undos.clear();
+		Redoable = 0;
 		return true;
 	}
 
@@ -5326,8 +5415,9 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 40);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
-	// song_shape and 37 with explain (2026-10-26)
+	CHECK(Core.size() >= 15 && Core.size() <= 43);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
+	// song_shape and 37 with explain (2026-10-26), 40 with the agent log's two, 43 with the backups' three (2026-10-31)
+	CHECK_EQ(Core.size(), 43u);
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -18585,6 +18675,122 @@ void TestDraftFindings()
 	CHECK(FindingOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text), "short_loop") == 0);
 }
 
+// Backups (GitHub issue #4): create_backup keeps the song as it is, unsaved changes too, in the Backups folder beside it
+// with its label in the index; list_backups lists them, the newest first; restore_backup keeps a backup of the song as it
+// is ("before restoring ..."), then opens the one asked for in the song's place, which keeps its own file
+void TestBackups()
+{
+	// The pieces (Backups.h)
+	const LogTime When(2026, 10, 31, 14, 5);
+	CHECK_EQ(BackupSongName("C:\\Music\\Town.ftm"), std::string("Town"));
+	CHECK_EQ(BackupIndexName("Town.FTM"), std::string("Town backups.txt"));
+	CHECK_EQ(CleanBackupLabel("  before\tmessing   with\nthe intro "), std::string("before messing with the intro"));
+	CHECK_EQ(CleanBackupLabel(std::string(300, 'x')).size(), MAX_BACKUP_LABEL);
+	std::vector<std::string> Taken;
+	const std::string First = BackupFileName("Town.ftm", When, "before messing with the intro!", Taken);
+	CHECK_EQ(First, std::string("Town 2026-10-31 14-05 before messing with the intro.ftm"));
+	Taken.push_back("town 2026-10-31 14-05 before messing with the intro.ftm");
+	CHECK_EQ(BackupFileName("Town.ftm", When, "before messing with the intro", Taken),
+		std::string("Town 2026-10-31 14-05 before messing with the intro (2).ftm"));
+	CHECK_EQ(BackupFileName("Town.ftm", When, "a/b:c*?", Taken), std::string("Town 2026-10-31 14-05 a b c.ftm"));
+	CHECK(IsPlainFileName(BackupFileName("Town.ftm", When, "..\\..\\x", Taken)));
+	BackupEntry A, B;
+	A.Number = 1;
+	A.Time = When;
+	A.File = First;
+	A.Label = "before messing with the intro";
+	B.Number = 2;
+	B.Time = LogTime(2026, 10, 31, 15, 0);
+	B.File = "Town 2026-10-31 15-00 the calm mix.ftm";
+	B.Label = "the calm mix";
+	const std::string Index = WriteBackupIndex("Town.ftm", std::vector<BackupEntry>{ A, B });
+	CHECK_HAS(Index, "1\t2026-10-31 14:05\tTown 2026-10-31 14-05 before messing with the intro.ftm\tbefore messing with the intro\r\n");
+	std::vector<BackupEntry> Read = ReadBackupIndex(Index + "garbage\r\n3\tyesterday\tx.ftm\tbad\r\n4\t2026-10-31 16:00\t..\\x.ftm\tbad\r\n"
+		"2\t2026-10-31 16:00\ty.ftm\ttwice\r\n");
+	CHECK(Read.size() == 2 && Read[0].Label == A.Label && Read[1].Number == 2 && Read[1].File == B.File);
+	// Files the index doesn't name are the song's backups too, numbered after it; another song's aren't
+	const std::vector<std::string> Files = { First, B.File, "Town 2026-10-31 17-30 by hand (2).ftm", "Town night 2026-10-31 14-05 x.ftm",
+		"Town backups.txt", "Townhall 2026-10-31 14-05.ftm" };
+	const std::vector<BackupEntry> All = SongBackups("Town.ftm", std::vector<BackupEntry>{ A }, Files);
+	CHECK(All.size() == 3 && All[0].Number == 1 && All[1].Number == 2 && All[1].Label == "the calm mix" && All[2].Number == 3 &&
+		All[2].Label == "by hand");
+	std::string Why;
+	CHECK(FindBackup(All, "2", Why) == 1 && FindBackup(All, "#3", Why) == 2 && FindBackup(All, "CALM", Why) == 1);
+	CHECK(FindBackup(All, "9", Why) < 0 && Contains(Why, "no backup 9"));
+	CHECK(FindBackup(All, "the", Why) < 0 && Contains(Why, "Several backups"));
+	CHECK(FindBackup(All, "nothing like it", Why) < 0 && Contains(Why, "No backup's label"));
+	CHECK_EQ(BackupLine(All[0]), std::string("1. 2026-10-31 14:05, \"before messing with the intro\""));
+
+	// The tools
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.Put(0, 0, "C-4", 0, 12);
+	CHECK_HAS(Run(Song, "list_backups", "{}").Text, "has no backups yet");
+	CHECK(Run(Song, "create_backup", "{}").IsError);
+	CHECK(Run(Song, "create_backup", "{\"label\": \"  \"}").IsError);
+	Song.Info.Modified = true;	// a change not saved yet goes into the backup too
+	ToolResult R = Run(Song, "create_backup", "{\"label\": \"before messing with the intro\"}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "Kept backup 1, \"before messing with the intro\" (");
+	CHECK_HAS(R.Text, "the song as it is now, its changes not saved yet too, in Backups\\test ");
+	CHECK_HAS(R.Text, "restore_backup {\"backup\": 1} brings it back");
+	CHECK(Song.BackupSongs.size() == 1 && Song.BackupTexts.count("test backups.txt") == 1);
+	CHECK(Song.Info.Modified && Song.Info.FileName == "test.ftm");	// the song itself as it was
+	const std::vector<std::vector<Cell> > Kept = Song.Rows;
+	// A batch of changes, then another backup
+	const ToolResult Written = Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"from_bar\": 1, \"instrument\": \"Square\", \"notes\": "
+		"\"E4 - - - G4 - - - | "
+		"C5 - - - - - - -\"}");
+	Check(!Written.IsError, Written.Text.c_str(), __LINE__);
+	const std::vector<std::vector<Cell> > Changed = Song.Rows;
+	CHECK(!(Changed[0][0] == Kept[0][0]) || !(Changed[0][4] == Kept[0][4]));
+	CHECK_HAS(Run(Song, "create_backup", "{\"label\": \"the new tune\"}").Text, "Kept backup 2, \"the new tune\"");
+	const std::string Listed = Run(Song, "list_backups", "{}").Text;
+	CHECK_HAS(Listed, "2 backups of test.ftm, the newest first, in the Backups folder beside it:\n2. ");
+	CHECK(Listed.find("\"the new tune\"") < Listed.find("\"before messing with the intro\""));
+	const Json Data = Parse(Run(Song, "list_backups", "{\"format\": \"json\"}").Text);
+	CHECK(Data.Get("backups") != 0 && Data.Get("backups")->Size() == 2 && IntegerOf(&Data.Get("backups")->At(0), "number") == 2);
+	// Restored by words of its label: a backup of the song as it is first, then the backup in its place; the song keeps its file
+	R = Run(Song, "restore_backup", "{\"backup\": \"intro\"}");
+	CHECK(!R.IsError);
+	CHECK_HAS(R.Text, "Restored backup 1, \"before messing with the intro\"");
+	CHECK_HAS(R.Text, "The song as it was is backup 3, \"before restoring before messing with the intro\"");
+	CHECK_HAS(R.Text, "The song keeps its file, test.ftm: save_song saves the restored song there");
+	CHECK(Song.BackupsOpened == 1 && Song.Info.FileName == "test.ftm" && Song.Info.Modified);
+	CHECK(Song.Rows[0][0] == Kept[0][0] && Song.Rows[0][4] == Kept[0][4]);
+	CHECK(Song.BackupSongs.size() == 3);
+	CHECK(Song.Undos.empty());
+	// And back again, by number (an integer too)
+	R = Run(Song, "restore_backup", "{\"backup\": 3}");
+	CHECK(!R.IsError);
+	CHECK(Song.Rows[0][0] == Changed[0][0] && Song.Rows[0][4] == Changed[0][4]);
+	CHECK_HAS(Run(Song, "list_backups", "{}").Text, "4. ");
+	CHECK(Run(Song, "restore_backup", "{\"backup\": 9}").IsError);
+	CHECK(Run(Song, "restore_backup", "{\"backup\": \"nothing like it\"}").IsError);
+	CHECK(Run(Song, "restore_backup", "{}").IsError);
+	// The index lost: the files still list, their labels read from their names
+	Song.BackupTexts.clear();
+	const std::string Again = Run(Song, "list_backups", "{}").Text;
+	CHECK_HAS(Again, "4 backups of test.ftm");
+	CHECK_HAS(Again, "\"the new tune\"");
+	// While a dialog is open in FamiTracker nothing is restored, and no backup is kept for it
+	Song.Busy = true;
+	CHECK(Run(Song, "restore_backup", "{\"backup\": 1}").IsError);
+	CHECK(Song.BackupsOpened == 2 && Song.BackupSongs.size() == 4);
+	Song.Busy = false;
+	// A song without a file has no Backups folder
+	FakeSong Untitled;
+	Untitled.Info.FileName.clear();
+	CHECK_HAS(Run(Untitled, "create_backup", "{\"label\": \"x\"}").Text, "The song has no file yet");
+	CHECK_HAS(Run(Untitled, "list_backups", "{}").Text, "save it first");
+	CHECK_HAS(ToolSet::CoreInstructions(), "Before a batch of changes, create_backup with a label");
+	CHECK_HAS(ToolSet::Instructions(), "restore_backup takes the whole batch back in one step");
+	// In the small set, and the Ask panel's kinds
+	CHECK(ToolSet::IsCoreTool("create_backup") && ToolSet::IsCoreTool("list_backups") && ToolSet::IsCoreTool("restore_backup"));
+	CHECK(AssistantCallChanges("create_backup", Json::MakeObject()) && AssistantCallChanges("restore_backup", Json::MakeObject()) &&
+		!AssistantCallChanges("list_backups", Json::MakeObject()));
+}
+
 // An intro that doesn't lead into the main part (GitHub issue #1): a slow, sparse intro (a held chord a bar), then the whole
 // band at once in A (eighths on the lead, the bass in quarters, hi-hats in eighths); made quieter, the jump only grows. The
 // finding says so with the call that brings the beat in during the intro's last bar (the drums of the loop's last bar,
@@ -27041,6 +27247,7 @@ int main()
 	TestDraftFixes();
 	TestIntroFindings();
 	TestListenSaysItHears();
+	TestBackups();
 	TestFindingsQuiet();
 	TestShortReplies();
 	TestMixFadersReset();

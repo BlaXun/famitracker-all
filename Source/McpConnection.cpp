@@ -33,6 +33,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "Api/Backups.h"
 #include "Api/ChannelMix.h"
 #include "Api/DpcmKit.h"
 #include "Api/FdsSounds.h"
@@ -2754,6 +2755,162 @@ public:
 			Error = "FamiTracker couldn't open " + Path + ".";
 			return false;
 		}
+		return true;
+	}
+
+	// Backups (Api/Backups.h; create_backup, list_backups, restore_backup, File > Backups...): the Backups folder beside the
+	// song's file, made when Make asks; "" while the song has no file
+	CString BackupsFolder(bool Make) const
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Song = pDoc != NULL && pDoc->IsFileLoaded() ? pDoc->GetPathName() : CString();
+		if (Song.IsEmpty())
+			return CString();
+		const CString Folder = Song.Left(Song.ReverseFind(_T('\\')) + 1) + Ansi(ftapi::BACKUPS_FOLDER);
+		if (Make)
+			CreateDirectory(Folder, NULL);	// or it's there already
+		return Folder;
+	}
+
+	// A file's place in the Backups folder, its name checked (a plain name that comes back the same); "" with the reason
+	CString BackupPath(const std::string &Name, bool Make, std::string &Error) const
+	{
+		const CString File = Ansi(Name);
+		if (!PlainName(Name) || Utf8(File) != Name) {
+			Error = "FamiTracker can't make a file called " + Name + " on this computer.";
+			return CString();
+		}
+		const CString Folder = BackupsFolder(Make);
+		if (Folder.IsEmpty()) {
+			Error = "The song has no file yet, so there's no folder for its backups: save it first (File > Save As).";
+			return CString();
+		}
+		return Folder + _T("\\") + File;
+	}
+
+	// The song as it is, its changes not saved yet too, into the Backups folder; the song keeps its file, its changes to
+	// save and its undo history (CFamiTrackerDoc::SaveCopy leaves them, and File > Save's .bak, alone)
+	bool SaveBackup(const std::string &Name, std::string &Path, std::string &Error)
+	{
+		CFamiTrackerDoc *pDoc = Doc();
+		if (pDoc == NULL || !pDoc->IsFileLoaded()) {
+			Error = "No song is open in FamiTracker.";
+			return false;
+		}
+		const CString Full = BackupPath(Name, true, Error);
+		if (Full.IsEmpty())
+			return false;
+		if (GetFileAttributes(Full) != INVALID_FILE_ATTRIBUTES) {
+			Error = "There's already a file called " + Name + " in the Backups folder.";
+			return false;
+		}
+		if (!pDoc->SaveCopy(Full)) {
+			DeleteFile(Full);
+			Error = "The backup couldn't be saved in " + Utf8(BackupsFolder(false)) + " (can that folder be written?).";
+			return false;
+		}
+		Path = Utf8(Full);
+		return true;
+	}
+
+	bool ListBackups(std::vector<std::string> &Names, std::string &Error)
+	{
+		(void)Error;
+		Names.clear();
+		const CString Folder = BackupsFolder(false);
+		if (Folder.IsEmpty())
+			return true;	// no file, so no folder
+		WIN32_FIND_DATA Found;
+		HANDLE hFind = FindFirstFile(Folder + _T("\\*"), &Found);
+		if (hFind == INVALID_HANDLE_VALUE)
+			return true;	// no folder yet
+		do {
+			const std::string Name = Utf8(Found.cFileName);
+			if ((Found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 && Ansi(Name) == Found.cFileName)
+				Names.push_back(Name);
+		} while (FindNextFile(hFind, &Found));
+		FindClose(hFind);
+		return true;
+	}
+
+	bool ReadBackupText(const std::string &Name, std::string &Bytes, std::string &Error)
+	{
+		Bytes.clear();
+		Error.clear();
+		std::string Ignored;
+		const CString Full = BackupPath(Name, false, Ignored);
+		if (Full.IsEmpty() || GetFileAttributes(Full) == INVALID_FILE_ATTRIBUTES)
+			return false;
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("rb")) != 0 || pFile == NULL) {
+			Error = "Couldn't read " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		char Buffer[4096];
+		size_t Read;
+		while ((Read = fread(Buffer, 1, sizeof(Buffer), pFile)) > 0 && Bytes.size() < 1024 * 1024)
+			Bytes.append(Buffer, Read);
+		fclose(pFile);
+		return true;
+	}
+
+	bool WriteBackupText(const std::string &Name, const std::string &Bytes, std::string &Error)
+	{
+		const CString Full = BackupPath(Name, true, Error);
+		if (Full.IsEmpty())
+			return false;
+		FILE *pFile = NULL;
+		if (_tfopen_s(&pFile, Full, _T("wb")) != 0 || pFile == NULL) {
+			Error = "Couldn't write " + Utf8(Full) + " (is it open somewhere else?).";
+			return false;
+		}
+		const size_t Written = fwrite(Bytes.data(), 1, Bytes.size(), pFile);
+		const bool Closed = fclose(pFile) == 0;
+		if (Written != Bytes.size() || !Closed) {
+			Error = "Couldn't write all of " + Utf8(Full) + " (is the disk full?).";
+			return false;
+		}
+		return true;
+	}
+
+	// A backup in the song's place, as File > Open opens a file (read first, so a file FamiTracker can't open is refused
+	// before anything changes); then the song takes its own file back, so saving goes there, with changes to save. Its
+	// changes not saved yet are dropped without a question: the tools kept a backup of them first
+	bool OpenBackup(const std::string &Name, std::string &Error)
+	{
+		if (!CanChange(Error))
+			return false;
+		CFamiTrackerDoc *pDoc = Doc();
+		const CString Song = pDoc->GetPathName();
+		const CString Full = BackupPath(Name, false, Error);
+		if (Full.IsEmpty())
+			return false;
+		const DWORD Attributes = GetFileAttributes(Full);
+		if (Attributes == INVALID_FILE_ATTRIBUTES || (Attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+			Error = "There's no backup called " + Name + " in the Backups folder.";
+			return false;
+		}
+		nsf::Module Module;
+		nsf::FtmInfo Info;
+		std::string Why;
+		if (!nsf::ReadFtmFile(std::string(Full.GetString()), Module, Info, Why)) {
+			Error = "FamiTracker can't open the backup " + Name + ": " + Why + ".";
+			return false;
+		}
+		Stop();
+		if (theApp.IsPlaying())
+			theApp.StopPlayerAndWait();
+		const BOOL Modified = pDoc->IsModified();
+		pDoc->SetModifiedFlag(FALSE);	// so opening asks nothing
+		CDocument *pOpened = theApp.OpenDocumentFile(Full, FALSE);
+		pDoc = Doc();
+		if (pOpened == NULL || pDoc == NULL || !pDoc->IsFileLoaded() || pDoc->GetPathName().CompareNoCase(Full) != 0) {
+			if (pDoc != NULL && pDoc->GetPathName().CompareNoCase(Song) == 0)
+				pDoc->SetModifiedFlag(Modified);
+			Error = "FamiTracker couldn't open the backup " + Name + ".";
+			return false;
+		}
+		pDoc->TakeBackPath(Song);
 		return true;
 	}
 

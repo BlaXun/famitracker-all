@@ -106,8 +106,8 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 40 of them:
-`what_next`, the tools its steps call, `explain` and the agent log's two. Reading and writing: `get_song`,
+clear step better than a list of eight tips. `/mcp/core` serves 43 of them:
+`what_next`, the tools its steps call, `explain`, the agent log's two and the backups' three. Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
 `find_sound`, `reference_sound`, `set_instrument`; parts:
@@ -120,7 +120,8 @@ song heard as FamiTracker plays it), `finish_song` (the last of them in one
 call); and `play`, `stop`, `save_song`,
 `export_for_game`, `get_recipe` and `explain` (the glossary's words for a
 term, to explain things to you in), `write_log` and `read_user_notes` (see
-[The agent log](#the-agent-log-why-and-notes-back)). Not `set_mixer`:
+[The agent log](#the-agent-log-why-and-notes-back)), and `create_backup`,
+`list_backups` and `restore_backup` (see [Backups](#backups-going-back-in-one-step)). Not `set_mixer`:
 `mix` sets the volumes in the notes (a local model once used the faders as
 its mix). Its instructions are a page instead of four, built around a
 loop: ask `what_next`, make the call it gives, ask again until it says done
@@ -422,7 +423,7 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
 - **Key**: only if the server wants one (`llama-server --api-key`); it's
   kept encrypted for your Windows account (DPAPI), never as plain text.
 - **Tools**: all of them (the default, for big models with a big context)
-  or the small set (`/mcp/core`'s 40, with its short instructions and short
+  or the small set (`/mcp/core`'s 43, with its short instructions and short
   replies) for smaller models, or a context under 64K.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then
@@ -1024,6 +1025,49 @@ the song opens again. A song not saved yet keeps its log in memory and
 writes it next to the song when it's first saved. The `.ftm` file itself
 doesn't change.
 
+## Backups: going back in one step
+
+An agent often makes a batch of changes at once, where you'd work in small
+steps, and undoing a batch that came out badly one Ctrl+Z at a time is
+cumbersome (GitHub issue #4). A backup keeps the song as it is at a moment,
+with a label saying why:
+
+```
+create_backup {"label": "before messing with the intro"}
+list_backups {}
+restore_backup {"backup": "intro"}
+```
+
+- `create_backup` (`label` required) saves a copy of the song as it is now,
+  its changes not saved yet too, into a **Backups** folder beside the song's
+  file, named with the time and the label (`Town 2026-10-31 14-05 before
+  messing with the intro.ftm`), numbered `(2)` when two would share a name.
+  The song itself doesn't change: not its file, its changes to save or its
+  Ctrl+Z history. The labels are kept exactly in a small index beside them,
+  `Town backups.txt` (a line a backup: number, time, file, label). A song
+  without a file has no folder yet: save it first.
+- `list_backups` lists them, the newest first: number, time, label
+  (`format` `json` for programs). Numbers count up and are never reused. A
+  backup file of the song the index doesn't name (copied in by hand, or the
+  index lost) is listed too, its time and label read from its name.
+- `restore_backup` (`backup`: a number, or a label or words of one; the
+  newest of a label) first keeps a backup of the song as it is, labelled
+  "before restoring ..." (so restoring loses nothing and can be taken back
+  the same way), then opens the backup in the song's place. The song keeps
+  its own file: saving writes the restored song there and never changes the
+  backup, and until then it has changes to save. Opening a file clears
+  FamiTracker's Ctrl+Z history, so undo starts afresh. It refuses while a
+  dialog is open in FamiTracker, and a backup FamiTracker can't read before
+  anything changes.
+
+In FamiTracker, **File > Backups...** lists the open song's backups (time
+and label), with **Create** (type why first), **Restore** (or a
+double-click; it asks first) and **Open folder**. It runs the same three
+tools, so a backup an agent kept shows there and one you keep is the agent's
+to restore. Every backup and restore is a line in the agent log. All three
+are in the small set; its instructions tell a local model to keep a backup
+before a batch of changes.
+
 ## What Claude can do (the tools)
 
 | Tool | What it does |
@@ -1096,6 +1140,7 @@ doesn't change.
 | `undo` | Ctrl+Z, and says what it undid: the call that made the change ("write_notes: 12 notes on VRC6 Pulse 1, bars 1-4") or an edit made in FamiTracker. A call that fails leaves nothing of its own to undo (what it had changed by then is taken back, and Ctrl+Y doesn't bring it back), so undo after it undoes the change before it, and says so (direct changes only) |
 | `save_song` | Saves the song, or a copy next to it to compare versions. A song never saved goes into the Songs folder next to FamiTracker.exe, in a folder of its own named `name` (else after its track), numbered when the name is taken; it then is that file. See [Files between the computers](#files-between-the-computers) |
 | `new_song` | Starts a new song in place of the open one, as File > New does (the profile's template: its chip, tempo and sounds), with no dialog; `expansion` picks its chips as `set_expansion` takes them, and `name` is its title and its track's name. Asked over MCP, it's saved at once into the Songs folder under that name. Refuses, changing nothing, while the open song has changes that aren't saved. See [A new song, and back to an old one](#a-new-song-and-back-to-an-old-one) |
+| `create_backup`, `list_backups`, `restore_backup` | A backup of the song as it is (changes not saved yet too) with a label, in a Backups folder beside its file; the backups listed, the newest first; one opened in the song's place by number or label, after a backup of the song as it is, the song keeping its own file. See [Backups: going back in one step](#backups-going-back-in-one-step) |
 | `open_song` | Opens another song by name: one in the Songs folder or among FamiTracker's recent files (`list` names them, the newest first); from this computer, `path` opens any `.ftm` file. Refuses while the open song has changes that aren't saved |
 
 Instrument presets: soft lead, bright lead, thin lead, pluck, bell, soft

@@ -22,6 +22,7 @@
 #include "Tools.h"
 #include "AgentLog.h"
 #include "Arrange.h"
+#include "Backups.h"
 #include "Assistant.h"
 #include "Grooves.h"
 #include "ChannelMix.h"
@@ -25359,6 +25360,139 @@ std::string OpenSongTool(Session &S, const Json &Args, const Caller &Who)
 	return Text + " save_song saves it where it was opened from; what_next gives its next step.";
 }
 
+// Backups (Backups.h, GitHub issue #4): copies of the song as it was, each with a label saying why, in the Backups folder
+// beside its file, so a batch of an agent's changes can be taken back in one go
+
+// The song's backups as they are on disk (its index's, and its backup files the index doesn't name), the oldest first
+std::vector<BackupEntry> ReadSongBackups(Session &S, std::vector<BackupEntry> *pIndexed = 0, std::vector<std::string> *pFiles = 0)
+{
+	if (S.Song.FileName.empty())
+		throw Problem("The song has no file yet, so it has no backups: save it first (save_song, or File > Save As); its backups "
+			"then go into a Backups folder beside it.");
+	std::string Text, Error;
+	if (!S.Host().ReadBackupText(BackupIndexName(S.Song.FileName), Text, Error) && !Error.empty())
+		throw Problem("The backups' index couldn't be read: " + Error);
+	std::vector<std::string> Files;
+	if (!S.Host().ListBackups(Files, Error))
+		throw Problem("The Backups folder couldn't be read: " + Error);
+	const std::vector<BackupEntry> Indexed = ReadBackupIndex(Text);
+	if (pIndexed != 0)
+		*pIndexed = Indexed;
+	if (pFiles != 0)
+		*pFiles = Files;
+	return SongBackups(S.Song.FileName, Indexed, Files);
+}
+
+// Keeps a backup of the song as it is now, labelled, and writes it into the index; the entry made
+BackupEntry KeepBackup(Session &S, const std::string &Label)
+{
+	std::vector<BackupEntry> Indexed;
+	std::vector<std::string> Files;
+	const std::vector<BackupEntry> Known = ReadSongBackups(S, &Indexed, &Files);
+	BackupEntry E;
+	E.Number = NextBackupNumber(Known);
+	E.Time = LogTimeNow();
+	E.Label = Label;
+	E.File = BackupFileName(S.Song.FileName, E.Time, Label, Files);
+	std::string Path, Error;
+	if (!S.Host().SaveBackup(E.File, Path, Error))
+		throw Problem(Error.empty() ? std::string("The backup couldn't be saved.") : Error);
+	// The index keeps what's on disk: its entries whose files are there, those it didn't name, and the new one
+	std::vector<BackupEntry> List = Known;
+	List.push_back(E);
+	if (!S.Host().WriteBackupText(BackupIndexName(S.Song.FileName), WriteBackupIndex(S.Song.FileName, List), Error))
+		throw Problem("The backup was saved (" + std::string(BACKUPS_FOLDER) + "\\" + E.File + "), but its label couldn't be written "
+			"into the index: " + Error);
+	return E;
+}
+
+std::string BackupLabelArg(const Json &Args, const char *Name)
+{
+	const std::string Label = CleanBackupLabel(ValidUtf8(StringArg(Args, Name)));
+	if (Label.empty())
+		throw Problem(std::string(Name) + ": what the backup is for, like \"before messing with the intro\": it names it in the list "
+			"(list_backups, File > Backups...).");
+	return Label;
+}
+
+// create_backup: the song as it is now, its changes not saved yet too, as a backup with a label
+std::string CreateBackupTool(Session &S, const Json &Args)
+{
+	const std::string Label = BackupLabelArg(Args, "label");
+	const BackupEntry E = KeepBackup(S, Label);
+	return Format("Kept backup %d, \"%s\" (%s): the song as it is now%s, in %s\\%s beside it. The song itself is unchanged. "
+		"restore_backup {\"backup\": %d} brings it back (a backup of the song as it is then is kept first); list_backups lists "
+		"them all.", E.Number, E.Label.c_str(), LogTimeText(E.Time).c_str(), S.Song.Modified ? ", its changes not saved yet too" : "",
+		BACKUPS_FOLDER, E.File.c_str(), E.Number);
+}
+
+// list_backups: the song's backups, the newest first (format json for FamiTracker's File > Backups...)
+std::string ListBackupsTool(Session &S, const Json &Args)
+{
+	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
+	if (Form != "text" && Form != "json")
+		throw Problem("format: text (the default) or json.");
+	const std::vector<BackupEntry> List = ReadSongBackups(S);
+	if (Form == "json") {
+		Json Out = Json::MakeObject();
+		Out.Set("song", S.Song.FileName);
+		Out.Set("folder", BACKUPS_FOLDER);
+		Json Items = Json::MakeArray();
+		for (size_t i = List.size(); i-- > 0; ) {
+			Json Item = Json::MakeObject();
+			Item.Set("number", List[i].Number);
+			Item.Set("time", LogTimeText(List[i].Time));
+			Item.Set("label", List[i].Label);
+			Item.Set("file", List[i].File);
+			Items.Push(Item);
+		}
+		Out.Set("backups", Items);
+		return WriteJson(Out);
+	}
+	if (List.empty())
+		return "The song (" + S.Song.FileName + ") has no backups yet. create_backup with a label (\"before messing with the intro\") "
+			"keeps one before a batch of changes.";
+	std::string Text = Format("%s of %s, the newest first, in the %s folder beside it:", Plural(static_cast<int>(List.size()), "backup",
+		"backups").c_str(), S.Song.FileName.c_str(), BACKUPS_FOLDER);
+	for (size_t i = List.size(); i-- > 0; )
+		Text += "\n" + BackupLine(List[i]);
+	return Text + "\nrestore_backup with a number or a label opens one in the song's place (a backup of the song as it is then is "
+		"kept first); the song keeps its file.";
+}
+
+// restore_backup: a backup in the song's place, after a backup of the song as it is ("before restoring ..."); the song keeps
+// its file, so saving goes back to it, not to the backup
+std::string RestoreBackupTool(Session &S, const Json &Args)
+{
+	const Json *pAsked = Arg(Args, "backup");
+	std::string Asked;
+	if (pAsked != 0 && pAsked->IsNumber())
+		Asked = Format("%d", static_cast<int>(pAsked->Number()));
+	else if (pAsked != 0 && pAsked->IsString())
+		Asked = ValidUtf8(pAsked->String());
+	const std::vector<BackupEntry> List = ReadSongBackups(S);
+	std::string Why;
+	const int Found = FindBackup(List, Asked, Why);
+	if (Found < 0)
+		throw Problem("backup: " + Why);
+	const BackupEntry Chosen = List[static_cast<size_t>(Found)];
+	std::string Error;
+	if (!S.Host().CanChange(Error))
+		throw Problem(Error);
+	S.Host().Stop();
+	const std::string What = Chosen.Label.empty() ? Format("backup %d", Chosen.Number) : Chosen.Label;
+	const BackupEntry Before = KeepBackup(S, CleanBackupLabel("before restoring " + What));
+	const std::string File = S.Song.FileName;
+	if (!S.Host().OpenBackup(Chosen.File, Error))
+		throw Problem((Error.empty() ? std::string("FamiTracker couldn't open the backup.") : Error) + Format(" The song stays as it "
+			"was (and backup %d, \"%s\", has it too).", Before.Number, Before.Label.c_str()));
+	S.Load();
+	return Format("Restored backup %d, \"%s\" (%s), in the song's place: %s. The song as it was is backup %d, \"%s\" "
+		"(restore_backup {\"backup\": %d} goes back to it). The song keeps its file, %s: save_song saves the restored song there, "
+		"and until then it has changes to save. FamiTracker's Ctrl+Z history starts afresh.", Chosen.Number, Chosen.Label.c_str(),
+		LogTimeText(Chosen.Time).c_str(), SongContentsText(S).c_str(), Before.Number, Before.Label.c_str(), Before.Number, File.c_str());
+}
+
 // The reference library: tracks studied from the user's NSF files, to lean on
 
 const int MAX_STUDIED = 24;			// tracks a study_nsf call studies; each takes a moment
@@ -31204,6 +31338,29 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"C:\\Users\\you\\Music\\Town.ftm.")),
 		false, true);
 
+	AddTool("create_backup", "Keep a backup",
+		"Keeps a backup of the song as it is now, its changes not saved yet too, with a label saying why (\"before messing with "
+		"the intro\"): a copy in the Backups folder beside the song's file, named with the time and the label. Keep one before a "
+		"batch of changes, so the user can go back to it in one step (restore_backup, or File > Backups... in FamiTracker) "
+		"rather than undoing them one by one. The song itself doesn't change. Needs a song with a file (save_song first).",
+		Schema().Add("label", Prop("string", "What the backup is for, a few words, like \"before messing with the intro\" or \"the "
+			"calm mix the user liked\"."), true),
+		false);
+
+	AddTool("list_backups", "List the backups",
+		"Lists the song's backups (create_backup), the newest first: each one's number, when it was kept and its label.",
+		Schema().Add("format", EnumProp("text (the default) or json.", std::vector<std::string>{ "text", "json" })),
+		true, false, true);
+
+	AddTool("restore_backup", "Go back to a backup",
+		"Opens one of the song's backups in the song's place, by its number or its label (list_backups lists them). First it "
+		"keeps a backup of the song as it is, labelled \"before restoring ...\", so nothing is lost and you can go back again. "
+		"The song keeps its own file: save_song saves the restored song there (the backup stays as it was), and until then it "
+		"has changes to save. FamiTracker's Ctrl+Z history starts afresh. Tell the user which backup you restored and why.",
+		Schema().Add("backup", Prop("string", "The backup's number (\"3\", or 3) or its label (or words of it, when only one label "
+			"has them; the newest of a label)."), true),
+		false, true);
+
 	AddTool("get_recipe", "A recipe for composing",
 		"The steps for composing a kind of song with these tools, with the numbers that make it work: calm (only when the "
 		"song is asked to be calm: a place to rest, a night scene, a lullaby), lively (a stage to explore: bouncy, never "
@@ -31462,7 +31619,8 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 	}
 	// The calls that change the song's notes, its sounds or its form (not files, studies or the track worked on)
 	static const char *const ASIDE[] = { "export_for_game", "save_song", "soundtrack_notes", "study_nsf", "study_module",
-		"references", "send_file", "import_nsf", "select_track", "keep_version", "new_song", "open_song" };
+		"references", "send_file", "import_nsf", "select_track", "keep_version", "new_song", "open_song", "create_backup",
+		"restore_backup" };
 	bool ReadOnly = false;
 	for (size_t i = 0; i < m_Tools.size(); ++i)
 		if (m_Tools[i].Name == Name)
@@ -31476,7 +31634,7 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 	static const char *const BESIDE_UNDO[] = { "add_instrument", "design_instrument", "reference_sound", "add_sample_drums",
 		"remove_unused_instruments", "set_expansion", "make_jingle", "make_sound_effect", "make_version", "keep_version",
 		"select_track", "save_song", "new_song", "open_song", "import_nsf", "export_for_game", "soundtrack_notes", "study_nsf",
-		"study_module", "references", "send_file" };
+		"study_module", "references", "send_file", "create_backup", "restore_backup" };
 	bool Beside = Result.Text.find("Saved as the clip \"") != std::string::npos;
 	for (size_t i = 0; i < sizeof(BESIDE_UNDO) / sizeof(BESIDE_UNDO[0]); ++i)
 		Beside = Beside || Name == BESIDE_UNDO[i];
@@ -31687,6 +31845,9 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "save_song") Result.Text = SaveTool(S, Args, Who);
 		else if (Name == "new_song") Result.Text = NewSongTool(S, Args, Who);
 		else if (Name == "open_song") Result.Text = OpenSongTool(S, Args, Who);
+		else if (Name == "create_backup") Result.Text = CreateBackupTool(S, Args);
+		else if (Name == "list_backups") Result.Text = ListBackupsTool(S, Args);
+		else if (Name == "restore_backup") Result.Text = RestoreBackupTool(S, Args);
 		else {
 			Result.Text = "Unknown tool: " + Name;
 			Result.IsError = true;
@@ -31856,15 +32017,16 @@ bool ToolSet::ListExports(std::vector<SongFile> &Files, std::string &Error)
 // variations, an echo; the loop; polish, mix, the checks, saving, export, and finish_song for the last of them in one
 // call), the sounds a part can find and take
 // (find_sound, reference_sound), the swing a local model reached for, playback, the recipes, and the agent log (write_log,
-// read_user_notes: a local model says why it does what it does, and hears the user's notes). Not set_mixer: mix sets
-// the volumes in the notes.
+// read_user_notes: a local model says why it does what it does, and hears the user's notes), and the backups (create_backup,
+// list_backups, restore_backup: a batch of changes taken back in one step). Not set_mixer: mix sets the volumes in the notes.
 const std::vector<std::string> &ToolSet::CoreTools()
 {
 	static const char *const NAMES[] = { "get_song", "what_next", "read_notes", "write_notes", "place_clip", "add_instrument",
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
-		"finish_song", "get_recipe", "explain", "listen", "write_log", "read_user_notes" };
+		"finish_song", "get_recipe", "explain", "listen", "write_log", "read_user_notes", "create_backup", "list_backups",
+		"restore_backup" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -31888,7 +32050,8 @@ std::string ToolSet::CoreInstructions()
 		"after it. Read a part (read_notes) before you change it by hand. You can hear the song: listen renders its real audio "
 		"and says what an ear would notice. The user's ear has the final word: play it for them, ask how it sounds, say what "
 		"you changed and why. explain says a word plainly when the user asks. Log each decision "
-		"briefly (write_log with a category); between steps, read_user_notes.\n"
+		"briefly (write_log with a category); between steps, read_user_notes. Before a batch of changes, create_backup with a label "
+		"(restore_backup goes back).\n"
 		"Write music that sounds composed, not generated:\n"
 		"- Melody (on a pulse): write only the hook, 4-7 notes in steps, a bar or two, a token an eighth: \"D4 G4 A4 B4 - A4 "
 		"G4 - | B4 - - - . . D5 -\" (- holds, across | too; . rests). grow_melody grows it over the chords, with the kind and "
@@ -31947,7 +32110,8 @@ std::string ToolSet::Instructions()
 		"with it. "
 		"Over MCP your changes arrive as clips by default, which the user listens to and places from the clips panel; if the "
 		"user allowed direct changes, and always in FamiTracker's Ask panel (where the user may approve each one first), "
-		"they go into the song and each one is undone with Ctrl+Z. You can hear the song: listen renders its real "
+		"they go into the song and each one is undone with Ctrl+Z. Before a batch of changes, keep a backup (create_backup with a "
+		"label saying why): restore_backup takes the whole batch back in one step. You can hear the song: listen renders its real "
 		"audio and reports what an ear would notice (never tell the user you can't listen) (notes that warble or sit out of tune, parts that beat against each other, "
 		"clicks, sounds that hold on after their notes, notes hardly heard, harsh or muddy stretches): run it once the "
 		"parts are written and again after changing an FDS or N163 sound, not after every small edit; fix its high "
