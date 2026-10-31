@@ -4357,7 +4357,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes or colors");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes, colors or unison");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -4596,7 +4596,8 @@ void TestEchoAndVibrato()
 	CHECK(Song.Rows[6][19].Note == NOTE_RELEASE);
 	CHECK_HAS(Run(Song, "add_echo", "{\"channel\": 1}").Text, "has no notes");
 	{
-		// Detuned a step: sharp from its first note, in tune again where it ends, so what follows plays as before
+		// Detuned a step: sharp from its first note, in tune again where it ends, so what follows plays as before (two beats
+		// late, so no echo note sounds with its original's held note at its pitch, which plays it in tune)
 		FakeSong Wide;
 		Wide.Info.DirectChanges = true;
 		Wide.Put(5, 0, "C-4", 0, 12);
@@ -4604,12 +4605,22 @@ void TestEchoAndVibrato()
 		Wide.End(5, 16, NOTE_RELEASE);
 		Wide.Put(6, 32, "G-4", 0);
 		Result = Run(Wide, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, "
-			"\"delay_beats\": 1, \"detune\": 1}");
+			"\"delay_beats\": 2, \"detune\": 1}");
 		CHECK(!Result.IsError);
 		CHECK_HAS(Result.Text, "later at volume 6 detuned P81, bar 1");
-		CHECK(Wide.Rows[6][4].Pitch() == 48 && Wide.Rows[6][4].Effect[0] == EFF_PITCH && Wide.Rows[6][4].Param[0] == 0x81);
-		CHECK(Wide.Rows[6][12].Pitch() == 52 && Wide.Rows[6][12].Effect[0] == EFF_NONE);
-		CHECK(Wide.Rows[6][20].Note == NOTE_RELEASE && Wide.Rows[6][20].Effect[0] == EFF_PITCH && Wide.Rows[6][20].Param[0] == 0x80);
+		CHECK(Wide.Rows[6][8].Pitch() == 48 && Wide.Rows[6][8].Effect[0] == EFF_PITCH && Wide.Rows[6][8].Param[0] == 0x81);
+		CHECK(Wide.Rows[6][16].Pitch() == 52 && Wide.Rows[6][16].Effect[0] == EFF_NONE);
+		CHECK(Wide.Rows[6][24].Note == NOTE_RELEASE && Wide.Rows[6][24].Effect[0] == EFF_PITCH && Wide.Rows[6][24].Param[0] == 0x80);
+		// A beat late, the first echo note sounds with its original's half: in tune there, detuned from the next
+		FakeSong Near;
+		Near.Info.DirectChanges = true;
+		Near.Put(5, 0, "C-4", 0, 12);
+		Near.Put(5, 8, "E-4");
+		Near.End(5, 12, NOTE_RELEASE);
+		Result = Run(Near, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Pulse 2\", \"to_bar\": 1, "
+			"\"delay_beats\": 1, \"detune\": 1}");
+		CHECK(!Result.IsError);
+		CHECK(HasEffectAt(Near, 6, 4, EFF_PITCH, 0x80) && HasEffectAt(Near, 6, 12, EFF_PITCH, 0x81));
 		CHECK(Wide.Rows[6][32].Pitch() == 55 && Wide.Rows[6][32].Effect[0] == EFF_NONE);
 		CHECK_HAS(Run(Wide, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"detune\": 9}").Text, "detune");
 		// A detune still on where a part is written goes off there
@@ -20483,6 +20494,14 @@ void TestWhatNextLoop()
 		Check(Fill == K.Drums, K.Asked, __LINE__);
 		const std::string Review = Run(Song, "review_arrangement", "{" + Style + "}").Text;
 		Check(ReviewScore(Review) >= 8, Review.c_str(), __LINE__);
+		// Asked without a style, the review judges the song as the kind what_next was given (fix-gen4-review): no tip goes
+		// against the kind's recipe (accents, a walking bass or drums asked of a song its kind polishes and mixes as calm)
+		const std::string Judged = Run(Song, "review_arrangement", "{}").Text;
+		if (std::string(K.Asked) != "{}")
+			Check(Contains(Judged, "(the kind what_next was given for this track; kind changes it)"), Judged.c_str(), __LINE__);
+		if (std::string(K.Style) == "calm" || std::string(K.Style) == "atmospheric")
+			Check(!Contains(Judged, "Flat dynamics sound typed") && !Contains(Judged, "The bass mostly holds roots") &&
+				!Contains(Judged, "No drums: add_drums"), Judged.c_str(), __LINE__);
 		// Done now, and the same after a restart (a new connection: it reads the song, not the calls before)
 		const std::string Again = Run(Song, "what_next", K.Asked).Text;
 		const WhatNextAnswer Last = ReadWhatNext(Again);
@@ -24999,7 +25018,7 @@ void TestListenTool()
 	if (pBeat != 0) {
 		CHECK(IntegerOf(pBeat, "other_channel") == 1 || IntegerOf(pBeat, "channel") == 1);
 		CHECK_HAS(pBeat->Get("message")->String(), "beat");
-		CHECK(pBeat->Get("advice") != 0);	// Pxx, said in words
+		CHECK(pBeat->Get("fix") != 0 && TextOf(pBeat->Get("fix"), "tool") == "polish");	// P80 there: polish's unison
 	}
 	CHECK(ListenCount(Out, "tuning") == 0);	// written so: in tune with itself
 
@@ -28460,6 +28479,112 @@ void TestEchoInTuneWhereDoubled()
 	CHECK_EQ(ListenCentsWords(25.0), std::string("about a quarter of a semitone"));
 }
 
+// An echo's detune stays off its notes where the melody it echoes still holds the same pitch (Hut in a Field: a beat behind
+// the melody's long notes, P81, beating against them 18 cents apart in bars 21-29), and listen's beating gets a call, polish's
+// unison touch, which finish_song's Heard lines give (fix-gen4-review)
+void TestEchoInTuneWithItsMelody()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	const char *const LINE[] = { "C-4", "E-4", "G-4", "E-4" };
+	for (int r = 0; r < 128; r += 16)
+		Song.Put(5, r, LINE[(r / 16) % 4], 0, 12);
+	ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"2A03 Pulse 2\", \"delay_beats\": 1, "
+		"\"instrument\": \"Square\", \"detune\": 1}");
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Where the echo doubles VRC6 Pulse 1's own held notes, ");
+	CHECK(HasEffectAt(Song, 1, 4, EFF_PITCH, 0x80));
+	for (int r = 0; r < 128; ++r)
+		CHECK(!HasEffectAt(Song, 1, r, EFF_PITCH, 0x81));
+
+	// Two pulses on one line, the second two steps sharp (P82): they beat, and the call puts the sharp one in tune there
+	FakeSong Beat;
+	Beat.Info.DirectChanges = true;
+	Beat.ChipPitches = true;
+	PutHeldLine(Beat, 0, 2);
+	PutHeldLine(Beat, 1, 2);
+	for (int b = 0; b < 8; ++b) {
+		Beat.Rows[1][static_cast<size_t>(b * 16)].Effect[0] = EFF_PITCH;
+		Beat.Rows[1][static_cast<size_t>(b * 16)].Param[0] = 0x82;
+	}
+	Json Out = Parse(Run(Beat, "listen", "{\"format\": \"json\"}").Text);
+	const Json *pBeat = ListenFindingOf(Out, "beating");
+	CHECK(pBeat != 0);
+	ToolSet Tools(Beat);
+	CheckFixCalls(Tools, Out, "listen's beating", __LINE__);
+	if (pBeat == 0)
+		return;
+	const bool Called = pBeat->Get("fix") != 0 && pBeat->Get("fix")->IsObject() && TextOf(pBeat->Get("fix"), "tool") == "polish";
+	Check(Called, WriteJson(*pBeat).c_str(), __LINE__);
+	if (!Called)
+		return;
+	const Json FixArgs = *pBeat->Get("fix")->Get("arguments");
+	CHECK_HAS(WriteJson(FixArgs), "\"touches\":[\"unison\"],\"channels\":[2]");
+	// finish_song's listen (the song as it is, heard already) gives it as a line to fix
+	const ToolResult Finish = Run(Beat, "finish_song", "{\"skip\": [\"polish\", \"mix\", \"loop\", \"export\"]}");
+	Check(Contains(Finish.Text, "\n- Heard: Beats against ") && Contains(Finish.Text, "Fix: polish {"), Finish.Text.c_str(), __LINE__);
+	const ToolResult Fixed = Tools.Call("polish", FixArgs);
+	Check(!Fixed.IsError, Fixed.Text.c_str(), __LINE__);
+	CHECK_HAS(Fixed.Text, "in tune (P80) where they double 2A03 Pulse 1's pitch");
+	CHECK(HasEffectAt(Beat, 1, 0, EFF_PITCH, 0x80) && !HasEffectAt(Beat, 1, 16, EFF_PITCH, 0x82));
+	Out = Parse(Run(Beat, "listen", "{\"format\": \"json\"}").Text);
+	CHECK(ListenCount(Out, "beating") == 0);
+	// Nothing detuned left: the touch says so
+	CHECK(Tools.Call("polish", FixArgs).IsError);
+}
+
+// review_arrangement, check_song and measure_mix judge a song as its kind (fix-gen4-review): Hut in a Field and the Odds and
+// Ends Shop (cozy) got "Flat dynamics sound typed", a walking bass and "The melody has no company" from a review called right
+// after what_next said done, though a cozy song is polished as calm (no accents) over a bass that holds, and a small shape
+// has no part for a second line. The kind given, else the one what_next was last given for the track
+void TestKindJudged()
+{
+	FakeSong Song;
+	for (int r = 0; r < 128; r += 8)
+		Song.Put(5, r, r % 16 == 0 ? "E-4" : "G-4", 0, 12);
+	for (int r = 0; r < 128; r += 16) {
+		Song.Put(0, r, "C-3", 2, 8);
+		Song.Put(2, r, "C-2");
+	}
+	std::string Text = Run(Song, "review_arrangement", "{}").Text;
+	CHECK_HAS(Text, "Flat dynamics sound typed");
+	CHECK_HAS(Text, "The bass mostly holds roots");
+	Text = Run(Song, "review_arrangement", "{\"kind\": \"cozy\"}").Text;
+	CHECK_LACKS(Text, "Flat dynamics sound typed");
+	CHECK_LACKS(Text, "The bass mostly holds roots");
+	CHECK_HAS(Text, "Judged as a cozy song, in its style (calm; style changes it).");
+	CHECK(Run(Song, "review_arrangement", "{\"kind\": \"spooky dance\"}").IsError);
+	CHECK(Run(Song, "check_song", "{\"kind\": \"spooky dance\"}").IsError);
+	// A style given wins
+	CHECK_HAS(Run(Song, "review_arrangement", "{\"kind\": \"cozy\", \"style\": \"any\"}").Text, "Flat dynamics sound typed");
+	// what_next's kind, kept for the track
+	CHECK(!Run(Song, "what_next", "{\"kind\": \"cozy\"}").IsError);
+	CHECK_EQ(Song.KeptKind(Song.Info.Track), std::string("cozy"));
+	Text = Run(Song, "review_arrangement", "{}").Text;
+	CHECK_LACKS(Text, "Flat dynamics sound typed");
+	CHECK_HAS(Text, "Judged as a cozy song (the kind what_next was given for this track; kind changes it)");
+	CHECK_HAS(Run(Song, "check_song", "{}").Text, "Judged as a cozy song");
+	CHECK_HAS(Run(Song, "measure_mix", "{\"stems\": false}").Text, "Judged as a cozy song");
+	CHECK(!Run(Song, "measure_mix", "{\"kind\": \"atmospheric\", \"stems\": false}").IsError);
+	CHECK_HAS(Run(Song, "review_arrangement", "{\"kind\": \"lively\"}").Text, "Judged as a lively song");
+	// what_next without a kind (the general recipe by default) keeps the one before
+	CHECK(!Run(Song, "what_next", "{}").IsError);
+	CHECK_EQ(Song.KeptKind(Song.Info.Track), std::string("cozy"));
+
+	// A small shape of a kind's recipe: no "no company"
+	FakeSong Shop;
+	Shop.Info.DirectChanges = true;
+	Shop.Info.TrackName = "Odds and Ends Shop";
+	CHECK(!Run(Shop, "song_shape", "{\"shape\": \"small\"}").IsError);
+	const int Rows = Shop.Info.Frames * Shop.Info.PatternLength;
+	for (int r = 0; r < Rows; r += 8)
+		Shop.Put(5, r, r % 16 == 0 ? "E-4" : "G-4", 0, 12);
+	for (int r = 0; r < Rows; r += 16)
+		Shop.Put(2, r, "C-2");
+	CHECK_HAS(Run(Shop, "review_arrangement", "{}").Text, "The melody has no company");
+	CHECK_LACKS(Run(Shop, "review_arrangement", "{\"kind\": \"cozy\"}").Text, "The melody has no company");
+}
+
 // design_instrument's vibrato is said where the lead plays: a pitch sequence moves the period in steps, which are more cents
 // the higher the note (Guard Tower's gentle lead, said as 20 cents at A-3, was heard 60 either way at E-5)
 void TestVibratoAcrossRegister()
@@ -28649,6 +28774,16 @@ void TestCozyKind()
 		NewSong(Small);
 		FollowWhatNext(Small, "{\"kind\": \"cozy\"}", 60, Finished, __LINE__, true);
 		CHECK(Finished);
+		// A shop: the small shape, one short part that loops, without a part for a second line; the review called after
+		// what_next said done asks none of it (fix-gen4-review: the Odds and Ends Shop got "The melody has no company")
+		FakeSong Shop(1);
+		NewSong(Shop);
+		Shop.Info.TrackName = "Odds and Ends Shop";
+		FollowWhatNext(Shop, "{\"about\": \"a cozy little shop\"}", 60, Finished, __LINE__, true);
+		CHECK(Finished);
+		const std::string ShopReview = Run(Shop, "review_arrangement", "{}").Text;
+		Check(!Contains(ShopReview, "The melody has no company") && !Contains(ShopReview, "Flat dynamics sound typed") &&
+			Contains(ShopReview, "Judged as a cozy song"), ShopReview.c_str(), __LINE__);
 	}
 	// The recipes and the guide
 	FakeSong Song(1);
@@ -29313,6 +29448,8 @@ int main()
 	TestColorRubs();
 	TestIntroNoteIntoLoop();
 	TestEchoInTuneWhereDoubled();
+	TestEchoInTuneWithItsMelody();
+	TestKindJudged();
 	TestVibratoAcrossRegister();
 	TestReviewKeepsItsStyle();
 	TestMinorLeadingTone();

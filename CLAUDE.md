@@ -2475,6 +2475,41 @@ one fits. `TestWhatNextMelodyRoles` walks Night
 Harbor, and `CheckMelodyContrast` checks B's opening and the climax's top in
 `TestWhatNextLoop`'s and the shape walks.
 
+Kinds in the checks, and echoes in tune with their melody (from
+`fix-gen4-review`), from six songs made by following `what_next`: Hut in a
+Field (cozy) and the Odds and Ends Shop (cozy, the small shape) got "Flat
+dynamics sound typed", "The bass mostly holds roots" and "The melody has no
+company" from `review_arrangement` called right after `what_next` said done,
+since the review knew only a style. `review_arrangement`, `check_song` and
+`measure_mix` take `kind` (`KindJudgedProp`, `KindStyled` after `TextureArg`
+in `Tools.cpp`: the kind's `Style` of its row of `KINDS` into the arguments
+where no style is given, atmospheric's as calm's for `measure_mix`, which
+wraps `MeasureMixAs`; a note in the reply says so), and without one the kind
+`what_next` was last given for the track (`SongHost::KeepKind` and
+`KeptKind` in `Song.h`, kept by the song's `SongIdentity` serial and the
+track while the host runs, not in the song; `WhatNextTool` keeps
+`WhatNext::KindToKeep`: a kind asked for or taken from the words or the
+name, never the general recipe by default). `what_next` passes its own kind
+to the review and check_song it runs, so a kind kept before doesn't reach
+them. The review leaves out "The melody has no company" for a song laid out
+as the small shape (`ShortByShape`) when it knows a kind; the accents and
+walking-bass tips were already calm's to leave out. `MakeEcho`'s
+`EchoDoubles` counts the echo's own source too: a held note longer than the
+delay still sounds when its echo comes in at its pitch, so the echo plays
+P80 there (the Hut's echo a beat behind the melody's long notes beat 18
+cents apart in bars 21-29). `listen`'s beating gets a call where one of the
+two parts plays a fine pitch off P80 in its bars (`ListenCallOf`): `polish`
+with the new touch `unison` (`TuneUnisons` after `EchoDoubles`: the
+channel's detuned notes that double another part's pitch, or octaves, for
+half the note or more get P80, the fine pitch back on the next note), and
+`HeardFixDue` (before `FinishListenLines`) makes a medium beating finding
+with a call one of finish_song's Heard lines and `what_next`'s steps
+(`HeardFixes`), as the high ones are, so `what_next` no longer says done
+over it. `TestEchoInTuneWithItsMelody`, `TestKindJudged` and
+`TestWhatNextLoop` (each walk's review without a style says the kind and
+gives a calm-styled kind no accents, walking bass or drums; a cozy shop's
+none of company) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
