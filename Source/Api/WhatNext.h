@@ -109,7 +109,7 @@ private:
 // The kinds of song what_next follows, as get_recipe has them; general when
 // none is given and the track's name doesn't say calm (append only)
 enum next_kind { NEXT_GENERAL, NEXT_CALM, NEXT_LIVELY, NEXT_ACTION, NEXT_COZY, NEXT_MYSTERIOUS, NEXT_ADVENTURE, NEXT_FLOATING,
-	NEXT_KIND_COUNT };
+	NEXT_PLAYFUL, NEXT_FESTIVE, NEXT_BITTERSWEET, NEXT_TENSE, NEXT_KIND_COUNT };
 
 struct NextKind {
 	int Kind;					// next_kind

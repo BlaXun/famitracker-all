@@ -2324,6 +2324,25 @@ set's list must stay under three fifths of the full one. The What next
 panel's kind menu starts at `MENU_KIND` 200. `TestLaterKinds` and
 `TestWhatNextLoop`'s walks cover them.
 
+Playful, festive, bittersweet and tense (from `feat-cozy-kind`, its third
+commit), rows of `KINDS` as the three before: playful (minigames, funny
+characters, a toy shop: major, 128.6 BPM, a lead of kind `lead`, since a
+click pluck's quick notes vanished and the walk swapped its lead, stabs over
+root and fifth, the basic groove light, the general recipe's style, -20),
+festive (a market day, a festival: major, 150 BPM, a bloom lead, stabs, a
+bass in octaves, the basic groove with kit samples, lively's style, the
+stage's shape so its climax lifts, -19), bittersweet (a farewell, a sunset:
+major with the borrowed iv and bVI, 75 BPM, a breath lead, lush chords,
+calm's style, -22; a minor key gets what_next's note and the recipe says why:
+it would be a lament) and tense (sneaking, a guarded place: minor, 100 BPM,
+a stepped lead, stabs over a driving ostinato, the calm groove light, the
+general style, -20; not action, a fight). The review's "doesn't build" tip
+turns into the climax's harmony for every kind in lively's style. The words'
+order on a tie, every kind's (`KIND_WORDS`, its comment): tense, bittersweet,
+festive, mysterious, floating, playful, cozy, adventure; a fight's words
+stay action, and "market day", "the ending" count as pairs (`Pairs`).
+`TestLaterKinds` tests the order.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

@@ -399,6 +399,53 @@ const NextKind KINDS[] = {
 		"held, as if carried",
 		"an echo a beat behind from the first repeat, a second voice in long notes, the arpeggios moved up an octave in B; "
 		"no drums (a soft shaker of hi-hats at most)" },
+	// Minigames, funny characters, a toy shop: major and bouncy, short cheeky phrases, stabs on the offbeats over a
+	// root-and-fifth bass (polish's staccato makes it hop), light drums; the general recipe's style and mix, -20 LUFS
+	{ NEXT_PLAYFUL, "playful", 112.5, 150.0, 128.6, "Playful lead", "lead", "stabs", "root_fifth", "walking", "basic", "soft",
+		"any", -20.0, { "C major", "G major", "F major" }, "silly funny cheeky goofy toy toys minigame minigames", 1, "plain", "light",
+		false, 2, "a playful track", "the tune hopping and cheeky, the stabs and the bass bouncing, the drums light",
+		"a playful lead speaks at once and settles a little under its peak (kind lead), so short, cheeky notes hop "
+		"and none vanishes.",
+		{ "| I | IV | V | I | I | IV | ii | V |", "| IV | I | IV | V | vi | ii | V | V |" }, { 0, 0 },
+		"minigames, funny characters, a toy shop", "bouncy and cheeky: short phrases that hop, a staccato bass, light drums, a "
+		"swing or a 6/8 lilt if it suits",
+		"short cheeky phrases of a bar or two, repeated notes and skips, a rest on a beat now and then, a grace note's hop, "
+		"the answer turning the question around",
+		"the repeat with a cheeky variation (vary_part), a second voice in the B part, a fill where each phrase ends" },
+	// A market, a festival, a holiday town: fast and bright, stabs, a catchy tune (busy, but not too busy for the NES:
+	// check_song's too_busy), fuller drums (the basic groove with kit samples), lively's style, -19 LUFS
+	{ NEXT_FESTIVE, "festive", 130.0, 165.0, 150.0, "Festive lead", "bloom lead", "stabs", "octaves", "walking", "basic", "lively",
+		"lively", -19.0, { "D major", "A major", "G major" }, "festival fair carnival celebration party holiday parade feast", 1,
+		"plain", "", true, 2, "a festive track", "the tune catchy over bright stabs, the drums full, the bass in octaves",
+		"a festive lead blooms in and settles (kind bloom lead), bright enough to lead a crowd.",
+		{ "| I | IV | V | I | I | IV | V | V |", "| IV | V | iii | vi | IV | V | I | V |" }, { 0, 0 },
+		"a market day, a festival, a holiday town", "fast and bright: a catchy tune over bright stabs and full drums",
+		"catchy: a motif of 4-6 notes that comes back in every phrase, two or three rhythms repeated (never a new one each "
+		"bar: too busy for the NES), phrases of 2 or 4 bars",
+		"a harmony in thirds in the repeat, busier drums and a crash, the bass in octaves" },
+	// A farewell, a memorial, a sunset, an ending: major with borrowed minor chords (iv, bVI), slow, a singing tune. Never
+	// plainly minor and gloomy: its keys are major and a minor one gets what_next's note, as the recipe says why
+	{ NEXT_BITTERSWEET, "bittersweet", 70.0, 90.0, 75.0, "Bittersweet lead", "breath", "lush", "roots", "half", "", "calm", "calm",
+		-22.0, { "F major", "C major", "G major" }, "farewell goodbye memorial sunset nostalgic nostalgia", 1, "plain", "", false, 1,
+		"a bittersweet track", "the tune singing over chords that turn minor for a moment (iv, bVI) and come home to major",
+		"a bittersweet lead breathes in and sings (kind breath): long notes that ache a little.",
+		{ "| I | iii | IV | iv | I | vi | bVI | V |", "| vi | IV | iv | I | bVI | IV | iv | V |" }, { 0, 0 },
+		"a farewell, a memorial, a sunset, an ending", "fond and a little sad, never gloomy: a major key whose borrowed minor "
+		"chords (iv, bVI) ache for a moment and come home (a plain minor key turns it into a lament, which isn't this)",
+		"a singing tune: long notes, a sigh (a falling second) at a phrase's end, a leap up of a sixth onto the borrowed "
+		"chord, phrases of two bars ending held",
+		"an echo a beat behind in the repeat, a second voice in long notes, the last chord a major one" },
+	// Sneaking, a guarded place, slow danger: minor, 100 BPM, an ostinato bass (driving), sparse stabs, a tune without big
+	// leaps (grows as calm: by step), soft drums or ticking hats; not action, which is a fight; -20 LUFS
+	{ NEXT_TENSE, "tense", 90.0, 112.5, 100.0, "Tense lead", "stepped lead", "stabs", "driving", "syncopated", "calm", "soft", "any",
+		-20.0, { "E minor", "A minor", "D minor" }, "tension sneak sneaking stealth stealthy guarded prison", -1, "plain", "light",
+		false, 1, "a tense track", "the ostinato under everything, the stabs sparse, the tune close and quiet, the hats ticking",
+		"a tense lead holds, then steps down (kind stepped lead): close, careful notes.",
+		{ 0, 0 }, { "| i | i | VI | V | i | i | iv | V |", "| iv | iv | i | i | VI | VI | V | V |" },
+		"sneaking, a guarded place, danger that is slow", "watchful: an ostinato bass that never stops, sparse stabs, a "
+		"close tune without big leaps, ticking hats; not a fight (that's action)",
+		"close: steps and repeated notes, a semitone's lean, no leap past a fourth, rests where a guard might look up",
+		"the repeat a step higher or with the ostinato doubled, a second voice a third under in long notes" },
 };
 
 }	// namespace

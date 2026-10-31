@@ -498,6 +498,53 @@ const Section SECTIONS[] = {
 		"(set_mixer room hall).\n"
 		"- Soft or no drums: none, or soft hi-hats like a shaker.\n"
 		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -21 LUFS." },
+	{ "playful", "Playful (minigames, funny characters, a toy shop)",
+		"playful minigame minigames game toy toys silly funny clown goofy cheeky circus prank bouncy",
+		"Cheeky and bouncy, a smile in every bar.\n"
+		"- Major (C, G or F); I-IV-V turns, a chromatic step up into V for a wink.\n"
+		"- 112-150 BPM at an even tempo (128.6 is speed 7); a swing (set_swing 56-60) or a 6/8 lilt (set_meter) suits it.\n"
+		"- Short cheeky phrases of a bar or two: repeated notes and skips, a rest on a beat, the answer turning the question "
+		"around.\n"
+		"- A lead that speaks at once and settles a little under its peak (design_instrument kind lead, on a 12.5% or 25% "
+		"pulse): a click pluck that falls low makes quick notes vanish.\n"
+		"- Stabs on the offbeats (chord_style stabs, color plain) over a root-and-fifth bass that hops (polish touches "
+		"staccato).\n"
+		"- Light drums: add_drums groove basic with intensity light, or a woodblock-like noise tick.\n"
+		"- The general recipe's polish (accents) and mix (style soft). export_for_game at -20 LUFS." },
+	{ "festive", "Festive (a market day, a festival, a holiday town)",
+		"festive festival fair carnival celebration party holiday parade feast market",
+		"A crowd in the square: fast, bright, catchy.\n"
+		"- Major (D, A or G); I-IV-V, a IV-V-I that lands on the downbeat of each part.\n"
+		"- 130-165 BPM at an even tempo (150 is speed 6).\n"
+		"- Bright stabs (chord_style stabs) over a bass in octaves; a lead that blooms in (kind bloom lead).\n"
+		"- A catchy tune, busy but not too busy for the NES: a motif of 4-6 notes that comes back in every phrase, two or "
+		"three rhythms repeated (check_song's too_busy hears a line that never settles).\n"
+		"- Fuller drums: add_drums groove basic with kit samples, fills and a crash into each part.\n"
+		"- A harmony in thirds in the repeat. Lively's style: polish, mix and the checks with style lively. export_for_game "
+		"at -19 LUFS." },
+	{ "bittersweet", "Bittersweet (a farewell, a memorial, a sunset, an ending)",
+		"bittersweet farewell goodbye memory memories memorial sunset ending grave parting nostalgia nostalgic",
+		"Fond and a little sad: the sun going down on something that was good. Never plainly minor and gloomy: a minor key "
+		"makes it a lament (the melancholy topic), so it stays major and borrows its sadness:\n"
+		"- A major key (F, C or G major) with borrowed minor chords: iv (F minor in C), bVI (Ab), a I-iv-I at a phrase's end; "
+		"the last chord major. what_next notes a minor key.\n"
+		"- Slow: 70-90 BPM (75 is speed 12 at tempo 150).\n"
+		"- A singing tune: long notes, a sigh (a falling second) at a phrase's end, a leap of a sixth onto the borrowed chord.\n"
+		"- A lead that breathes in and sings (design_instrument kind breath); slow lush chords at arp_frames 3, color plain, "
+		"roots in the bass.\n"
+		"- No drums; an echo a beat behind in the repeat.\n"
+		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -22 LUFS." },
+	{ "tense", "Tense (sneaking, a guarded place, slow danger)",
+		"tense tension sneak sneaking stealth stealthy guard guarded prison lurking watched spy infiltrate hiding",
+		"Danger that is slow: the player sneaks and listens. Not a fight (the action topic):\n"
+		"- Minor (E, A or D minor); i-VI-V, a pedal, a semitone's lean (the flat second) that never quite resolves.\n"
+		"- 90-112 BPM (100 is speed 9 at tempo 150).\n"
+		"- An ostinato bass that never stops (bass_style driving, eighths on the root), sparse stabs over it (chord_style "
+		"stabs).\n"
+		"- A close tune: steps and repeated notes, no leap past a fourth, rests where a guard might look up; a lead that holds "
+		"then steps down (kind stepped lead).\n"
+		"- Soft drums or ticking hats: add_drums groove calm with intensity light.\n"
+		"- polish and mix style soft. export_for_game at -20 LUFS." },
 	{ "action", "Action: battles, bosses and chases (punchy and driving)",
 		"action battle battles boss bosses fight fighting chase combat danger tense tension arena climax escape final",
 		"Fights and chases keep the punch of the classic soundtracks: the melody on top, a backbeat, accents.\n"

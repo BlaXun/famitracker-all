@@ -30206,7 +30206,7 @@ bool WhatNext::TipStep(const std::string &Tip)
 			"review_arrangement: " + Tip);
 	if (Has("The lead presses") && CalmStyle())	// the calm lead's way, which never holds a level
 		return LeadSound("tips", K.LeadKind, K.LeadName, "review_arrangement: " + Tip);
-	if (Has("The song doesn't build") && m_KindId == NEXT_LIVELY)
+	if (Has("The song doesn't build") && (m_KindId == NEXT_LIVELY || std::string(Kind().Style) == "lively"))
 		return Climax(Tip);
 	return false;
 }

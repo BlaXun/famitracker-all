@@ -5474,7 +5474,7 @@ void TestNetwork()
 	}
 	{
 		// get_recipe on the small set: each kind's steps name only the set's own tools (2026-10-24)
-		const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "" };
+		const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "" };
 		for (const char *Kind : KINDS) {
 			HttpRequest Ask = Post(std::string("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_recipe\","
 				"\"arguments\":{") + (*Kind ? std::string("\"kind\":\"") + Kind + "\"" : std::string()) + "}}}");
@@ -17962,7 +17962,7 @@ void TestStepsTaught()
 	CHECK_HAS(ToolSet::CoreInstructions(), "D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -");
 	CHECK_HAS(ToolSet::Instructions(), "not at every bar line");
 	CHECK_HAS(ToolSet::CoreInstructions(), "not at every bar line");
-	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating" };
+	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense" };
 	for (int Core = 0; Core < 2; ++Core)
 		for (int k = 0; k < static_cast<int>(sizeof(KINDS) / sizeof(KINDS[0])); ++k) {
 			Caller Who;
@@ -18457,7 +18457,7 @@ void TestGrowTaught()
 	CHECK(ToolSet::IsCoreTool("grow_melody"));
 	CHECK_HAS(ToolSet::Instructions(), "grow_melody");
 	CHECK_HAS(ToolSet::CoreInstructions(), "grow_melody");
-	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating" };
+	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense" };
 	for (int Core = 0; Core < 2; ++Core)
 		for (int k = 0; k < static_cast<int>(sizeof(KINDS) / sizeof(KINDS[0])); ++k) {
 			Caller Who;
@@ -20303,7 +20303,9 @@ void TestWhatNextLoop()
 	const Kind KINDS[] = { { "{\"kind\": \"lively\"}", "lively", "-20", true }, { "{\"kind\": \"calm\"}", "calm", "-22", false },
 		{ "{\"kind\": \"action\"}", "", "-19", true }, { "{}", "", "-20", true }, { "{\"kind\": \"cozy\"}", "calm", "-20", true },
 		{ "{\"kind\": \"mysterious\"}", "calm", "-21", false }, { "{\"kind\": \"adventure\"}", "lively", "-20", true },
-		{ "{\"kind\": \"floating\"}", "calm", "-21", false } };
+		{ "{\"kind\": \"floating\"}", "calm", "-21", false }, { "{\"kind\": \"playful\"}", "", "-20", true },
+		{ "{\"kind\": \"festive\"}", "lively", "-19", true }, { "{\"kind\": \"bittersweet\"}", "calm", "-22", false },
+		{ "{\"kind\": \"tense\"}", "", "-20", true } };
 	int Reused = 0;
 	for (const Kind &K : KINDS) {
 		FakeSong Song(1);
@@ -20741,7 +20743,7 @@ void TestWhatNextCore()
 	// get_recipe on the small set: the loop, and a worked melody of 8 bars in steps, which write_notes takes as it is
 	const std::string Example = "1: E3 - G3 - C4 - - B3 | 2: A3 - - - E3 - . . | 3: F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | "
 		"5: E3 - G3 - C4 - - E4 | 6: D4 - C4 - A3 - - - | 7: A3 - C4 - B3 - D4 - | 8: C4 - - - - - . .";
-	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "" };
+	const char *const KINDS[] = { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense", "" };
 	FakeSong Song(1);
 	ToolSet Tools(Song);
 	Caller Who;
@@ -23250,7 +23252,7 @@ void TestUnknownArguments()
 	std::vector<std::pair<std::string, std::string> > Texts;
 	Texts.push_back(std::make_pair(std::string("instructions"), ToolSet::Instructions()));
 	Texts.push_back(std::make_pair(std::string("core instructions"), ToolSet::CoreInstructions()));
-	for (const char *Kind : { "", "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating" }) {
+	for (const char *Kind : { "", "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense" }) {
 		Json Asked = Json::MakeObject();
 		if (*Kind)
 			Asked.Set("kind", Kind);
@@ -23259,7 +23261,7 @@ void TestUnknownArguments()
 	}
 	for (size_t p = 0; p < ToolSet::Prompts().size(); ++p) {
 		const PromptInfo &Prompt = ToolSet::Prompts()[p];
-		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating" }) {
+		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense" }) {
 			Json Filled = Json::MakeObject();
 			for (size_t a = 0; a < Prompt.Arguments.size(); ++a) {
 				const std::string &Name = Prompt.Arguments[a].Name;
@@ -23301,7 +23303,7 @@ void TestUnknownArguments()
 		CheckFixCalls(ClickTools, Parse(ClickTools.Call("check_song", Parse("{\"format\": \"json\"}")).Text), "click", __LINE__);
 		FakeSong Empty;
 		ToolSet EmptyTools(Empty);
-		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating" }) {
+		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense" }) {
 			const std::string First = EmptyTools.Call("what_next", Parse(std::string("{\"kind\": \"") + Kind + "\"}")).Text;
 			Check(UnknownInText(EmptyTools, First).empty(), First.c_str(), __LINE__);
 		}
@@ -27411,7 +27413,7 @@ void TestToolReplies()
 		Caller Core;
 		Core.Core = true;
 		Core.Client = true;
-		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating" }) {
+		for (const char *Kind : { "calm", "lively", "cozy", "action", "mysterious", "adventure", "floating", "playful", "festive", "bittersweet", "tense" }) {
 			const std::string Recipe = Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + Kind + "\"}"), Core).Text;
 			CHECK_HAS(Recipe, "When the parts are written: finish_song with kind");
 			CHECK_HAS(Tools.Call("get_recipe", Parse(std::string("{\"kind\": \"") + Kind + "\"}")).Text, "finish_song with kind");
@@ -28270,7 +28272,12 @@ void TestLaterKinds()
 	const Named WORDS[] = { { "the sewers under the town", "mysterious" }, { "a cave full of crystals", "mysterious" },
 		{ "flying the airship over the clouds", "adventure" }, { "waiting for the airship at the dock", "floating" },
 		{ "a hut in a field", "cozy" }, { "a long road through the fields", "adventure" }, { "drifting underwater", "floating" },
-		{ "a frantic run through the caves", "lively" }, { "the boss of the ruins", "action" } };
+		{ "a frantic run through the caves", "lively" }, { "the boss of the ruins", "action" },
+		// The order on a tie, and the kinds of feat-cozy-kind's third commit
+		{ "sneaking past the guards in the ruins", "tense" }, { "a farewell at sunset by the harbor", "bittersweet" },
+		{ "market day in the village", "festive" }, { "a festival in the caves", "festive" }, { "a silly minigame", "playful" },
+		{ "a toy shop", "playful" }, { "a cozy toy shop", "cozy" }, { "a grave in the ruins", "bittersweet" },
+		{ "a quiet prison at night", "tense" }, { "a funny fair", "festive" } };
 	for (const Named &N : WORDS) {
 		const ShapeWords W = ReadShapeWords(N.Words);
 		Check(W.Kind == N.Kind, (std::string(N.Words) + ": " + W.Kind + " (" + W.Why + ")").c_str(), __LINE__);
@@ -28305,6 +28312,11 @@ void TestLaterKinds()
 		CHECK(!Run(Song, "set_key", "{\"key\": \"D dorian\"}").IsError);
 		CHECK_LACKS(Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text, "wants a minor key");
 		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"floating\"}").Text, "A floating song wants a major key");
+		// A bittersweet song stays major (a minor key makes it a lament), a tense one minor
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"bittersweet\"}").Text, "A bittersweet song wants a major key");
+		CHECK(!Run(Song, "set_key", "{\"key\": \"G major\"}").IsError);
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"tense\"}").Text, "A tense song wants a minor key (or dorian)");
+		CHECK_HAS(Run(Song, "get_recipe", "{\"kind\": \"bittersweet\"}").Text, "a plain minor key turns it into a lament");
 	}
 	// Each walked to done on the small set
 	for (int k = NEXT_MYSTERIOUS; k < NEXT_KIND_COUNT; ++k) {

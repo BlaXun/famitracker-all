@@ -447,8 +447,9 @@ const SongShape &ShapeForKind(const std::string &Kind)
 {
 	const std::string Word = Lower(Trimmed(Kind));
 	// (the later kinds: their words' own shape, KIND_WORDS' first)
-	const char *Id = Word == "lively" || Word == "adventure" ? "stage" : Word == "calm" || Word == "mysterious" ||
-		Word == "floating" ? "night" : Word == "action" ? "boss" : "town";	// (cozy: town)
+	const char *Id = Word == "lively" || Word == "adventure" || Word == "festive" ? "stage" : Word == "calm" || Word == "mysterious" ||
+		Word == "floating" || Word == "bittersweet" ? "night" : Word == "action" ? "boss" : Word == "playful" ? "small" :
+		"town";	// (cozy, tense: town)
 	const SongShape *pShape = ShapeById(Id);
 	return pShape != 0 ? *pShape : SongShapes()[0];
 }
@@ -1206,12 +1207,23 @@ struct KindWordRow {
 	const char *Over;		// the shapes whose words it may be over (0: any but a fight's or a jingle's)
 };
 
+// Their order on a tie, documented in CLAUDE.md: tense (sneaking outweighs the place it happens in), bittersweet (a
+// farewell anywhere), festive (a festival in a town), mysterious, floating ("Waiting for the Airship"), cozy ("Hut in a
+// Field"), adventure; playful before cozy ("a toy shop") and after floating
 const KindWordRow KIND_WORDS[] = {
+	{ "tense", "tense", "tense tension sneak sneaks sneaking sneaky stealth stealthy guard guards guarded prison prisons jail "
+		"lurk lurking lurks watched spy spies infiltrate infiltration hiding", 0, 0, "town night", false, 0 },
+	{ "bittersweet", "bittersweet", "bittersweet farewell farewells goodbye goodbyes memory memories memorial sunset sunsets "
+		"endings grave graves parting nostalgia nostalgic", " the ending, an ending, game ending,", 0, "night town", true, 0 },
+	{ "festive", "festive", "festive festival festivals fair fairs fairground celebration celebrations celebrate party parties "
+		"holiday holidays carnival parade feast", " market day,", 0, "stage town", false, 0 },
 	{ "mysterious", "mysterious", "mystery mysteries mysterious mystic cave caves cavern caverns sewer sewers ruin ruins crypt "
 		"crypts catacomb catacombs tomb tombs mine mines eerie hidden secret secrets forgotten labyrinth underground grotto", 0, 0,
 		"night town", true, 0 },
 	{ "floating", "floating", "float floats floating floaty afloat sky skies cloud clouds underwater drift drifting waiting wait "
 		"dock docks pier lagoon dawn", 0, 0, "night town", true, 0 },
+	{ "playful", "playful", "playful minigame minigames game games toy toys silly funny clown clowns goofy cheeky circus prank "
+		"jester", 0, 0, "small town", false, 0 },
 	{ "cozy", "a warm place, cozy", "cozy cosy homey homely warm warmth friendly hut cabin cottage shop store inn tavern bakery cafe "
 		"teahouse house kitchen hearth fireplace indoors indoor granny grandma grandmother grandpa elderly shopkeeper", 0,
 		"shop store inn tavern cafe house", "town small", true, "night town small" },

@@ -544,6 +544,16 @@ work, to reuse its ideas.
   wide tune that leaps upward over a rolling bass and a steady beat.
 - **floating**, for the sky, clouds, underwater or waiting at a dock: major
   (or lydian), a slow pulse, rolling arpeggios, no drums, plenty of echo.
+- **playful**, for minigames, funny characters, a toy shop: major, bouncy,
+  short cheeky phrases, stabs, a hopping bass, light drums.
+- **festive**, for a market day, a festival, a holiday town: fast and
+  bright, stabs, a catchy tune (busy, but not too busy for the NES), full
+  drums.
+- **bittersweet**, for a farewell, a memorial, a sunset, an ending: major
+  with borrowed minor chords (iv, bVI), slow, a singing tune; never plainly
+  minor (a minor key gets a note: it would be a lament).
+- **tense**, for sneaking, a guarded place, slow danger: minor, an ostinato
+  bass, sparse stabs, a close tune, ticking hats. A fight is action.
 
 Each recipe ends with its numbers from the built-in guide (a topic of each
 kind's name), so Claude reads them once instead of looking them up. Without
@@ -554,8 +564,8 @@ which: "Kind: mysterious (from the words hidden, cave). Pass kind
 `song_shape` say the same when their `about` picks a kind, and `what_next`
 without `about` or a kind takes one from the track's name ("The Caves",
 "Flying the airship", "Waiting for the Airship", "Hut in a Field"). On a
-tie the words' kinds go mysterious, floating, cozy, adventure; a fight's
-words stay action.
+tie the words' kinds go tense, bittersweet, festive, mysterious, floating,
+playful, cozy, adventure; a fight's words stay action.
 
 ### Arguments a tool doesn't take
 
