@@ -20314,18 +20314,11 @@ void TestWhatNextLoop()
 		Check(CallIndex(Made, "vary_part") < 0 || (CallIndex(Made, "vary_part") > CallIndex(Made, "add_harmony") &&
 			CallIndex(Made, "vary_part") < CallIndex(Made, "add_echo")), K.Asked, __LINE__);
 		Check((CallIndex(Made, "add_drums") >= 0) == K.Drums, K.Asked, __LINE__);
-		// The chords of a lively stage (and of the general recipe) struck again inside the bar, tresillo in A and half notes in
-		// B, as the soundtrack's stages strike theirs (held once a bar through the song they drone on: chord_drone); a calm
-		// song's held as before
-		{
-			std::string Rhythms;
-			for (size_t i = 0; i < Made.size(); ++i)
-				if (Made[i].compare(0, 20, "add_chords_and_bass ") == 0)
-					Rhythms += Contains(Made[i], "\"rhythm\":\"tresillo\"") ? "t" : Contains(Made[i], "\"rhythm\":\"half\"") ? "h" :
-						Contains(Made[i], "\"rhythm\"") ? "?" : "-";
-			Check(Rhythms == (std::string(K.Asked) == "{\"kind\": \"lively\"}" || std::string(K.Asked) == "{}" ? "th" : "--"),
-				(std::string(K.Asked) + " " + Rhythms).c_str(), __LINE__);
-		}
+		// Every kind's chords held as add_chords_and_bass holds them: a lively stage's struck again on a tresillo (feat-chord-
+		// rests) annoyed the user more, not less (feat-chords-room), so no recipe gives a rhythm
+		for (size_t i = 0; i < Made.size(); ++i)
+			if (Made[i].compare(0, 20, "add_chords_and_bass ") == 0)
+				Check(!Contains(Made[i], "\"rhythm\""), (std::string(K.Asked) + " " + Made[i]).c_str(), __LINE__);
 		// The B part's melody (a boss's climax, on its own chords) grows from the song's own hook (A's first notes, as A's grew
 		// from its motif) where that adds no clash, else from one offered on B's chords
 		std::map<std::string, std::string> Motifs;
@@ -27375,31 +27368,45 @@ void TestToolReplies()
 	}
 }
 
-// Chords that drone on (from feat-chord-rests): held lush chords struck once a bar in every bar, without a rest and near the
-// melody, are found with vary_part's restrike section by section as the fix; a calm track's, a quiet pad's and chords whose
-// rhythm changes with the section aren't
-void DroneSong(FakeSong &Song, int ChordVolume, bool Sections = true)
+// Chords that rub the tune (from feat-chords-room; feat-chord-rests' rule judged their rhythm): lush chords under the whole
+// melody whose arpeggio's notes sit a semitone from its notes much of the time are found, with add_chords_and_bass fitting
+// them (and every bass under them) to the melody again as the fix; chords that hold the melody's notes, a quiet pad's and a
+// calm track's aren't. Rubbing: maj7 chords on Db and Ab under a tune in C (G, A, C, D and E each a semitone from one of
+// their notes); fitting: C, Am, F and G under the same tune
+void DroneSong(FakeSong &Song, int ChordVolume, bool Rubbing = true)
 {
 	Song.Info.DirectChanges = true;
-	Song.AddInstrumentInfo(3, "Lush m7", "2A03", false);
+	Song.AddInstrumentInfo(3, "Lush maj7", "2A03", false);
 	Song.Info.Instruments.back().Volume = { 15, 14, 14, 13, 13, 12, 12, 12, 11, 11, 11, 10, 9, 7, 5, 3, 2, 1, 0 };
 	Song.Info.Instruments.back().VolumeRelease = 11;
-	Song.Info.Instruments.back().Steps.Items = { 0, 0, 3, 3, 7, 7, 10, 10 };
+	Song.Info.Instruments.back().Steps.Items = { 0, 0, 4, 4, 7, 7, 11, 11 };
 	Song.Info.Instruments.back().Steps.Loop = 0;
-	Song.Info.Instruments.back().Arpeggio = { 3, 7, 10 };
-	if (Sections) {
-		Song.Info.Sections.push_back(Section("A", 0, 1));
-		Song.Info.Sections.push_back(Section("B", 2, 3));
-		Song.Info.Sections.push_back(Section("A'", 4, 5));
-	}
-	static const char *const ROOTS[4] = { "C-3", "A-2", "F-2", "G-2" };
+	Song.Info.Instruments.back().Arpeggio = { 4, 7, 11 };
+	Song.AddInstrumentInfo(4, "Lush minor", "2A03", false);
+	Song.Info.Instruments.back().Volume = Song.Info.Instruments[Song.Info.Instruments.size() - 2].Volume;
+	Song.Info.Instruments.back().VolumeRelease = 11;
+	Song.Info.Instruments.back().Steps.Items = { 0, 0, 3, 3, 7, 7, 12, 12 };
+	Song.Info.Instruments.back().Steps.Loop = 0;
+	Song.Info.Instruments.back().Arpeggio = { 3, 7, 12 };
+	Song.AddInstrumentInfo(5, "Lush major", "2A03", false);
+	Song.Info.Instruments.back().Volume = Song.Info.Instruments[Song.Info.Instruments.size() - 2].Volume;
+	Song.Info.Instruments.back().VolumeRelease = 11;
+	Song.Info.Instruments.back().Steps.Items = { 0, 0, 4, 4, 7, 7, 12, 12 };
+	Song.Info.Instruments.back().Steps.Loop = 0;
+	Song.Info.Instruments.back().Arpeggio = { 4, 7, 12 };
+	Song.Info.Sections.push_back(Section("A", 0, 1));
+	Song.Info.Sections.push_back(Section("B", 2, 3));
+	Song.Info.Sections.push_back(Section("A'", 4, 5));
+	static const char *const RUBBING[4] = { "C#3", "G#2", "C#3", "G#2" }, *const FITTING[4] = { "C-3", "A-2", "F-2", "G-2" };
+	static const int FITTING_SOUNDS[4] = { 5, 4, 5, 5 };
 	static const char *const TUNE[8] = { "G-4", "A-4", "C-5", "A-4", "G-4", "E-4", "D-4", "E-4" };
 	const int Bars = static_cast<int>(Song.Rows[0].size()) / 16;
 	for (int Bar = 1; Bar <= Bars; ++Bar) {
 		const int Row = (Bar - 1) * 16;
-		Song.Put(0, Row, ROOTS[(Bar - 1) % 4], Bar == 1 ? 3 : NO_INSTRUMENT, Bar == 1 ? ChordVolume : -1);
-		Song.Put(2, Row, ROOTS[(Bar - 1) % 4], Bar == 1 ? 1 : NO_INSTRUMENT);
-		Song.Put(2, Row + 8, ROOTS[(Bar - 1) % 4]);
+		const char *Root = (Rubbing ? RUBBING : FITTING)[(Bar - 1) % 4];
+		Song.Put(0, Row, Root, Rubbing ? (Bar == 1 ? 3 : NO_INSTRUMENT) : FITTING_SOUNDS[(Bar - 1) % 4], Bar == 1 ? ChordVolume : -1);
+		Song.Put(2, Row, Root, Bar == 1 ? 1 : NO_INSTRUMENT);
+		Song.Put(2, Row + 8, Root);
 		for (int Beat = 0; Beat < 4; ++Beat)
 			if (Beat < 3 || Bar % 2 == 1)
 				Song.Put(5, Row + Beat * 4, TUNE[((Bar - 1) * 4 + Beat) % 8], Bar == 1 && Beat == 0 ? 0 : NO_INSTRUMENT,
@@ -27416,27 +27423,26 @@ void TestChordDrones()
 		FakeSong Song(6);
 		DroneSong(Song, 8);
 		const Json Out = Parse(Run(Song, "check_song", Args).Text);
-		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone", "drones_on");
+		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone", "rubs_the_tune");
 		CHECK_EQ(Found.size(), static_cast<size_t>(1));
 		CHECK_EQ(IntegerOf(Out.Get("counts"), "chord_drone"), 1);
+		Json Fix;
 		if (!Found.empty()) {
 			CHECK_EQ(IntegerOf(Found[0], "channel"), 1);
 			CHECK_EQ(TextOf(Found[0], "severity"), std::string("medium"));
-			CHECK_EQ(IntegerOf(Found[0], "sounding_bars"), 24);
-			CHECK_EQ(IntegerOf(Found[0], "same_rhythm_bars"), 24);
-			CHECK_HAS(TextOf(Found[0], "message"), "Chords that drone on: 2A03 Pulse 1's held chords sound in 24 of the 24 bars, "
-				"24 bars on end without a rest, struck the same way (once a bar, on beat 1) in 24 of the 24 bars");
-			// The fix, section by section: tresillo in the A parts, half notes in B
+			CHECK_EQ(IntegerOf(Found[0], "bars_with_melody"), 24);
+			CHECK_HAS(TextOf(Found[0], "message"), "Chords that drone against the tune: 2A03 Pulse 1's chords play under the "
+				"melody in 24 of its 24 bars");
+			// The fix: the chords and the bass fitted to the melody again, over the bars they play together in
 			const Json *pFix = Found[0]->Get("fix");
-			CHECK(pFix != 0 && TextOf(pFix, "tool") == "vary_part" && TextOf(pFix->Get("arguments"), "variation") == "restrike" &&
-				TextOf(pFix->Get("arguments"), "rhythm") == "tresillo" && IntegerOf(pFix->Get("arguments"), "to_bar") == 8);
-			const Json *pThen = pFix != 0 ? pFix->Get("then") : 0;
-			CHECK(pThen != 0 && pThen->Items().size() == 2);
-			if (pThen != 0 && pThen->Items().size() == 2) {
-				CHECK(TextOf(pThen->Items()[0].Get("arguments"), "rhythm") == "half" &&
-					IntegerOf(pThen->Items()[0].Get("arguments"), "from_bar") == 9);
-				CHECK(TextOf(pThen->Items()[1].Get("arguments"), "rhythm") == "tresillo" &&
-					IntegerOf(pThen->Items()[1].Get("arguments"), "to_bar") == 24);
+			CHECK(pFix != 0 && TextOf(pFix, "tool") == "add_chords_and_bass");
+			if (pFix != 0) {
+				const Json *pArgs = pFix->Get("arguments");
+				CHECK(TextOf(pArgs, "chord_channel") == "2A03 Pulse 1" && TextOf(pArgs, "chord_style") == "lush" &&
+					TextOf(pArgs, "melody_channel") == "VRC6 Pulse 1" && IntegerOf(pArgs, "from_bar") == 1 &&
+					IntegerOf(pArgs, "to_bar") == 24 && pArgs->Get("chords") == 0);
+				CHECK(pFix->Get("then") == 0);	// one bass
+				Fix = *pFix;
 			}
 		}
 		ProblemList List;
@@ -27446,44 +27452,38 @@ void TestChordDrones()
 		CHECK_EQ(std::string(ProblemKindId(PROBLEM_CHORD_DRONE)), std::string("chord_drone"));
 		CHECK_EQ(ProblemSeverity(PROBLEM_CHORD_DRONE), 2);
 		// The review weighs it in, and what_next gives its fix as a step
-		CHECK_HAS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "Chords that drone on");
+		CHECK_HAS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "drone against the tune");
 		CHECK_HAS(Run(Song, "what_next", "{\"all\": true, \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
-			"vary_part {\"channel\":\"2A03 Pulse 1\",\"variation\":\"restrike\",\"rhythm\":\"tresillo\"");
-		// Struck again on the rhythms, softer off beat 1 (tresillo at 8: 8, 6 and 7; half notes: 8 and 7), each bar's first
-		// chord at its own volume again: the chords move with the song
-		CHECK_HAS(Run(Song, "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"restrike\", \"rhythm\": \"tresillo\", "
-			"\"from_bar\": 1, \"to_bar\": 8}").Text, "struck again on the tresillo rhythm");
-		Run(Song, "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"restrike\", \"rhythm\": \"half\", \"from_bar\": 9, "
-			"\"to_bar\": 16}");
-		const std::vector<Cell> &P = Song.Rows[0];
-		CHECK(P[6].HasNote() && P[6].Volume == 6 && P[12].HasNote() && P[12].Volume == 7 && P[16].Volume == 8 && P[22].Volume == 6);
-		CHECK(P[6].Pitch() == P[0].Pitch() && P[12].Instrument == NO_INSTRUMENT);
-		CHECK(P[8 * 16].Volume == 8 && P[8 * 16 + 8].HasNote() && P[8 * 16 + 8].Volume == 7 && !P[8 * 16 + 6].HasNote());
-		CHECK(!P[16 * 16 + 6].HasNote() && P[16 * 16].Volume == 8);	// bars 17-24 as they were
-		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").empty());
-		// restrike's rhythm is its own; a part with nothing held past a hit has nothing to strike again
-		CHECK_HAS(Run(Song, "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"simplify\", \"rhythm\": \"half\", "
-			"\"from_bar\": 1, \"to_bar\": 4}").Text, "rhythm is restrike's");
-		CHECK_HAS(Run(Song, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"restrike\", \"rhythm\": \"half\", "
-			"\"from_bar\": 1, \"to_bar\": 4}").Text, "restrike a note held past a hit of its rhythm");
+			"add_chords_and_bass {\"chord_channel\":\"2A03 Pulse 1\",\"melody_channel\":\"VRC6 Pulse 1\",\"chord_style\":\"lush\"");
+		// Made, it leaves chords that hold the melody's notes
+		if (Fix.Get("arguments") != 0) {
+			const ToolResult Made = Run(Song, "add_chords_and_bass", WriteJson(*Fix.Get("arguments")));
+			CHECK(!Made.IsError);
+			CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").empty());
+		}
 	}
-	// Without sections: tresillo over the first half, half notes over the rest
-	{
-		FakeSong Song(6);
-		DroneSong(Song, 8, false);
-		const Json Out = Parse(Run(Song, "check_song", Args).Text);
-		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone");
-		CHECK_EQ(Found.size(), static_cast<size_t>(1));
-		const Json *pFix = Found.empty() ? 0 : Found[0]->Get("fix");
-		CHECK(pFix != 0 && IntegerOf(pFix->Get("arguments"), "to_bar") == 12 && pFix->Get("then") != 0 &&
-			pFix->Get("then")->Items().size() == 1);
-	}
-	// A calm track's pad holds by design; a quiet pad well under the melody; chords that change their rhythm in B
+	// A second bass in those bars is fitted after
 	{
 		FakeSong Song(6);
 		DroneSong(Song, 8);
-		CHECK(FindingsOf(Parse(Run(Song, "check_song", "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\", \"style\": "
-			"\"calm\"}").Text), "chord_drone").empty());
+		for (int Bar = 17; Bar <= 24; ++Bar)
+			Song.Put(7, (Bar - 1) * 16, Bar % 2 == 1 ? "C#2" : "G#1", Bar == 17 ? 1 : NO_INSTRUMENT);
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		const Json *pThen = Found.empty() || Found[0]->Get("fix") == 0 ? 0 : Found[0]->Get("fix")->Get("then");
+		CHECK(pThen != 0 && pThen->Items().size() == 1);
+		if (pThen != 0 && pThen->Items().size() == 1) {
+			const Json *pArgs = pThen->Items()[0].Get("arguments");
+			CHECK(TextOf(pArgs, "chord_channel") == "none" && TextOf(pArgs, "bass_channel") == "VRC6 Sawtooth" &&
+				IntegerOf(pArgs, "from_bar") == 17 && IntegerOf(pArgs, "to_bar") == 24);
+		}
+	}
+	// Chords that hold the melody's notes, a quiet pad well under the melody and a calm track's aren't
+	{
+		FakeSong Song(6);
+		DroneSong(Song, 8, false);
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").empty());
 	}
 	{
 		FakeSong Song(6);
@@ -27493,9 +27493,50 @@ void TestChordDrones()
 	{
 		FakeSong Song(6);
 		DroneSong(Song, 8);
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\", \"style\": "
+			"\"calm\"}").Text), "chord_drone").empty());
+	}
+	// write_notes warns as it writes a melody that the chords rub all through, with the fix (and not over chords that hold
+	// its notes)
+	for (int Rubbing = 0; Rubbing < 2; ++Rubbing) {
+		FakeSong Song(6);
+		DroneSong(Song, 8, Rubbing == 1);
+		const std::string Written = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 1, \"notes\": \"G4 - A4 - C5 - A4 - | G4 - E4 - "
+			"D4 - . .\"}").Text;
+		if (Rubbing == 1) {
+			CHECK_HAS(Written, "2A03 Pulse 1's chords rub a semitone against the melody");
+			CHECK_HAS(Written, "Fix: add_chords_and_bass {\"chord_channel\":\"2A03 Pulse 1\"");
+		}
+		else
+			CHECK_LACKS(Written, "against the melody");
+	}
+	// vary_part's restrike (feat-chord-rests' fix, kept as a variation): held notes struck again on a rhythm, softer off
+	// beat 1 (tresillo at 8: 8, 6 and 7; half notes: 8 and 7), each bar's first chord at its own volume again
+	{
+		FakeSong Song(6);
+		DroneSong(Song, 8);
+		CHECK_HAS(Run(Song, "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"restrike\", \"rhythm\": \"tresillo\", "
+			"\"from_bar\": 1, \"to_bar\": 8}").Text, "struck again on the tresillo rhythm");
+		Run(Song, "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"restrike\", \"rhythm\": \"half\", \"from_bar\": 9, "
+			"\"to_bar\": 16}");
+		const std::vector<Cell> &P = Song.Rows[0];
+		CHECK(P[6].HasNote() && P[6].Volume == 6 && P[12].HasNote() && P[12].Volume == 7 && P[16].Volume == 8 && P[22].Volume == 6);
+		CHECK(P[6].Pitch() == P[0].Pitch() && P[12].Instrument == NO_INSTRUMENT);
+		CHECK(P[8 * 16].Volume == 8 && P[8 * 16 + 8].HasNote() && P[8 * 16 + 8].Volume == 7 && !P[8 * 16 + 6].HasNote());
+		CHECK(!P[16 * 16 + 6].HasNote() && P[16 * 16].Volume == 8);	// bars 17-24 as they were
+		// The rhythm was never what the ear minded: the restruck chords rub the tune as before
+		CHECK_EQ(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").size(), static_cast<size_t>(1));
+		// restrike's rhythm is its own; a part with nothing held past a hit has nothing to strike again
+		CHECK_HAS(Run(Song, "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"simplify\", \"rhythm\": \"half\", "
+			"\"from_bar\": 1, \"to_bar\": 4}").Text, "rhythm is restrike's");
+		CHECK_HAS(Run(Song, "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"restrike\", \"rhythm\": \"half\", "
+			"\"from_bar\": 1, \"to_bar\": 4}").Text, "restrike a note held past a hit of its rhythm");
+	}
+	{
+		FakeSong Song(6);
+		DroneSong(Song, 8);
 		Run(Song, "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"restrike\", \"section\": \"B\"}");
 		CHECK(Song.Rows[0][8 * 16 + 6].HasNote() && Song.Rows[0][8 * 16 + 6].Volume == 6);	// tresillo by default
-		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").empty());
 	}
 }
 

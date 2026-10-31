@@ -45,7 +45,7 @@ struct Timing;	// Music.h
 // clashes of severity low (from feat-clash-fix): a passing note against a chord's tone, a tone of a chord's arpeggio.
 // TOO_BUSY (from feat-busy-check): a part too busy for the NES, a line that never settles into a rhythm. CLIMAX (from
 // feat-tool-replies): a section named as the high point whose melody repeats an earlier one's. CHORD_DRONE (from
-// feat-chord-rests): held chords that drone on, struck the same way in every bar without a rest
+// feat-chord-rests, its rule from feat-chords-room): chords that rub the melody a semitone all through the song
 enum problem_kind {
 	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_HEARD, PROBLEM_RANGE, PROBLEM_HEARD_LOOK, PROBLEM_SILENT,
 	PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD, PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,

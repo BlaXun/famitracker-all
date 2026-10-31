@@ -846,20 +846,20 @@ JSON as `fix`.
   of its length note for note in nearly every bar, whatever the other parts
   add. Fix: `vary_part` with `octave_up` on the melody there while its top
   stays low enough, else advice: give the climax a higher phrase of its own.
-- **Chords that drone on** (`chord_drone`): held chords (a looping
-  arpeggio instrument or `0xy` on half the notes or more, two notes a bar
-  or fewer) that sound in 90% of the bars or more, three quarters of them
-  on end without a rest of a beat, struck the same way in 90% of the bars
-  they strike in, within 6 dB of the melody, on a track that isn't calm (a
-  night song's pad holds by design). Fix: `vary_part` with `restrike` and a
-  `rhythm`, section by section: `tresillo` in the A parts, `half` in the
-  others, the intro and a break left held. A local model's lively stage
-  struck its lush chords once a bar, every bar, for 40 bars at one volume,
-  and the user found them annoying; the lush parts of the 43 songs the user
-  keeps sound in every bar too, but play their most common bar rhythm in
-  at most 59% of their bars (08 Verdant Run: whole notes in the intro, a
-  tresillo at volumes 6, 4 and 5 in A, half notes in B). `what_next`'s
-  lively recipe now strikes its lush chords that way.
+- **Chords that rub the tune** (`chord_drone`): a chord part (a looping
+  arpeggio instrument or `0xy` on half the notes or more) that plays in
+  three quarters of the melody's bars or more (16 at least), within 6 dB
+  of the melody, and whose notes (the root and what its arpeggio adds) sit
+  a semitone from the melody's note, in any octave, 30% of the time they
+  sound together or more, on a track that isn't calm. Fix:
+  `add_chords_and_bass` over those bars without `chords`, so the chords
+  (and the bass) are fitted to the melody again, under its lowest note. A
+  local model's lively stage put lush chords on Pulse 1 under the whole
+  tune, and the user found that Pulse 1 irritating, distracting from the
+  real track (struck again on a tresillo, no better); its arpeggio's add9
+  and maj7 rubbed the melody 40% of the time, where the 43 songs the user
+  keeps rub at most 21% (most 6-17%), though their chord parts play as
+  often, as loud and as high against the melody.
 
 `review_arrangement` weighs them into its score (a melody in pieces most)
 and lists them among its tips, most first. Its breath check counts a rest
@@ -970,7 +970,7 @@ and `findings`, heard worst first as in the text. Each finding has:
 - `kind` (as in `counts`) and `severity`: `high` for notes that vanish,
   clicks and clashes (`low` for a clash that's a detail), `medium` out of range, for a held lead, a melody in
   pieces, the bass, a sound its channel can't play, a part too busy
-  for the NES and chords that drone on, `low` for the rest;
+  for the NES and chords that rub the tune, `low` for the rest;
 - `channel` (numbered from 1, as the tools take them; `null` for a silent
   bar) and `channel_name`;
 - where it starts: `frame` and `row` (from 0, as the pattern editor shows

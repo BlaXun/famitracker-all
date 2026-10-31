@@ -2118,38 +2118,40 @@ written, and a client's `export_for_game` of a song not listened to as it
 is ends with a line pointing to it (`ExportListenHint`).
 `TestToolReplies` and `TestNoiseAndFlats` (`step_notes_tests`) cover them.
 
-Chords that drone on (from `feat-chord-rests`): a local model's lively VRC6
-stage (Ironworks) followed what_next's lively recipe, whose lush chords on
-the 2A03's Pulse 1 struck once a bar, every bar, at one volume, for all 40
-bars; the user found that Pulse 1 annoying. Measured on the 43 kept songs,
-their lush parts sound in every bar too, without a rest, with the same
-envelope and as high against the melody (tops 10-19 semitones over its low
-notes, Ironworks' 4); what they do and it doesn't is strike their held
-chords again inside the bar, softer, in rhythms that change with the
-section (08 Verdant Run: whole notes in the intro, tresillo at 6, 4 and 5
-in A, half notes in B): their most common bar rhythm covers 0.53-0.59 of
-their bars, Ironworks' all 40. `DroneFindings` (with `ArrangeFindings`,
-`ARRANGE_DRONE`, `ChordRunOf` measuring with `Hearing`) is check_song's
-`chord_drone` (severity medium, after `too_busy` in `CHECK_KIND`;
-`PROBLEM_CHORD_DRONE` and the panel's `WORDS` appended): a held chord part
-(a looping arpeggio instrument or `0xy` on half its notes, `DRONE_ATTACKS`
-notes a bar or fewer) sounding in `DRONE_SOUNDING` of the bars,
-`DRONE_RUN` of them without a rest of a beat, one bar rhythm in
-`DRONE_SAME` of them, within `DRONE_UNDER_DB` of the melody, 16 bars or
-more, not calm (the night songs' pads hold: City's Deep night 0.86). Its
-fix is `vary_part`'s new `restrike` with `rhythm` (`ChordRhythmRows` and
-`HitSofter` in `Arrange.cpp`, as chord parts strike) section by section
-(`DroneFix`: tresillo in A and a climax, half in the others, free sections
-held; without sections the halves), each a call of the fix's `then`.
-GreenValleySunrise (flagged as chaos) gets it too (0.92). what_next's
-lively and general kinds give `add_chords_and_bass` `rhythm` tresillo in A
-and half in B (`NextKind::ChordRhythm`, `OtherRhythm`); calm's calls are
-unchanged. The room logic (`ChordPartOptions::Ceiling`) wasn't what let
-Ironworks' D-4 into the melody: what_next writes A's chords before there's
-a melody, and the kept songs reach as high. `song_file_checks` checks
-`too_busy` and `chord_drone` on keep/ and flag/. `TestChordDrones` and
-`TestWhatNextLoop` (the rhythms, and no `chord_drone` after a walk) cover
-it.
+Chords that rub the tune (from `feat-chords-room`, after `feat-chord-rests`):
+a local model's lively VRC6 stage (Ironworks) followed what_next's lively
+recipe, lush chords on the 2A03's Pulse 1 in every bar. The user found that
+Pulse 1 annoying; `feat-chord-rests` took it for the rhythm (struck once a
+bar, every bar) and had it struck again on a tresillo (Ironworks2), which the
+user found worse: "super annoying ... it distracts from the real track",
+fine in the intro and for bar 5's first six rows. Measured on the 43 kept
+songs' chord parts (looping arpeggio instruments or `0xy`), presence with
+the melody (Skylight, Lanternbrook, Verdant Run, Applefall, Mirage Bazaar
+all 1.00), level (1.3-6.0 dB under it; Ironworks 3.5-4.2), register (their
+tops over the melody's note as often or more), speed (2-3 frames a note)
+and chip don't tell Ironworks apart. What does is how often an arpeggio
+note sits a semitone (or a major seventh or minor ninth) from the melody's
+note while both sound: Ironworks 0.40, Ironworks2 0.42, the kept songs at
+most 0.21 (Mirage Bazaar), most 0.06-0.17; bar 5's sixth row is where the
+melody's Eb meets the arpeggio's add9 D. `DroneFindings` (with
+`ArrangeFindings`, `ARRANGE_DRONE`; `ChordRubOf` measures with `Hearing`,
+`PlaysChordPart` picks the parts) is still check_song's `chord_drone`
+(severity medium, problem `rubs_the_tune`; `PROBLEM_CHORD_DRONE`, the
+panel's `WORDS` say "chord part rubbing the tune"): a chord part sounding in
+`DRONE_WITH` of the melody's bars (`DRONE_BARS` at least), within
+`DRONE_UNDER_DB` of it, rubbing it `DRONE_RUB` (0.30) of the time, not calm.
+Its fix (`DroneFix`) is `add_chords_and_bass` over those bars without
+`chords`, so the chords and the bass are fitted to the melody again under
+its lowest note, then the same for a second bass there (Ironworks'
+triangle in the climax); on Ironworks2 that left 0.15. `write_notes` warns
+with the same rule and fix when the part written is the melody or the chord
+part (`WritingWarnings`). The rhythm went: what_next gives no kind a
+`rhythm` (`NextKind::ChordRhythm` is gone), the style guide and recipes no
+longer ask for tresillo, and `vary_part`'s `restrike` stays as a variation
+only. `song_file_checks` checks `too_busy` and `chord_drone` on keep/ and
+flag/ (none on the kept songs, both Ironworks flagged with a what_next
+step); `TestChordDrones` and `TestWhatNextLoop` (no `rhythm` in a walk's
+calls, no `chord_drone` after it) cover it.
 
 ## What this repository is
 

@@ -125,8 +125,6 @@ struct NextKind {
 	const char *Style;			// check_song's, review_arrangement's and polish's: "calm", "lively" or "any"
 	double Loudness;			// export_for_game's, in LUFS
 	const char *Keys[3];		// a new song's key, one of these (by its name)
-	const char *ChordRhythm;	// add_chords_and_bass's rhythm for the chords of the A part and of the others (B); "" for
-	const char *OtherRhythm;	// its default (held chords struck once a bar)
 };
 
 const NextKind &NextKindInfo(int Kind);

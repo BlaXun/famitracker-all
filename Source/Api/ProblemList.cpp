@@ -37,7 +37,7 @@ const char *const KIND_TITLES[PROBLEM_KINDS] = {
 	"Notes that vanish", "Notes that click", "Clashes", "Warbles", "Heard when it plays", "Out of range", "Heard: worth a look",
 	"Silent bars", "Busy bars", "Outside the key", "Leads that hold steady", "A melody in one-bar pieces", "A thin or doubled bass",
 	"Sounds the channel can't play", "Faders doing the mix", "Repeats that copy", "A short loop", "An intro that jumps", "Heard: details, maybe meant",
-	"Clashes: details, maybe meant", "Too busy for the NES", "A climax that repeats", "Chords that drone on"
+	"Clashes: details, maybe meant", "Too busy for the NES", "A climax that repeats", "Chords that rub the tune"
 };
 const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1, 1, 2, 2, 2 };
 
