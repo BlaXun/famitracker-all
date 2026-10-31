@@ -1308,6 +1308,9 @@
     <ClCompile Include="Source\Api\Tools.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\CoreSet.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\WhatNext.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>

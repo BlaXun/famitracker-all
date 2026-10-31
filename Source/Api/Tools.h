@@ -160,6 +160,18 @@ public:
 	// The small set of tools for local models (/mcp/core): the composing essentials
 	static const std::vector<std::string> &CoreTools();
 	static bool IsCoreTool(const std::string &Name);
+	// A core tool as the small set lists it (CoreSet.cpp): its own short description and arguments' texts, the arguments no
+	// call on the small set uses left out; the full set's texts stay as they are
+	static ToolInfo CoreInfo(const ToolInfo &Full);
+	static bool HasCoreText(const std::string &Name);	// whether CoreSet.cpp has the tool's texts
+	// Whether Text names one of the tools Others (a name with an underscore anywhere; transpose, effects, references or undo
+	// where they read as a call)
+	static bool NamesOtherTool(const std::string &Text, const std::vector<std::string> &Others);
+	// A reply to a caller of the small set with Others (the tools it lacks) taken out: an alternative ("X or Y") or a bracket
+	// naming one goes, else its sentence, and a line left saying nothing
+	static std::string CoreReply(const std::string &Text, const std::vector<std::string> &Others);
+	// The full set's tools that aren't in the small set
+	std::vector<std::string> OtherTools() const;
 
 	// For the client: how to use the tools, and how to write music that doesn't sound plain
 	static std::string Instructions();
@@ -173,6 +185,7 @@ public:
 	static bool PromptText(const std::string &Name, const Json &Arguments, std::string &Text, std::string &Error);
 
 private:
+	ToolResult CallTool(const std::string &Name, const Json &Arguments, const Caller &Who);
 	// After a call, so undo says what it undoes and a call that failed leaves nothing of its own to undo: the change a
 	// call made gets its label (SongHost::LabelUndo), what a call that failed had changed is taken back
 	void AfterCall(const std::string &Name, const Json &Args, long long UndoBefore, ToolResult &Result, const Caller &Who);

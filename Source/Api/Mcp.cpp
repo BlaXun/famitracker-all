@@ -259,16 +259,18 @@ Json ToolsJson(const ToolSet &Tools, const Endpoint &E)
 {
 	Json List = Json::MakeArray();
 	for (size_t i = 0; i < Tools.List().size(); ++i) {
-		const ToolInfo &Info = Tools.List()[i];
-		if (E.Core && !ToolSet::IsCoreTool(Info.Name))
+		if (E.Core && !ToolSet::IsCoreTool(Tools.List()[i].Name))
 			continue;
+		// The small set's own short texts (CoreSet.cpp)
+		const ToolInfo Info = E.Core ? ToolSet::CoreInfo(Tools.List()[i]) : Tools.List()[i];
 		Json Tool = Json::MakeObject();
 		Tool.Set("name", Info.Name);
 		Tool.Set("title", Info.Title);
 		Tool.Set("description", Info.Description);
 		Tool.Set("inputSchema", Info.InputSchema);
 		Json Hints = Json::MakeObject();
-		Hints.Set("title", Info.Title);
+		if (!E.Core)	// the small set leaves out the title said twice
+			Hints.Set("title", Info.Title);
 		Hints.Set("readOnlyHint", Info.ReadOnly);
 		Hints.Set("destructiveHint", Info.Destructive);
 		Hints.Set("idempotentHint", Info.Idempotent);

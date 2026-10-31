@@ -28424,10 +28424,8 @@ bool WhatNext::Step(const NextStep &N)
 {
 	if (!Wanted(N.Id) || !Looking())
 		return false;
-	if (m_Core && !N.Tool.empty() && !ToolSet::IsCoreTool(N.Tool)) {
-		m_Notes.push_back(N.Why + " (" + N.Tool + " does it, which this small set doesn't have)");
+	if (m_Core && !N.Tool.empty() && !ToolSet::IsCoreTool(N.Tool))	// a step the small set can't take: not even named
 		return false;
-	}
 	m_Steps.push_back(N);
 	return true;
 }
@@ -30598,6 +30596,13 @@ std::string WhatNext::Reply()
 	}
 	const Json Again = AgainArgs();
 	std::string Text;
+	if (m_Steps.empty() && m_Core) {
+		// On the small set, a reply that ends the loop: no call to make again and again (a local model played the song on
+		// every ask), nothing left over named
+		return Format("Next (%s, done): nothing left to do. Save and stop.\nWhy: every step of the %s recipe is done%s. Tell "
+			"the user it's finished and ask what they'd change.", K.Name, K.Name, m_Music ? "" : m_Use == TRACK_CUE ?
+			" for a cue (it plays once)" : " for a sound effect");
+	}
 	if (m_Steps.empty()) {
 		const NextStep End = DoneStep();
 		Text = Format("Next (%s, done): ", K.Name) + NextCallText(End) + "\nWhy: " + End.Why;
@@ -33225,7 +33230,26 @@ void ToolSet::AfterLog(const std::string &Name, const Json &Args, ToolResult &Re
 			Unread == 1 ? "a new note" : Format("%d new notes", Unread).c_str(), Unread == 1 ? "it" : "them");
 }
 
+// A call on the small set names only its tools (CoreReply), but in JSON, which programs read
 ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const Caller &Who)
+{
+	ToolResult Result = CallTool(Name, Arguments, Who);
+	if (Who.Core && !Result.Text.empty() && Result.Text[0] != '{' && Result.Text[0] != '[' && !(Arguments.IsObject() &&
+		StringArg(Arguments, "format") == "json"))
+		Result.Text = CoreReply(Result.Text, OtherTools());
+	return Result;
+}
+
+std::vector<std::string> ToolSet::OtherTools() const
+{
+	std::vector<std::string> Others;
+	for (size_t i = 0; i < m_Tools.size(); ++i)
+		if (!IsCoreTool(m_Tools[i].Name))
+			Others.push_back(m_Tools[i].Name);
+	return Others;
+}
+
+ToolResult ToolSet::CallTool(const std::string &Name, const Json &Arguments, const Caller &Who)
 {
 	ToolResult Result;
 	const Json Args = Arguments.IsObject() ? Arguments : Json::MakeObject();
@@ -33535,7 +33559,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
 		"finish_song", "get_recipe", "explain", "listen", "write_log", "read_user_notes", "create_backup", "list_backups",
-		"restore_backup" };
+		"restore_backup", "new_song", "open_song", "set_expansion" };
 	static const std::vector<std::string> CORE(NAMES, NAMES + sizeof(NAMES) / sizeof(NAMES[0]));
 	return CORE;
 }
@@ -33552,6 +33576,8 @@ std::string ToolSet::CoreInstructions()
 		"These tools work on the song open in the user's FamiTracker: NES music on the 2A03 (pulses, triangle, noise, "
 		"DPCM), sometimes with an expansion chip. Bars and beats count from 1. Notes are written C-4, C#4, Db4 with "
 		"FamiTracker's octaves: C-3 is middle C, A-3 is 440 Hz.\n"
+		"No song yet: new_song with a name (and expansion, like \"VRC6\"); open_song reopens one; set_expansion switches "
+		"chips.\n"
 		"Work in a loop: get_song, then what_next (with kind calm, lively or action when the user's words say which, and skip "
 		"for what they don't want, like [\"drums\"]; describe the map in about). It answers with the one next step: a tool, its arguments ready to send, "
 		"and why. Make that call, then ask what_next again, until it says done. Its melody steps offer a hook to start from: "
@@ -33592,10 +33618,8 @@ std::string ToolSet::CoreInstructions()
 		"a click several times a second. The tools nudge such notes a few cents (Pxx); check_song lists any left, polish "
 		"with touches [\"clicks\"] nudges them.\n"
 		"- Only FamiTracker 0.4.6's effects play: no Lxx, Mxy, Oxx or Txy. The triangle is loud and can't fade.\n"
-		"Without direct changes, each change arrives as a clip the user plays and places (what_next asks for them "
-		"first).\n"
-		"This is the small set (/mcp/core; /mcp has every tool): skip steps naming tools it lacks, or tell the "
-		"user.";
+		"Without direct changes, each change arrives as a clip for the user to place.\n"
+		"This is the small set (/mcp/core); /mcp has every tool.";
 }
 
 std::string ToolSet::Instructions()
@@ -34109,8 +34133,9 @@ static std::string RecipeTool(const Json &Args, bool Core)
 	const std::string Kind = pKind != 0 && pKind->IsString() ? Lowercase(Trim(pKind->String())) : std::string();
 	if (!Kind.empty() && Kind != "calm" && Kind != "lively" && Kind != "action" && Kind != "general")
 		throw Problem("kind should be calm, lively or action (or leave it out to see how to choose).");
-	if (Core)
-		return CoreRecipe(Kind);
+	if (Core)	// a new song first: the small set has new_song and set_expansion
+		return "Start: get_song; with no song open, or for another one, new_song with a name (and expansion for the chips).\n" +
+			CoreRecipe(Kind);
 	const Json *pIdea = Args.Get("idea");
 	const std::string Idea = pIdea != 0 && pIdea->IsString() && !Trim(pIdea->String()).empty() ? Trim(pIdea->String()) :
 		std::string("the song the user asked for");

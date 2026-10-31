@@ -76,7 +76,7 @@ own addresses, which `ListNetworkAddresses` in `McpSocket.cpp` reads with
 `GetAdaptersAddresses`), and each request carries its client's address
 (`HttpRequest::Peer`, empty for this computer). `HandleMcp` checks the peer
 again, accepts this PC's addresses and name in the Host header
-(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 43 tools of
+(`NamesThisComputer`) and routes `/mcp`, `/mcp/core` (the 46 tools of
 `ToolSet::CoreTools` with the short `ToolSet::CoreInstructions` and no
 prompts, for local models), `GET /files/<name>` (the OGG files next to the
 song, `SongHost::ReadExport`) and `PUT /inbox/<name>` (like the `send_file`
@@ -1027,7 +1027,8 @@ or a grown melody's clashes before it's given. `export_for_game` writes `FAMITRA
 (`SoundPrint`) and `FAMITRACKER_LOUDNESS` into each OGG's comments
 (`ReadOggComments` in `Ogg.cpp` reads them back). The small set
 (`CoreTools`) is `what_next` and every tool its steps call and `explain`, 38 (with `song_shape` and `listen`; 40 with
-the agent log's `write_log` and `read_user_notes`; 43 with the backups' three), not
+the agent log's `write_log` and `read_user_notes`; 43 with the backups' three; 46 with
+`new_song`, `open_song` and `set_expansion`), not
 `set_mixer`; `CoreInstructions` and `CoreRecipe` are built around the loop,
 the recipe with a worked melody of 8 bars in steps (First song's, from
 `res/examples`). `TestWhatNextLoop` follows it from an empty song to done
@@ -2259,6 +2260,38 @@ repeat (two repeats embellished alike, `RepeatFindings`), and listen's
 vibrato fix reaches the last note the `4xy` stays on (`ListenCallOf`), the
 two walks `next` failed after `feat-color-rubs` met `feat-shape-variations`.
 `TestChordDrones` covers it.
+
+The small set as a local model sees it (from `fix-core-set`): a model on
+`/mcp/core` couldn't start a song ("Unknown tool: new_song"), its replies named
+tools it hasn't got (add_counter_melody, transpose, set_pan), its tools/list
+was 27,148 tokens (cl100k, as the gen3 runs measured it) and what_next gave
+`play {}` again and again once done. `CoreTools` has `new_song`, `open_song`
+and `set_expansion` (46), and `CoreInstructions` and `RecipeTool`'s core
+prefix say to start with `new_song`. `Source/Api/CoreSet.cpp` holds the small
+set's own texts: `ToolSet::CoreInfo` gives a core tool its short description
+(`CoreTexts`) and its arguments' (the tool's own, else `SHARED`'s, else the
+full text's first sentence; `""` keeps an argument without one, `0` leaves it
+out of the schema: only arguments no call written on the small set uses,
+which `FollowWhatNext` checks for every walk on core and
+`TestUnknownArguments` for the texts, `UnknownInText` with `Core`), and
+`ToolsJson` (`Mcp.cpp`, also without the annotations' second title) and
+`AssistantFunctions` (the Ask panel's small set) list it; 13,850 tokens
+for 46 tools now, the full set's list byte for byte as before. A new core
+tool needs its texts there (`HasCoreText`, `TestCoreSet`). `ToolSet::Call`
+passes a reply to a `Caller::Core` (not JSON, not `format` json) through
+`CoreReply` with `OtherTools()`: an alternative naming a tool outside the
+set ("X (...) or Y", ", or X") or a bracket with one goes, else its sentence,
+and a line left saying nothing (`SaysNothing`: "Note:"); a name with an
+underscore counts anywhere, transpose too, effects, references and undo only
+where they read as a call (`FindMention`). `WhatNext::Step` leaves a step
+of a tool outside the set unnamed, and `Reply` on core ends the loop with
+"Next (kind, done): nothing left to do. Save and stop." and a why, no call,
+no Left or notes (the full set still gives `play {}`; its JSON is the
+panel's on both). grow_melody's versions stay as they are (about 700 tokens
+a grow and pick). `TestCoreSet` (each kind walked on core to that reply,
+every reply and the core list scanned for other tools, the list at most half
+the full texts of its tools and under 48,000 characters, `CoreReply` on the
+gen3 texts) covers it.
 
 ## What this repository is
 

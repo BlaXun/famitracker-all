@@ -106,8 +106,9 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 43 of them:
-`what_next`, the tools its steps call, `explain`, the agent log's two and the backups' three. Reading and writing: `get_song`,
+clear step better than a list of eight tips. `/mcp/core` serves 46 of them:
+`what_next`, the tools its steps call, `explain`, the agent log's two and the backups' three. Starting: `new_song`,
+`open_song` and `set_expansion` (a song and its chips). Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
 `find_sound`, `reference_sound`, `set_instrument`; parts:
@@ -135,7 +136,14 @@ gives the recipes for calm, lively and action songs instead: the loop, the
 plan it follows in this set's tools, and a worked melody of 8 bars in
 steps over its chords. Its `check_song` and `review_arrangement` answer in
 a few lines unless a `format` is asked for (see [Short replies](#short-replies)),
-so a long reply doesn't push the song out of a small context. Tick **A small set of
+so a long reply doesn't push the song out of a small context. Its tools have
+short descriptions of their own (the full set's stay at `/mcp`), and a few
+arguments no step there uses are left out of them: its list is about 14,000
+tokens, half of what the full set's texts of the same tools were. Its replies
+name only its own tools: a tip or a note naming another tool (a counter-melody,
+`transpose`) comes without it, or not at all. Once the song is done,
+`what_next` says "nothing left to do. Save and stop." and gives no call.
+Tick **A small set of
 tools, for local models** in the dialog and its addresses end in
 `/mcp/core`. Both sets are always there; each client picks one by its
 address.
@@ -291,7 +299,7 @@ saved: `save_song` first (with `name` for a song that was never saved), or
 ask the person. The song that was open stays in its file as it was last
 saved; its Ctrl+Z history goes with it.
 
-From a phone (Hermes on `/mcp`: neither tool is in the small set), the
+From a phone (Hermes on `/mcp`, or `/mcp/core`, which has both), the
 whole round is:
 
 - "Start a new song called Town": `new_song` with `name` "Town" (and
@@ -388,7 +396,7 @@ Start `llama-server` with `--jinja`: that's what lets the model call tools
 answers from the song's summary alone, without reading or changing the song.
 Give it room. Measured as the panel sends them, all of FamiTracker's tools
 and their instructions are 170 KB, about 45,000 tokens (3.5-4 bytes a token),
-and the small set 94 KB, about 25,000: give the model a context of 64K tokens
+and the small set about 50 KB, about 15,000: give the model a context of 64K tokens
 or more for all of them (`-c 65536`, better `-c 131072`) and 32K or more for the
 small set. The panel learns the real count from the server's first reply.
 `--host 0.0.0.0` lets this PC reach a server on another computer. For example,
@@ -423,7 +431,7 @@ http, as on your home network). Leave **Model** empty for `llama-server`.
 - **Key**: only if the server wants one (`llama-server --api-key`); it's
   kept encrypted for your Windows account (DPAPI), never as plain text.
 - **Tools**: all of them (the default, for big models with a big context)
-  or the small set (`/mcp/core`'s 43, with its short instructions and short
+  or the small set (`/mcp/core`'s 46, with its short instructions and short
   replies) for smaller models, or a context under 64K.
 - **Context**: 0 takes what `llama-server` reports (`/props`); give a number
   for a server that doesn't say. Older tool replies are shortened, then

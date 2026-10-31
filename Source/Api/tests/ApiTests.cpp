@@ -5415,9 +5415,9 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 43);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
+	CHECK(Core.size() >= 15 && Core.size() <= 46);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
 	// song_shape and 37 with explain (2026-10-26), 40 with the agent log's two, 43 with the backups' three (2026-10-31)
-	CHECK_EQ(Core.size(), 43u);
+	CHECK_EQ(Core.size(), 46u);	// 46 with new_song, open_song and set_expansion (fix-core-set)
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -19114,7 +19114,8 @@ void TestShortReplies()
 	Core.Core = true;
 	CHECK_EQ(Tools.Call("review_arrangement", Parse(LIVELY + "}"), Core).Text, Short);
 	CHECK_EQ(Tools.Call("check_song", Parse(LIVELY + "}"), Core).Text, CheckShort);
-	CHECK_EQ(Tools.Call("review_arrangement", Parse(LIVELY + ", \"format\": \"text\"}"), Core).Text, Full);
+	CHECK_EQ(Tools.Call("review_arrangement", Parse(LIVELY + ", \"format\": \"text\"}"), Core).Text,
+		ToolSet::CoreReply(Full, Tools.OtherTools()));	// without the tools the small set lacks (fix-core-set)
 	CHECK_EQ(Tools.Call("check_song", Parse("{\"style\": \"lively\", \"format\": \"json\"}"), Core).Text,
 		Run(Song, "check_song", "{\"style\": \"lively\", \"format\": \"json\"}").Text);
 	CHECK_EQ(Tools.Call("review_arrangement", Parse(LIVELY + "}")).Text, Full);	// the full set: the full reply
@@ -20177,7 +20178,7 @@ std::string DoneAndLeft(const std::string &Text)
 // with its tools), and every answer must move on from the ones before, its count of steps done never falling. The calls
 // made, a line each
 std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked, int Most, bool &Finished, int Line,
-	bool Core = false, const char *StopAt = 0)
+	bool Core = false, const char *StopAt = 0, std::vector<std::string> *pReplies = 0)
 {
 	ToolSet Tools(Song);
 	Caller Who;
@@ -20196,6 +20197,8 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 		const WhatNextAnswer N = ReadWhatNext(Next.Text);
 		if (Show)
 			std::printf("--- %s\n", Next.Text.c_str());
+		if (pReplies != 0)
+			pReplies->push_back(Next.Text);
 		const int DoneNow = StepsDoneOf(N.Line);
 		Check(DoneNow < 0 || DoneNow >= DoneBefore, (Asked + ": the steps done fall, after " + (Made.empty() ? std::string("none") :
 			Made.back()) + "\nbefore:" + DoneAndLeft(Before) + "\nnow:" + DoneAndLeft(Next.Text)).c_str(), Line);
@@ -20209,8 +20212,18 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 		}
 		if (N.AskUser || N.Tool.empty() || (StopAt != 0 && N.Tool == StopAt))
 			break;
-		if (Core)
+		if (Core) {
 			Check(ToolSet::IsCoreTool(N.Tool), ("a tool of the small set: " + N.Tool).c_str(), Line);
+			// Every argument it gives is in the small set's schema of the tool (CoreSet.cpp leaves some out)
+			for (size_t t = 0; t < Tools.List().size(); ++t)
+				if (Tools.List()[t].Name == N.Tool) {
+					const ToolInfo Short = ToolSet::CoreInfo(Tools.List()[t]);
+					const Json *pOwn = Short.InputSchema.Get("properties");
+					for (size_t a = 0; a < N.Arguments.Members().size(); ++a)
+						Check(pOwn != 0 && pOwn->Get(N.Arguments.Members()[a].first) != 0, (N.Tool + "'s " +
+							N.Arguments.Members()[a].first + " on the small set").c_str(), Line);
+				}
+		}
 		const std::string Call = N.Tool + " " + WriteJson(N.Arguments);
 		const bool New = Seen.insert(Call).second;
 		Check(New, ("moves on from " + Call).c_str(), Line);
@@ -20219,6 +20232,8 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 		ToolResult Did = Tools.Call(N.Tool, N.Arguments, Who);
 		if (Show)
 			std::printf("=== %s\n", Did.Text.substr(0, 400).c_str());
+		if (pReplies != 0)
+			pReplies->push_back(Did.Text);
 		Check(!Did.IsError, ("the call works: " + Call + " -> " + Did.Text).c_str(), Line);
 		Made.push_back(Call);
 		// grow_melody shows its versions: the model picks one (here the first) with the same arguments
@@ -20228,6 +20243,8 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 			Did = Tools.Call(N.Tool, Picked, Who);
 			if (Show)
 				std::printf("=== %s\n", Did.Text.substr(0, 400).c_str());
+			if (pReplies != 0)
+				pReplies->push_back(Did.Text);
 			Check(!Did.IsError, ("the pick works: " + Did.Text).c_str(), Line);
 			Made.push_back(N.Tool + " " + WriteJson(Picked));
 		}
@@ -20771,6 +20788,150 @@ void TestWhatNextCore()
 	CHECK(!Core.Call("grow_melody", Picked, Who).IsError);
 	const WhatNextAnswer After = ReadWhatNext(Core.Call("what_next", Parse("{}"), Who).Text);
 	CHECK(After.Tool != "grow_melody" || TextOf(&After.Arguments, "section") != "A");
+}
+
+// The tools the small set lacks that a text names (fix-core-set): a name with an underscore anywhere, transpose
+// anywhere, effects, references and undo where they read as a call; empty when it names none
+std::vector<std::string> OtherToolsIn(const ToolSet &Tools, const std::string &Text)
+{
+	auto InWord = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+	std::vector<std::string> Out;
+	for (size_t t = 0; t < Tools.List().size(); ++t) {
+		const std::string &Name = Tools.List()[t].Name;
+		if (ToolSet::IsCoreTool(Name))
+			continue;
+		for (size_t At = Text.find(Name); At != std::string::npos; At = Text.find(Name, At + 1)) {
+			const size_t End = At + Name.size();
+			if ((At > 0 && InWord(Text[At - 1])) || (End < Text.size() && InWord(Text[End])))
+				continue;
+			if (Name.find('_') != std::string::npos || Name == "transpose" || Text.compare(End, 2, " {") == 0 ||
+				Text.compare(End, 6, " with ") == 0) {
+				const size_t From = At < 60 ? 0 : At - 60;
+				Out.push_back(Name + " in \"..." + Text.substr(From, 120) + "...\"");
+				break;
+			}
+		}
+	}
+	return Out;
+}
+
+// The small set (/mcp/core) for a local model (fix-core-set, 31 October 2026): a song started there (new_song,
+// set_expansion and open_song are in it), the tools listed with short texts of their own (half the 27k tokens of the
+// full set's texts), the full set's list as it was, no reply naming a tool it lacks, and what_next ending its loop with a
+// reply that names no call ("Next (lively, done): nothing left to do. Save and stop.") where it gave play {} every time
+void TestCoreSet()
+{
+	CHECK(ToolSet::IsCoreTool("new_song") && ToolSet::IsCoreTool("open_song") && ToolSet::IsCoreTool("set_expansion"));
+	CHECK_HAS(ToolSet::CoreInstructions(), "new_song with a name");
+	FakeSong Song(1);
+	ToolSet Tools(Song);
+	for (size_t i = 0; i < ToolSet::CoreTools().size(); ++i)
+		Check(ToolSet::HasCoreText(ToolSet::CoreTools()[i]), (ToolSet::CoreTools()[i] + ": short texts").c_str(), __LINE__);
+
+	// The lists: the full set's as the tools give them, the small set's its own short texts, at most half the full set's
+	// text that the small set's tools had (100,416 characters, 27,148 tokens on 31 October 2026, before)
+	McpConfig Config;
+	Config.Port = 46600;
+	Config.Token = "secret";
+	const Json Full = Body(HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"), Config, Tools));
+	HttpRequest AskCore = Post("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+	AskCore.Target = "/mcp/core";
+	const Json Small = Body(HandleMcp(AskCore, Config, Tools));
+	const Json *pFull = Full.Get("result")->Get("tools"), *pSmall = Small.Get("result")->Get("tools");
+	CHECK(pFull->Size() == Tools.List().size() && pSmall->Size() == ToolSet::CoreTools().size());
+	size_t LongText = 0;
+	for (size_t i = 0; i < pFull->Size(); ++i) {
+		const ToolInfo &Info = Tools.List()[i];
+		CHECK(pFull->At(i).Get("description")->String() == Info.Description && *pFull->At(i).Get("inputSchema") == Info.InputSchema);
+		if (ToolSet::IsCoreTool(Info.Name))
+			LongText += WriteJson(pFull->At(i)).size();
+	}
+	const std::string SmallText = WriteJson(*pSmall);
+	const std::string Dump = Environment("FAMITRACKER_DUMP_TOOLS");	// a folder to write both lists into, to measure them
+	if (!Dump.empty()) {
+		std::ofstream(Dump + "/full.json", std::ios::binary) << WriteJson(*pFull);
+		std::ofstream(Dump + "/core.json", std::ios::binary) << SmallText;
+	}
+	Check(SmallText.size() * 2 <= LongText, (std::to_string(SmallText.size()) + " of " + std::to_string(LongText)).c_str(), __LINE__);
+	Check(SmallText.size() < 48000, std::to_string(SmallText.size()).c_str(), __LINE__);	// about 12k tokens, chars/4
+	for (size_t i = 0; i < pSmall->Size(); ++i) {
+		const std::string Tool = WriteJson(pSmall->At(i));
+		const std::vector<std::string> Named = OtherToolsIn(Tools, Tool);
+		Check(Named.empty(), (Named.empty() ? Tool : Named[0]).c_str(), __LINE__);
+		// Each argument left in is the full set's, with the same type and choices
+		const std::string Name = pSmall->At(i).Get("name")->String();
+		const Json *pOwn = pSmall->At(i).Get("inputSchema")->Get("properties");
+		for (size_t t = 0; t < Tools.List().size(); ++t)
+			if (Tools.List()[t].Name == Name) {
+				const Json *pAll = Tools.List()[t].InputSchema.Get("properties");
+				for (size_t a = 0; pOwn != 0 && a < pOwn->Members().size(); ++a) {
+					const Json *pWas = pAll->Get(pOwn->Members()[a].first);
+					Check(pWas != 0 && pWas->Get("type") != 0 && *pWas->Get("type") == *pOwn->Members()[a].second.Get("type") &&
+						(pWas->Get("enum") == 0 || *pWas->Get("enum") == *pOwn->Members()[a].second.Get("enum")),
+						(Name + "'s " + pOwn->Members()[a].first).c_str(), __LINE__);
+				}
+				const Json *pNeeded = Tools.List()[t].InputSchema.Get("required");
+				for (size_t r = 0; pNeeded != 0 && r < pNeeded->Size(); ++r)
+					Check(pOwn != 0 && pOwn->Get(pNeeded->At(r).String()) != 0, (Name + " keeps " + pNeeded->At(r).String()).c_str(),
+						__LINE__);
+			}
+	}
+
+	// The filter: an alternative or a bracket naming a tool the set lacks goes, else its sentence, and a line left empty
+	const std::vector<std::string> Others = Tools.OtherTools();
+	CHECK(ToolSet::CoreReply("1. The melody has no company (add_counter_melody).", Others) == "1. The melody has no company.");
+	CHECK(ToolSet::CoreReply("Note: review_arrangement: The melody has no company: add_counter_melody (a line of its own) or "
+		"add_harmony (thirds under it) on a channel adds depth; add_echo makes it spacious.", Others) == "Note: "
+		"review_arrangement: The melody has no company: add_harmony (thirds under it) on a channel adds depth; add_echo makes it "
+		"spacious.");
+	CHECK(ToolSet::CoreReply("Stereo: every part in the middle (set_pan, or write_notes' pan, moves parts left or right).",
+		Others) == "Stereo: every part in the middle.");
+	CHECK(ToolSet::CoreReply("Width: an echo on the other side (add_echo with pan \"opposite\", or set_pan), chord voices apart.",
+		Others) == "Width: an echo on the other side (add_echo with pan \"opposite\"), chord voices apart.");
+	CHECK(ToolSet::CoreReply("It plays very low: an octave up (transpose). Then check_song.", Others) ==
+		"It plays very low: an octave up. Then check_song.");
+	CHECK(ToolSet::CoreReply("Done.\nNote: make_jingle writes one. Ask the user.\nNote: look_at_song shows it.\nEnd", Others) ==
+		"Done.\nNote: Ask the user.\nEnd");
+	const std::string Plain = "More effect columns show for the effects on 2A03 Pulse 1 (2).\n\nThe references stay.";
+	CHECK(ToolSet::CoreReply(Plain, Others) == Plain);
+
+	// Each kind from an empty song on the small set: every reply names only its tools, and the loop ends with the reply
+	// that names no call
+	for (const char *Kind : { "{\"kind\": \"lively\"}", "{\"kind\": \"calm\"}", "{\"kind\": \"action\"}", "{}" }) {
+		FakeSong Walk(1);
+		NewSong(Walk);
+		bool Finished = false;
+		std::vector<std::string> Replies;
+		const std::vector<std::string> Made = FollowWhatNext(Walk, Kind, 70, Finished, __LINE__, true, 0, &Replies);
+		Check(Finished && !Replies.empty(), Kind, __LINE__);
+		ToolSet After(Walk);
+		Caller Who;
+		Who.Core = true;
+		for (const char *Asked : { "get_song", "review_arrangement", "check_song", "check_loop", "listen", "what_next" })
+			Replies.push_back(After.Call(Asked, Parse(Asked == std::string("what_next") ? Kind : "{}"), Who).Text);
+		for (size_t r = 0; r < Replies.size(); ++r) {
+			const std::vector<std::string> Named = OtherToolsIn(Tools, Replies[r]);
+			Check(Named.empty(), (std::string(Kind) + ": " + (Named.empty() ? std::string() : Named[0])).c_str(), __LINE__);
+		}
+		const std::string &Last = Replies.back();
+		Check(Contains(Last, ", done): nothing left to do. Save and stop.\nWhy: every step of the "), Last.c_str(), __LINE__);
+		Check(!Contains(Last, "play {") && !Contains(Last, "\nLeft: ") && !Contains(Last, "\nNote: ") && !Contains(Last, "\nThen "),
+			Last.c_str(), __LINE__);
+		// The full set still ends with play, for a client that plays it to the user
+		const std::string FullReply = After.Call("what_next", Parse(Kind)).Text;
+		Check(!Contains(FullReply, ", done): ") || Contains(FullReply, ", done): play {}"), FullReply.c_str(), __LINE__);
+	}
+
+	// A song started on the small set: new_song (with its chip), then the loop
+	FakeSong Fresh(1);
+	ToolSet Start(Fresh);
+	Caller Client;
+	Client.Core = Client.Client = true;
+	const ToolResult Made = Start.Call("new_song", Parse("{\"name\": \"Harbor at night\", \"expansion\": \"VRC6\"}"), Client);
+	Check(!Made.IsError, Made.Text.c_str(), __LINE__);
+	CHECK(OtherToolsIn(Tools, Made.Text).empty());
+	CHECK(!Start.Call("set_expansion", Parse("{\"chip\": \"VRC6 Plus\"}"), Client).IsError);
+	CHECK_HAS(Start.Call("what_next", Parse("{\"kind\": \"calm\"}"), Client).Text, "Next (calm, ");
 }
 
 // what_next on a draft like a local model's first stage (DraftSong: clean on the older checks, but its melody in one-bar
@@ -23093,7 +23254,8 @@ void TestCalmRecipeLeads()
 // Every argument a text gives a tool that the tool doesn't take (ToolSet::UnknownArguments): in a call written as JSON,
 // "add_echo {\"channel\": 2, ...}", or named after the tool's name, "set_tempo with bpm 75" (a word that's an argument of
 // some tool), so the recipes, the instructions and the replies never teach a call the tools refuse
-std::vector<std::string> UnknownInText(const ToolSet &Tools, const std::string &Text)
+// (Core: against the small set's schemas, CoreSet.cpp, which leave some arguments out)
+std::vector<std::string> UnknownInText(const ToolSet &Tools, const std::string &Text, bool Core = false)
 {
 	std::set<std::string> Every;
 	for (size_t t = 0; t < Tools.List().size(); ++t) {
@@ -23105,7 +23267,8 @@ std::vector<std::string> UnknownInText(const ToolSet &Tools, const std::string &
 	std::vector<std::string> Out;
 	for (size_t t = 0; t < Tools.List().size(); ++t) {
 		const std::string &Name = Tools.List()[t].Name;
-		const Json *pProperties = Tools.List()[t].InputSchema.Get("properties");
+		const Json Schema = Core ? ToolSet::CoreInfo(Tools.List()[t]).InputSchema : Tools.List()[t].InputSchema;
+		const Json *pProperties = Schema.Get("properties");
 		for (size_t At = Text.find(Name); At != std::string::npos; At = Text.find(Name, At + 1)) {
 			const size_t End = At + Name.size();
 			if ((At > 0 && InWord(Text[At - 1])) || (End < Text.size() && InWord(Text[End])))
@@ -23131,7 +23294,11 @@ std::vector<std::string> UnknownInText(const ToolSet &Tools, const std::string &
 						break;
 				}
 				Json Call;
-				if (Close < Text.size() && ParseJson(Text.substr(End + 1, Close - End), Call) && !Tools.UnknownArguments(Name, Call).empty())
+				bool Refused = Close < Text.size() && ParseJson(Text.substr(End + 1, Close - End), Call) &&
+					!Tools.UnknownArguments(Name, Call).empty();
+				for (size_t a = 0; Core && Call.IsObject() && a < Call.Members().size(); ++a)
+					Refused = Refused || pProperties == 0 || pProperties->Get(Call.Members()[a].first) == 0;
+				if (Refused)
 					Out.push_back(Name + " " + Text.substr(End + 1, Close - End));
 			}
 			if (Text.compare(End, 6, " with ") == 0) {
@@ -23256,8 +23423,20 @@ void TestUnknownArguments()
 	}
 	for (size_t t = 0; t < Tools.List().size(); ++t)
 		Texts.push_back(std::make_pair(Tools.List()[t].Name + "'s description", Tools.List()[t].Description));
+	// The small set's own texts, against its own schemas (fix-core-set)
+	for (size_t t = 0; t < Tools.List().size(); ++t)
+		if (ToolSet::IsCoreTool(Tools.List()[t].Name)) {
+			const ToolInfo Short = ToolSet::CoreInfo(Tools.List()[t]);
+			std::string Text = Short.Description;
+			const Json *pProperties = Short.InputSchema.Get("properties");
+			for (size_t p = 0; pProperties != 0 && p < pProperties->Members().size(); ++p)
+				if (pProperties->Members()[p].second.Get("description") != 0)
+					Text += "\n" + pProperties->Members()[p].second.Get("description")->String();
+			Texts.push_back(std::make_pair("core " + Short.Name, Text));
+		}
 	for (size_t t = 0; t < Texts.size(); ++t) {
-		const std::vector<std::string> Bad = UnknownInText(Tools, Texts[t].second);
+		const bool OnCore = Texts[t].first.compare(0, 5, "core ") == 0;
+		const std::vector<std::string> Bad = UnknownInText(Tools, Texts[t].second, OnCore);
 		std::string Listed;
 		for (size_t b = 0; b < Bad.size(); ++b)
 			Listed += (b == 0 ? "" : "; ") + Bad[b];
@@ -24238,6 +24417,11 @@ void CheckNextJson(FakeSong &Song, const std::string &Asked, const std::string &
 		return;
 	const Json J = Parse(Data.Text);
 	const WhatNextAnswer T = ReadWhatNext(Text);
+	if (Core && T.Done) {	// the small set's text ends the loop without a call; its JSON stays the panel's (fix-core-set)
+		Check(J.Get("done") != 0 && J.Get("done")->Bool() && Contains(Text, "nothing left to do. Save and stop."), Text.c_str(), Line);
+		Ids.insert("done");
+		return;
+	}
 	const Json *pStep = J.Get("step");
 	Check(pStep != 0 && pStep->IsObject() && J.Get("steps") != 0 && J.Get("steps")->Size() == 1, Data.Text.c_str(), Line);
 	if (pStep == 0 || !pStep->IsObject())
@@ -25412,8 +25596,16 @@ void TestAssistantFunctions()
 			*pFunction->Get("parameters") == pTool->InputSchema && pTool->InputSchema.Get("type")->String() == "object",
 			("the function of " + Name).c_str(), __LINE__);
 	}
-	for (size_t i = 0; i < Small.Size(); ++i)
-		CHECK(ToolSet::IsCoreTool(Small.At(i).Get("function")->Get("name")->String()));
+	for (size_t i = 0; i < Small.Size(); ++i) {
+		const std::string Name = Small.At(i).Get("function")->Get("name")->String();
+		CHECK(ToolSet::IsCoreTool(Name));
+		// The small set's own short texts, as /mcp/core lists them (fix-core-set)
+		for (size_t t = 0; t < Tools.List().size(); ++t)
+			if (Tools.List()[t].Name == Name)
+				Check(Small.At(i).Get("function")->Get("description")->String() == ToolSet::CoreInfo(Tools.List()[t]).Description &&
+					*Small.At(i).Get("function")->Get("parameters") == ToolSet::CoreInfo(Tools.List()[t]).InputSchema, Name.c_str(),
+					__LINE__);
+	}
 
 	const std::string Full = AssistantSystemPrompt(false, true), Short = AssistantSystemPrompt(true, true),
 		Bare = AssistantSystemPrompt(false, false);
@@ -26585,7 +26777,8 @@ void TestNewSongs()
 	Song.Info.DirectChanges = true;
 	Song.Put(0, 0, "C-4", 0);
 	ToolSet Tools(Song);
-	CHECK(Tools.Has("new_song") && Tools.Has("open_song") && !ToolSet::IsCoreTool("new_song") && !ToolSet::IsCoreTool("open_song"));
+	// In the small set too since fix-core-set: a local model couldn't start a song there ("Unknown tool: new_song")
+	CHECK(Tools.Has("new_song") && Tools.Has("open_song") && ToolSet::IsCoreTool("new_song") && ToolSet::IsCoreTool("open_song"));
 
 	// Never over changes that aren't saved, nor while a dialog is open, nor with arguments it can't take: nothing changes
 	Song.Info.Modified = true;
@@ -28276,6 +28469,7 @@ int main()
 	TestWhatNextStates();
 	TestWhatNextChoices();
 	TestWhatNextCore();
+	TestCoreSet();
 	TestWhatNextDraft();
 	TestWritingWarnings();
 	TestFinishSong();

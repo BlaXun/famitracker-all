@@ -120,6 +120,7 @@ add_library(ftapi STATIC
 	References.cpp
 	StyleGuide.cpp
 	Tools.cpp
+	CoreSet.cpp
 	WhatNext.cpp
 	NextSteps.cpp
 	Listen.cpp

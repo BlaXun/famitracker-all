@@ -534,9 +534,9 @@ Json AssistantFunctions(const std::vector<ToolInfo> &Tools, bool SmallSet)
 {
 	Json List = Json::MakeArray();
 	for (size_t i = 0; i < Tools.size(); ++i) {
-		const ToolInfo &Tool = Tools[i];
-		if (AssistantLeavesOut(Tool.Name) || (SmallSet && !ToolSet::IsCoreTool(Tool.Name)))
+		if (AssistantLeavesOut(Tools[i].Name) || (SmallSet && !ToolSet::IsCoreTool(Tools[i].Name)))
 			continue;
+		const ToolInfo Tool = SmallSet ? ToolSet::CoreInfo(Tools[i]) : Tools[i];	// the small set's short texts
 		Json Function = Json::MakeObject();
 		Function.Set("name", Tool.Name);
 		Function.Set("description", Tool.Description);
