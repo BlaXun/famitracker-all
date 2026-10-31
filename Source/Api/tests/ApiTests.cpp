@@ -4342,7 +4342,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato, clicks or clashes");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes or colors");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -20320,6 +20320,18 @@ void TestWhatNextLoop()
 		for (size_t i = 0; i < Made.size(); ++i)
 			if (Made[i].compare(0, 20, "add_chords_and_bass ") == 0)
 				Check(!Contains(Made[i], "\"rhythm\""), (std::string(K.Asked) + " " + Made[i]).c_str(), __LINE__);
+		// A lively stage's chords plain before the melody (feat-color-rubs), their colors given once it's there, before the
+		// harmony: rich colors written first rubbed Ironworks2's tune
+		if (std::string(K.Style) == "lively") {
+			int Colors = -1;
+			for (size_t i = 0; i < Made.size(); ++i) {
+				if (Made[i].compare(0, 20, "add_chords_and_bass ") == 0 && !Contains(Made[i], "\"melody_channel\""))
+					Check(Contains(Made[i], "\"color\":\"plain\""), Made[i].c_str(), __LINE__);
+				if (Made[i].compare(0, 7, "polish ") == 0 && Contains(Made[i], "\"colors\":\"add\""))
+					Colors = static_cast<int>(i);
+			}
+			Check(Colors > CallIndex(Made, "grow_melody") && Colors < CallIndex(Made, "add_harmony"), K.Asked, __LINE__);
+		}
 		// The B part's melody (a boss's climax, on its own chords) grows from the song's own hook (A's first notes, as A's grew
 		// from its motif) where that adds no clash, else from one offered on B's chords
 		std::map<std::string, std::string> Motifs;
@@ -20449,9 +20461,15 @@ void TestWhatNextStates()
 		CHECK(A.Tool == "add_drums" && WriteJson(A.Arguments) == "{\"groove\":\"basic\",\"from_bar\":5,\"to_bar\":36,\"kit\":\"samples\"}");
 		CHECK_HAS(A.Text, "Done: tempo 128.6 BPM, key ");
 		CHECK_HAS(A.Text, "the form (4 parts, 32 bars), ");
-		// Skipped: the next step after it
-		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"drums\"]}").Tool == "add_harmony");
+		// Skipped: the next step after it, the chords' colors (written plain before the melody), then a harmony
+		const WhatNextAnswer Colors = AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"drums\"]}");
+		CHECK(Colors.Tool == "polish");
+		CHECK_HAS(Colors.Text, "The chords were written plain, before the melody");
+		CHECK_HAS(WriteJson(Colors.Arguments), "\"touches\":[\"colors\"],\"colors\":\"add\"");
+		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"drums\", \"colors\"]}").Tool == "add_harmony");
 		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
+		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool == "polish");
+		CHECK(!Run(Song, Colors.Tool.c_str(), WriteJson(Colors.Arguments)).IsError);
 		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool == "add_harmony");
 	}
 	// Notes that click: one polish nudges them all
@@ -27438,6 +27456,143 @@ void DroneSong(FakeSong &Song, int ChordVolume, bool Rubbing = true)
 	}
 }
 
+// A lively song whose lush chords on 2A03 Pulse 1 (C, F, G, Am in C major, a bar each over 24 bars) hold the melody's
+// notes in their triads but rub it with their colors (Colored) or are plain (Colored false): Cmaj7's B under the melody's
+// C, Fmaj7's E under its F, G7's F over its E, Am(add9)'s B under its C
+void ColorSong(FakeSong &Song, bool Colored)
+{
+	Song.Info.DirectChanges = true;
+	auto Lush = [&](int Index, const char *Name, const std::vector<int> &Above) {
+		Song.AddInstrumentInfo(Index, Name, "2A03", false);
+		Song.Info.Instruments.back().Volume = { 15, 14, 14, 13, 13, 12, 12, 12, 11, 11, 11, 10, 9, 7, 5, 3, 2, 1, 0 };
+		Song.Info.Instruments.back().VolumeRelease = 11;
+		std::vector<int> Steps;
+		Steps.push_back(0);
+		Steps.push_back(0);
+		for (size_t i = 0; i < Above.size(); ++i) {
+			Steps.push_back(Above[i]);
+			Steps.push_back(Above[i]);
+		}
+		Song.Info.Instruments.back().Steps.Items = Steps;
+		Song.Info.Instruments.back().Steps.Loop = 0;
+		Song.Info.Instruments.back().Arpeggio = Above;
+	};
+	Lush(3, "Lush maj7", { 4, 7, 11 });
+	Lush(4, "Lush 7", { 4, 7, 10 });
+	Lush(5, "Lush m(add9)", { 3, 7, 14 });
+	Lush(6, "Lush major", { 4, 7, 12 });
+	Lush(7, "Lush minor", { 3, 7, 12 });
+	Song.Info.KeyChosen = true;
+	ParseKey("C major", Song.Info.ChosenKey.K);
+	static const char *const ROOTS[4] = { "C-3", "F-2", "G-2", "A-2" }, *const TUNE[4] = { "C-5", "F-4", "E-4", "C-5" };
+	static const int COLORED[4] = { 3, 3, 4, 5 }, PLAIN[4] = { 6, 6, 6, 7 };
+	const int Bars = static_cast<int>(Song.Rows[0].size()) / 16;
+	for (int Bar = 1; Bar <= Bars; ++Bar) {
+		const int Row = (Bar - 1) * 16, i = (Bar - 1) % 4;
+		Song.Put(0, Row, ROOTS[i], (Colored ? COLORED : PLAIN)[i], Bar == 1 ? 8 : -1);
+		Song.Put(2, Row, ROOTS[i], Bar == 1 ? 1 : NO_INSTRUMENT);
+		Song.Put(5, Row, TUNE[i], Bar == 1 ? 0 : NO_INSTRUMENT, Bar == 1 ? 10 : -1);
+		Song.End(5, Row + 14, NOTE_RELEASE);
+	}
+}
+
+// polish's colors touch (feat-color-rubs): a chord part's colors that rub the melody taken out, the notes, the
+// progression and the bass kept; colors add gives plain lush chords the rich colors that fit; check_song's chord_drone
+// gives the touch as its fix when it brings the rubs under DRONE_RUB
+void TestColorRubs()
+{
+	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	{
+		FakeSong Song(6);
+		ColorSong(Song, true);
+		const std::vector<Cell> Chords = Song.Rows[0], Bass = Song.Rows[2], Tune = Song.Rows[5];
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "chord_drone");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		Json Fix;
+		if (!Found.empty() && Found[0]->Get("fix") != 0) {
+			Fix = *Found[0]->Get("fix");
+			CHECK_EQ(TextOf(&Fix, "tool"), std::string("polish"));
+			CHECK(Fix.Get("then") == 0);	// the colors alone bring the rubs under the threshold
+			CHECK_EQ(WriteJson(*Fix.Get("arguments")), std::string("{\"touches\":[\"colors\"],\"channels\":\"2A03 Pulse 1\","
+				"\"melody_channel\":\"VRC6 Pulse 1\",\"from_bar\":1,\"to_bar\":24}"));
+			CHECK_HAS(TextOf(&Fix, "does"), "Cmaj7 to Cadd9");
+			CHECK(Found[0]->Get("rub_share_after_colors") != 0 && Found[0]->Get("rub_share_after_colors")->Number() < 0.30);
+		}
+		CHECK_HAS(Run(Song, "what_next", "{\"all\": true, \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+			"polish {\"touches\":[\"colors\"],\"channels\":\"2A03 Pulse 1\"");
+		const ToolResult Made = Run(Song, "polish", Fix.Get("arguments") != 0 ? WriteJson(*Fix.Get("arguments")) : "{}");
+		CHECK(!Made.IsError);
+		// The nearest color that doesn't rub: Cmaj7 and Fmaj7 their add9, G7 its add9, Am(add9) its m7
+		CHECK_HAS(Made.Text, "24 chords on 2A03 Pulse 1: Cmaj7 to Cadd9 (bars 1, 5, 9, 13, 17, 21), Fmaj7 to Fadd9");
+		CHECK_HAS(Made.Text, "G7 to Gadd9");
+		CHECK_HAS(Made.Text, "Am(add9) to Am7");
+		CHECK_HAS(Made.Text, "Added 2 lush chord instruments");
+		// Each chord on the lush instrument of its new shape; every note, the bass and the melody as they were
+		bool Same = true;
+		for (size_t r = 0; r < Chords.size(); ++r)
+			Same = Same && Song.Rows[0][r].Note == Chords[r].Note && Song.Rows[0][r].Octave == Chords[r].Octave &&
+				Song.Rows[0][r].Volume == Chords[r].Volume;
+		CHECK(Same && Song.Rows[2] == Bass && Song.Rows[5] == Tune);
+		const InstrumentInfo *pFirst = 0, *pLast = 0;
+		for (size_t i = 0; i < Song.Info.Instruments.size(); ++i) {
+			if (Song.Info.Instruments[i].Index == Song.Rows[0][0].Instrument)
+				pFirst = &Song.Info.Instruments[i];
+			if (Song.Info.Instruments[i].Index == Song.Rows[0][3 * 16].Instrument)
+				pLast = &Song.Info.Instruments[i];
+		}
+		CHECK(pFirst != 0 && pFirst->Name == "Lush add9" && pFirst->Arpeggio == std::vector<int>({ 4, 7, 14 }));
+		CHECK(pLast != 0 && pLast->Name == "Lush m7" && pLast->Arpeggio == std::vector<int>({ 3, 7, 10 }));
+		CHECK(Song.Rows[0][4 * 16].Instrument == Song.Rows[0][0].Instrument);	// a bar 5 that came back to it says so
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").empty());
+		// Again: nothing rubs, nothing changes
+		CHECK_HAS(Run(Song, "polish", "{\"touches\": [\"colors\"], \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+			"There was no color there that rubs the melody");
+		// One undo puts the chords back as they were (the instruments made stay, as everywhere)
+		CHECK(!Run(Song, "undo", "{}").IsError);
+		CHECK(Song.Rows[0] == Chords);
+	}
+	// Chords written plain before the melody (what_next's lively recipe): colors add gives each the first rich color that
+	// fits the melody, and taking out the colors that rub then finds none to take out
+	{
+		FakeSong Song(6);
+		ColorSong(Song, false);
+		const ToolResult Added = Run(Song, "polish", "{\"touches\": [\"colors\"], \"colors\": \"add\", \"channels\": \"2A03 Pulse 1\", "
+			"\"melody_channel\": \"VRC6 Pulse 1\"}");
+		CHECK(!Added.IsError);
+		CHECK_HAS(Added.Text, "rich colors where they fit the melody");
+		CHECK_HAS(Added.Text, "C to Cadd9");
+		CHECK_HAS(Added.Text, "Am to Am7");
+		CHECK_LACKS(Added.Text, "Cmaj7");
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chord_drone").empty());
+		CHECK_HAS(Run(Song, "polish", "{\"touches\": [\"colors\"], \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+			"There was no color there that rubs the melody");
+		CHECK_HAS(Run(Song, "polish", "{\"touches\": [\"colors\"], \"colors\": \"add\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text,
+			"There was no plain lush chord there");
+		CHECK_HAS(Run(Song, "polish", "{\"touches\": [\"colors\"], \"colors\": \"more\"}").Text, "colors: fit");
+	}
+	// 0xy chords: a color that rubs gives way to the triad's fifth, the next note that carried the old arpeggio on given it
+	{
+		FakeSong Song(2);
+		Song.Info.DirectChanges = true;
+		Song.Info.Channels[0].EffectColumns = 2;
+		for (int Bar = 1; Bar <= 8; ++Bar) {
+			const int Row = (Bar - 1) * 16;
+			Song.Put(0, Row, "C-3", Bar == 1 ? 2 : NO_INSTRUMENT, Bar == 1 ? 8 : -1);
+			if (Bar != 2) {	// C E B: Cmaj7 without its fifth (bar 2 carries bar 1's on)
+				Song.Rows[0][Row].Effect[0] = EFF_ARPEGGIO;
+				Song.Rows[0][Row].Param[0] = 0x4B;
+			}
+			Song.Put(5, Row, "C-5", Bar == 1 ? 0 : NO_INSTRUMENT, Bar == 1 ? 10 : -1);
+		}
+		const ToolResult Made = Run(Song, "polish", "{\"touches\": [\"colors\"], \"channels\": \"2A03 Pulse 1\", \"melody_channel\": "
+			"\"VRC6 Pulse 1\", \"from_bar\": 1, \"to_bar\": 1}");
+		CHECK_HAS(Made.Text, "C(maj7) to C (bar 1)");
+		CHECK(Song.Rows[0][0].Effect[0] == EFF_ARPEGGIO && Song.Rows[0][0].Param[0] == 0x47);
+		CHECK(Song.Rows[0][16].Effect[0] == EFF_ARPEGGIO && Song.Rows[0][16].Param[0] == 0x4B);	// bar 2 as it played
+	}
+}
+
 void TestChordDrones()
 {
 	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}";
@@ -28171,6 +28326,7 @@ int main()
 	TestBusyFindings();
 	TestToolReplies();
 	TestChordDrones();
+	TestColorRubs();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

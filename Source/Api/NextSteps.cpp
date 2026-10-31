@@ -47,7 +47,7 @@ const staged_t STEP_STAGES[] = {
 	{ "lead", STAGE_PARTS }, { "chords", STAGE_PARTS }, { "melody", STAGE_PARTS }, { "drums", STAGE_PARTS },
 	{ "sections", STAGE_FORM }, { "form", STAGE_FORM },
 	{ "second_line", STAGE_DEPTH }, { "variation", STAGE_DEPTH }, { "break", STAGE_DEPTH }, { "intro", STAGE_DEPTH },
-	{ "tips", STAGE_DEPTH }, { "echo", STAGE_DEPTH },
+	{ "tips", STAGE_DEPTH }, { "echo", STAGE_DEPTH }, { "colors", STAGE_DEPTH },
 	{ "listen", STAGE_POLISH }, { "polish", STAGE_POLISH }, { "mix", STAGE_MIX }, { "loop", STAGE_LOOP }, { "seam", STAGE_LOOP },
 	{ "save", STAGE_EXPORT }, { "export", STAGE_EXPORT },
 };
