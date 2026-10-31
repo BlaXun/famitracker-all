@@ -5444,7 +5444,8 @@ void TestNetwork()
 		// Well under the full list's text: under three fifths of it (56% on 25 October 2026, with what_next and the tools
 		// its steps call; the twenty before them were 40%)
 		const Json Full = Body(HandleMcp(Post("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"), Config, Tools));
-		CHECK(WriteJson(*pTools).size() * 5 < WriteJson(*Full.Get("result")->Get("tools")).size() * 3);
+		Check(WriteJson(*pTools).size() * 5 < WriteJson(*Full.Get("result")->Get("tools")).size() * 3, (std::to_string(WriteJson(
+			*pTools).size()) + " of " + std::to_string(WriteJson(*Full.Get("result")->Get("tools")).size())).c_str(), __LINE__);
 	}
 	HttpRequest CoreStart = Post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}");
 	CoreStart.Target = "/mcp/core/";
@@ -20327,8 +20328,9 @@ void TestWhatNextLoop()
 			if (Made[i].compare(0, 12, "grow_melody ") == 0 && ParseJson(Made[i].substr(12), Call) && Call.Get("pick") == 0)
 				Motifs[TextOf(&Call, "section")] = TextOf(&Call, "motif");
 		}
-		const std::string Other = Motifs.count("Climax") == 1 ? "Climax" : "B";
-		Check(Motifs.size() == 2 && Motifs.count("A") == 1 && Motifs.count(Other) == 1, K.Asked, __LINE__);
+		// (and a climax whose tune can't go an octave up grows one of its own, from feat-shape-variations)
+		const std::string Other = Motifs.count("B") == 1 ? "B" : "Climax";
+		Check(Motifs.size() >= 2 && Motifs.size() <= 3 && Motifs.count("A") == 1 && Motifs.count(Other) == 1, K.Asked, __LINE__);
 		Reused += Motifs["A"] == Motifs[Other] ? 1 : 0;
 		CHECK(CallIndex(Made, "add_counter_melody") < 0);
 		Check(Made.size() >= 18 && Made.size() <= 30, K.Asked, __LINE__);
@@ -23268,6 +23270,14 @@ void TestUnknownArguments()
 			const std::string First = EmptyTools.Call("what_next", Parse(std::string("{\"kind\": \"") + Kind + "\"}")).Text;
 			Check(UnknownInText(EmptyTools, First).empty(), First.c_str(), __LINE__);
 		}
+		// song_shape's list with its options and examples, and what_next with words about the place (feat-shape-variations)
+		const std::string Shapes = EmptyTools.Call("song_shape", Parse("{}")).Text;
+		Check(UnknownInText(EmptyTools, Shapes).empty() && Contains(Shapes, "song_shape {\"about\": "), Shapes.c_str(), __LINE__);
+		Empty.Info.DirectChanges = true;
+		const std::string About = EmptyTools.Call("what_next", Parse("{\"about\": \"a calm area, but with a climax\", \"skip\": "
+			"[\"tempo\", \"key\"]}")).Text;
+		Check(UnknownInText(EmptyTools, About).empty() && Contains(About, "song_shape {\"shape\":\"night\",\"about\":"), About.c_str(),
+			__LINE__);
 	}
 }
 
@@ -23884,7 +23894,8 @@ void TestSongShapes()
 	// With a shape: its own line for its parts, the name's for others
 	const SongShape &Stage = All[0];
 	CHECK_EQ(PartLine("a'", &Stage), Stage.Parts[2].Line);
-	CHECK_EQ(PartLine("Bridge", &Stage), PartLine("Bridge"));
+	CHECK_EQ(PartLine("Verse", &Stage), PartLine("Verse"));
+	CHECK_HAS(PartLine("Bridge", &Stage), "before the climax lifts the tune");	// a variation's own line
 	CHECK_EQ(SectionHoverText("A'", 13, 20, &Stage), "A' (bars 13-20): " + Stage.Parts[2].Line);
 	CHECK_EQ(SectionHoverText("Gerald", 3, 3, 0), std::string("Gerald (bar 3)"));
 
@@ -23899,7 +23910,13 @@ void TestSongShapes()
 	CHECK(GuessSongShape(N.Sections, "Boss", 150.0)->Id == "night");
 	SectionList Own = T.Sections;
 	Own.pop_back();
-	CHECK(MatchSongShape(Own, "Town", 128.6) == 0 && GuessSongShape(Own, "Town", 128.6) == &All[2] && GuessSongShape(Own, "New song", 128.6) == 0);
+	// (a form laid out and varied, from feat-shape-variations: read as the shape it shares most names with, on a tie the
+	// one the track's name says)
+	CHECK(MatchSongShape(Own, "Town", 128.6) == 0 && GuessSongShape(Own, "Town", 128.6) == &All[2] && GuessSongShape(Own, "New song",
+		128.6) != 0);
+	Own.erase(Own.begin() + 2);
+	Own.back().Name = "B 2";
+	CHECK(GuessSongShape(Own, "New song", 128.6) == 0);
 	CHECK(GuessSongShape(SectionList(), "Boss 2", 150.0)->Id == "boss");
 
 	// A progression fitted to a part's bars, its last two chords kept at the end
@@ -24001,14 +24018,14 @@ void TestSongShapeTool()
 		CHECK_HAS(Run(Song, "song_shape", "{\"shape\": \"jazz\"}").Text, "shape: one of stage, night, town, boss, small or jingle");
 		CHECK(Run(Song, "song_shape", "{\"add_bars\": true}").IsError);
 		FakeSong Ask(1);
-		CHECK_HAS(Run(Ask, "song_shape", "{\"shape\": \"stage\"}").Text, "needs direct changes");
+		CHECK_HAS(Run(Ask, "song_shape", "{\"shape\": \"stage\", \"variant\": 1}").Text, "needs direct changes");
 	}
 	{
 		// A lively stage on an empty song: 10 frames of 4 bars, its sections, the intro once and then the loop (B01); again it
 		// changes nothing; one undo takes it all back
 		FakeSong Song(1);
 		Song.Info.DirectChanges = true;
-		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"lively\"}");
+		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"lively\", \"variant\": 1}");
 		CHECK(!Laid.IsError);
 		CHECK_HAS(Laid.Text, "Changed the song: laid out a lively stage, 40 bars in 10 frames of 4 bars.");
 		CHECK_HAS(Laid.Text, "\n- Intro (bars 1-4): Plays once as the stage starts");
@@ -24027,7 +24044,7 @@ void TestSongShapeTool()
 		CHECK(Song.Undos.size() == 1u && Song.Undos.back().Label.compare(0, 12, "song_shape: ") == 0);
 		CHECK(GuessSongShape(Song.Info.Sections, Song.Info.TrackName, 150.0) == FindSongShape("stage"));
 		const int Writes = Song.Writes;
-		const ToolResult Again = Run(Song, "song_shape", "{\"shape\": \"stage\"}");
+		const ToolResult Again = Run(Song, "song_shape", "{\"shape\": \"stage\", \"variant\": 1}");
 		CHECK(!Again.IsError && Song.Writes == Writes && Song.Undos.size() == 1u);
 		CHECK_HAS(Again.Text, "The song has the lively stage's shape already");
 		CHECK(!Run(Song, "undo", "{}").IsError);
@@ -24039,7 +24056,7 @@ void TestSongShapeTool()
 		Song.Info.DirectChanges = true;
 		Song.Rows[3][0].Effect[0] = EFF_SPEED;
 		Song.Rows[3][0].Param[0] = 6;
-		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"boss\"}");
+		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"boss\", \"variant\": 1}");
 		CHECK(!Laid.IsError && Song.Info.PatternLength == 32 && Song.Rows[0].size() == 13u * 32u);
 		CHECK_HAS(Laid.Text, "A frame is 32 rows now (2 bars of 16 rows; it was 64)");
 		CHECK_HAS(Laid.Text, "\n- Climax (bars 19-24): The fight at its peak");
@@ -24067,7 +24084,7 @@ void TestSongShapeTool()
 		Song.Info.DirectChanges = true;
 		Song.Info.FirstHighlight = Bar == 12 ? 4 : 12;
 		Song.Info.SecondHighlight = Bar;
-		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"stage\"}");
+		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"stage\", \"variant\": 1}");
 		Check(!Laid.IsError && Song.Info.PatternLength == 4 * Bar && Song.Rows[0].size() == static_cast<size_t>(40 * Bar), Laid.Text.c_str(),
 			__LINE__);
 		CHECK(Song.Info.Sections.size() == 6u && Song.Info.Sections[1] == Section("A", 1, 2) && Song.Info.Sections[5] == Section("Break", 9, 9));
@@ -24089,7 +24106,7 @@ void TestSongShapeTool()
 		Song.Info.Sections.push_back(Section("Verse", 0, 0));
 		Song.Info.Sections.push_back(Section("Chorus", 1, 1));
 		const std::vector<std::vector<Cell> > Before = Song.Rows;
-		ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"stage\"}");
+		ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"stage\", \"variant\": 1}");
 		CHECK(!Laid.IsError && Song.Rows == Before && Song.Info.PatternLength == 64);
 		CHECK(Song.Info.Sections.size() == 2u && Song.Info.Sections[0] == Section("Intro", 0, 0) && Song.Info.Sections[1] == Section("A", 1, 1));
 		CHECK_HAS(Laid.Text, "Changed the song: named its sections as a lively stage's; every note stays where it was.");
@@ -24097,7 +24114,7 @@ void TestSongShapeTool()
 			"didn't fit. add_bars true puts in the 32 empty bars it needs at the end.");
 		CHECK_HAS(Laid.Text, "Its sections before (\"Verse\" bars 1-4, \"Chorus\" bars 5-8) gave way to the shape's.");
 		CHECK_HAS(Run(Song, "song_shape", "{}").Text, "This track has notes (8 bars)");
-		Laid = Run(Song, "song_shape", "{\"shape\": \"stage\", \"add_bars\": true}");
+		Laid = Run(Song, "song_shape", "{\"shape\": \"stage\", \"variant\": 1, \"add_bars\": true}");
 		CHECK(!Laid.IsError && Song.Rows[0].size() == 640u && Song.Info.Sections.size() == 6u);
 		CHECK_HAS(Laid.Text, "with 32 empty bars put in at its end");
 		CHECK_HAS(Laid.Text, "Now the whole song loops (bars 1-40).");
@@ -24117,7 +24134,7 @@ void TestSongShapeTool()
 		Song.Info.PatternLength = 128;
 		Song.Put(5, 0, "C-4", 0);
 		Song.End(5, 8);
-		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"stage\"}");
+		const ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"stage\", \"variant\": 1}");
 		CHECK(!Laid.IsError && Song.Info.PatternLength == 128 && Song.Info.Sections.size() == 6u && Song.Rows[0].size() == 768u);
 		CHECK_HAS(Laid.Text, "A frame here is 8 bars and a section is whole frames: Intro 8 bars (the shape's 4), Break 8 bars (the shape's 4).");
 	}
@@ -24364,8 +24381,8 @@ void TestWhatNextJson()
 	const ShapeCase SHAPES[] = {
 		{ "lively", "Lay out the song's shape: Lively stage (40 bars)", "Add chords and a bass line (A, bars 5-12)" },
 		{ "calm", "Lay out the song's shape: Calm night (40 bars)", "Add chords and a bass line (A, bars 5-12)" },
-		{ "action", "Lay out the song's shape: Boss fight (26 bars)", "Add chords and a bass line (A, bars 3-10)" },
-		{ "general", "Lay out the song's shape: Town (40 bars)", "Add chords and a bass line (A, bars 5-12)" } };
+		{ "action", "Lay out the song's shape: Boss fight (34 bars)", "Add chords and a bass line (A, bars 3-10)" },
+		{ "general", "Lay out the song's shape: Town (48 bars)", "Add chords and a bass line (A, bars 5-12)" } };	// the variants "Town" picks
 	for (const ShapeCase &C : SHAPES) {
 		FakeSong Shaped(1);
 		NewSong(Shaped);
@@ -25802,7 +25819,7 @@ void TestShapeByTrackName()
 	Song.Info.TrackName = Song.Tracks[0].Name = "Potion shop";
 	WhatNextAnswer A = AskWhatNext(Song, "{\"skip\": [\"tempo\", \"key\"]}");
 	Check(A.Tool == "song_shape" && TextOf(&A.Arguments, "shape") == "small", A.Text.c_str(), __LINE__);
-	CHECK_HAS(A.Text, "a short loop of 14 bars (Intro 2, A 4, A' 4, B 4), as the track's name asks, each part");
+	CHECK_HAS(A.Text, "a short loop of 16 bars (Intro 2, A 4, A' 4, B 4, Break 2), as the track's name asks, each part");
 	CHECK(!Run(Song, "song_shape", WriteJson(A.Arguments)).IsError);
 	A = AskWhatNext(Song, "{\"skip\": [\"tempo\", \"key\"]}");
 	Check(A.Tool == "design_instrument" && Contains(A.Text, ", the shape (short loop)"), A.Text.c_str(), __LINE__);
@@ -25837,13 +25854,18 @@ void TestFirstSongSmall()
 	CHECK(CheckOn(Song, "first-song", __LINE__).Passed);
 	const int Shape = CallIndex(Made, "song_shape");
 	Check(Shape >= 0 && Contains(Made[static_cast<size_t>(Shape)], "small"), "the short loop laid out", __LINE__);
-	const char *const PARTS[] = { "Intro", "A", "A'", "B" };
-	CHECK_EQ(Song.Info.Sections.size(), static_cast<size_t>(4));
-	for (size_t i = 0; i < Song.Info.Sections.size() && i < 4; ++i)
-		CHECK_EQ(Song.Info.Sections[i].Name, std::string(PARTS[i]));
+	// The short loop's variant the song's name picks (feat-shape-variations)
+	ShapeRequest R;
+	R.Shape = "small";
+	R.TrackName = Song.Info.TrackName;
+	ShapeChoice C;
+	CHECK(MakeSongShape(R, C, Error));
+	CHECK_EQ(Song.Info.Sections.size(), C.Shape.Parts.size());
+	for (size_t i = 0; i < Song.Info.Sections.size() && i < C.Shape.Parts.size(); ++i)
+		CHECK_EQ(Song.Info.Sections[i].Name, C.Shape.Parts[i].Name);
 	const Timing Time(Song.Info.PatternLength, static_cast<int>(Song.Rows[0].size()) / Song.Info.PatternLength,
 		Song.Info.FirstHighlight, Song.Info.SecondHighlight);
-	CHECK_EQ(Time.BarCount(), 14);
+	CHECK_EQ(Time.BarCount(), C.Shape.Bars());
 	// On to the end, as the What next panel's Do it goes on
 	FollowWhatNext(Song, "{}", 60, Finished, __LINE__);
 	CHECK(Finished);
@@ -27540,6 +27562,344 @@ void TestChordDrones()
 	}
 }
 
+// Song shapes varied (from feat-shape-variations): each shape's variants, the track's name picking one, add, drop, bars,
+// a list of parts and words about the place; every form whole frames, every refusal in plain words
+std::string ShapeOf(const ShapeRequest &R, std::string *pError = 0)
+{
+	ShapeChoice C;
+	std::string Error;
+	if (!MakeSongShape(R, C, Error)) {
+		if (pError != 0)
+			*pError = Error;
+		return "error: " + Error;
+	}
+	return C.Shape.PartsText();
+}
+
+ShapeRequest AskShape(const char *Shape, int Variant = 1)
+{
+	ShapeRequest R;
+	R.Shape = Shape;
+	R.Variant = Variant;
+	R.TrackName = "Town";
+	return R;
+}
+
+void TestShapeVariations()
+{
+	// Every variant: parts with names of their own, a line each in plain words, frames of whole bars every part fills
+	for (const SongShape &Base : SongShapes()) {
+		const std::vector<SongShape> Variants = VariantsOf(Base);
+		Check(Variants.size() >= (Base.Loops ? 4u : 1u) && Variants[0].PartsText() == Base.PartsText(), Base.Id.c_str(), __LINE__);
+		std::set<std::string> Forms;
+		for (size_t v = 0; v < Variants.size(); ++v) {
+			const SongShape &Shape = Variants[v];
+			Check(Forms.insert(Shape.PartsText()).second, Shape.PartsText().c_str(), __LINE__);
+			SectionList Names;
+			for (size_t p = 0; p < Shape.Parts.size(); ++p) {
+				const ShapePart &Part = Shape.Parts[p];
+				Check(SectionNameProblem(Part.Name).empty() && FindSection(Names, Part.Name) < 0, Part.Name.c_str(), __LINE__);
+				Names.push_back(Section(Part.Name, static_cast<int>(p), static_cast<int>(p)));
+				bool Ascii = true;
+				for (size_t c = 0; c < Part.Line.size(); ++c)
+					Ascii = Ascii && static_cast<unsigned char>(Part.Line[c]) >= 0x20 && static_cast<unsigned char>(Part.Line[c]) < 0x7F;
+				Check(Ascii && Part.Line.size() >= 20 && Part.Line.size() <= 110 && Part.Line.back() == '.', (Base.Id + " " +
+					Part.Name).c_str(), __LINE__);
+				CHECK_EQ(PartLine(Part.Name, &Base), Part.Line);
+			}
+			ShapeLayout L;
+			std::string Error;
+			Check(LayOutShape(Shape, true, 16, 64, 1, 128, false, L, Error) && L.Refitted.empty() && ValidSections(L.Sections, L.Frames),
+				Shape.PartsText().c_str(), __LINE__);
+			// Laid out, it reads as its shape (as what_next and the hover lines read it)
+			Check(LaidOutShape(L.Sections, "Somewhere", 120.0, &Base) == &Base, Shape.PartsText().c_str(), __LINE__);
+		}
+	}
+	// The track's name picks the variant: the same name the same one, and names apart spread over them
+	const char *const NAMES[] = { "Town", "Forest", "Cave", "Night", "Boss", "Shop", "Home", "Field", "Castle", "Ice", "Mud Caves",
+		"Green Valley" };
+	for (const char *Id : { "stage", "night", "town", "boss", "small" }) {
+		const int Count = static_cast<int>(VariantsOf(*FindSongShape(Id)).size());
+		std::set<int> Seen;
+		for (const char *Name : NAMES) {
+			const int V = VariantOfName(Name, Count);
+			CHECK(V >= 1 && V <= Count && V == VariantOfName(Name, Count) && V == VariantOfName(std::string("  ") + Name + " ", Count));
+			Seen.insert(V);
+		}
+		Check(Seen.size() >= 3u, Id, __LINE__);
+		ShapeRequest A = AskShape(Id, 0), B = AskShape(Id, 0);
+		A.TrackName = "Forest";
+		B.TrackName = "Castle";
+		CHECK(ShapeOf(A) == ShapeOf(A));
+	}
+	CHECK_EQ(VariantOfName("", 5), 1);
+
+	// A calm area with a climax: the night's climax, warm and without drums, after B
+	ShapeRequest R = AskShape("night");
+	R.Add.push_back("climax");
+	CHECK_EQ(ShapeOf(R), std::string("Intro 4, A 8, A' 8, B 8, Climax 8, Break 4, A'' 8"));
+	CHECK_HAS(PartLine("Climax", FindSongShape("night")), "higher, at its warmest; no drums added");
+	// A longer lively stage: a second B and A'' in the stage's own way
+	R = AskShape("stage");
+	R.Bars = 56;
+	CHECK_EQ(ShapeOf(R), std::string("Intro 4, A 8, A' 8, B 8, B' 8, Climax 8, A'' 8, Break 4"));
+	R.Bars = 24;
+	CHECK_EQ(ShapeOf(R), std::string("Intro 4, A 4, A' 4, B 4, Climax 4, Break 4"));
+	R.Bars = 96;
+	CHECK_EQ(ShapeOf(R), std::string("Intro 4, A 16, A' 16, B 16, B' 16, Climax 16, Break 4"));
+	// Dropped and added
+	R = AskShape("stage");
+	R.Drop.push_back("break");
+	R.Add.push_back("outro");
+	R.Add.push_back("bridge");
+	CHECK_EQ(ShapeOf(R), std::string("Intro 4, A 8, A' 8, B 8, Bridge 8, Climax 8, Outro 4"));
+	R = AskShape("boss");
+	R.Add.push_back("outro");
+	R.Bars = 18;
+	CHECK_EQ(ShapeOf(R), std::string("Intro 2, A 4, A' 4, Climax 6, Break 2, Outro 2"));
+	R = AskShape("small");
+	R.Drop.push_back("intro");
+	CHECK_EQ(ShapeOf(R), std::string("A 4, A' 4, B 4"));
+	// Added parts kept when the length shrinks
+	R = AskShape("stage");
+	R.Add.push_back("b");
+	R.Bars = 24;
+	CHECK_HAS(ShapeOf(R), "B'");
+	// What makes no sense, refused in plain words
+	struct Refusal {
+		const char *Shape, *Add, *Drop, *Words;
+		int Bars;
+	};
+	const Refusal REFUSED[] = { { "stage", "", "a", "A is the tune", 0 }, { "stage", "climax", "", "has a climax already", 0 },
+		{ "night", "", "climax", "has no climax to drop", 0 }, { "jingle", "climax", "", "plays once", 0 },
+		{ "small", "", "a'", "would leave only A", 0 }, { "stage", "solo", "", "add: climax, break", 0 },
+		{ "stage", "", "", "bars: from 8 to 256", 300 }, { "jingle", "", "", "8 bars at most", 12 } };
+	for (const Refusal &F : REFUSED) {
+		ShapeRequest Q = AskShape(F.Shape);
+		if (*F.Add)
+			Q.Add.push_back(F.Add);
+		if (*F.Drop)
+			Q.Drop.push_back(F.Drop);
+		Q.Bars = F.Bars;
+		if (std::string(F.Shape) == "small" && *F.Drop) {
+			Q.Drop.push_back("b");
+			Q.Drop.push_back("a'");
+		}
+		std::string Error;
+		Check(ShapeOf(Q, &Error).compare(0, 7, "error: ") == 0 && Contains(Error, F.Words), (std::string(F.Shape) + ": " + Error).c_str(),
+			__LINE__);
+	}
+	R = AskShape("stage", 9);
+	CHECK_HAS(ShapeOf(R), "variant: 1 to 5");
+	// A list of parts: read and checked
+	R = ShapeRequest();
+	R.Parts = "Intro 4, A 8, A' 8, B 8, Climax 8, Break 4";
+	CHECK_EQ(ShapeOf(R), std::string("Intro 4, A 8, A' 8, B 8, Climax 8, Break 4"));
+	R.Parts = "Intro: 4; Cave 8; A 8; A' 8";
+	CHECK_EQ(ShapeOf(R), std::string("Intro 4, Cave 8, A 8, A' 8"));
+	const char *const BAD[] = { "Intro 4, A 7", "A 8, A 8", "A 8, A' 16", "A 4, Climax 8", "A", "Intro 4, Break 4", "", "A 8, B 128" };
+	for (const char *Text : BAD) {
+		R.Parts = Text;
+		std::string Error;
+		Check(ShapeOf(R, &Error).compare(0, 7, "error: ") == 0 || !*Text, Text, __LINE__);
+	}
+	R.Parts = "Intro 4, A 8";
+	R.Add.push_back("climax");
+	CHECK_HAS(ShapeOf(R), "parts is the whole list");
+
+	// Words about the place
+	R = ShapeRequest();
+	R.TrackName = "Town";
+	R.About = "a dangerous factory, but not hectic";
+	ShapeChoice C;
+	std::string Error;
+	CHECK(MakeSongShape(R, C, Error) && C.pBase == FindSongShape("stage"));
+	CHECK(C.Shape.PartsText().find("Climax") == std::string::npos && C.Shape.PartsText().find("A''") != std::string::npos);
+	CHECK_HAS(C.FromWords, "\"factory\" is a place to explore, not a fight");
+	R.About = "a calm area, but with a climax";
+	CHECK(MakeSongShape(R, C, Error) && C.pBase == FindSongShape("night") && Contains(C.Shape.PartsText(), "Climax 8"));
+	R.About = "a short boss loop with an outro";
+	CHECK(MakeSongShape(R, C, Error) && C.pBase == FindSongShape("boss") && Contains(C.Shape.PartsText(), "Outro") &&
+		Contains(C.Shape.PartsText(), "Climax") && C.Shape.Bars() < 26);
+	R.About = "a longer lively stage";
+	CHECK(MakeSongShape(R, C, Error) && C.pBase == FindSongShape("stage") && C.Shape.Bars() > 48);
+	R.About = "a sleepy village at night, no intro";
+	CHECK(MakeSongShape(R, C, Error) && C.pBase == FindSongShape("night") && C.Shape.Parts[0].Name == "A" && C.Shape.LoopPart == 0);
+	R.About = "the boss of the volcano, intense";
+	CHECK(MakeSongShape(R, C, Error) && C.pBase == FindSongShape("boss"));
+	R.About = "something";
+	CHECK(MakeSongShape(R, C, Error) && C.pBase == FindSongShape("town") && Contains(C.FromWords, "the general one"));
+	ShapeWords W = ReadShapeWords("a forest without a break");
+	CHECK(W.pShape == FindSongShape("stage") && W.Drop.size() == 1u && W.Drop[0] == "break");
+
+	// Every shape, variant and word added or dropped, and lengths from 8 to 128 bars: a form or a reason, never a form
+	// that isn't whole frames
+	const char *const WORDS[] = { "climax", "break", "bridge", "outro", "intro", "b", "a'", "a" };
+	for (const SongShape &Base : SongShapes())
+		for (int v = 1; v <= static_cast<int>(VariantsOf(Base).size()); ++v)
+			for (int Bars = 0; Bars <= 128; Bars += Bars == 0 ? 8 : 12)
+				for (int w = -1; w < 16; ++w) {
+					ShapeRequest Q = AskShape(Base.Id.c_str(), v);
+					Q.Bars = Bars;
+					if (w >= 0)
+						(w < 8 ? Q.Add : Q.Drop).push_back(WORDS[w % 8]);
+					std::string Why;
+					ShapeChoice Made;
+					if (!MakeSongShape(Q, Made, Why)) {
+						Check(!Why.empty() && Why.back() == '.', Why.c_str(), __LINE__);
+						continue;
+					}
+					ShapeLayout L;
+					std::string Error;
+					bool Even = true;
+					for (const ShapePart &Part : Made.Shape.Parts)
+						Even = Even && Part.Bars >= 2 && Part.Bars % 2 == 0 && !Part.Line.empty();
+					Check(Even && LayOutShape(Made.Shape, true, 16, 64, 1, 128, false, L, Error) && L.Refitted.empty() &&
+						ValidSections(L.Sections, L.Frames), (Base.Id + " " + Made.Shape.PartsText() + " " + Error).c_str(), __LINE__);
+				}
+	// Names the tools give their copies aren't a laid-out form; a varied one read without a kind is its likeliest shape
+	SectionList Own;
+	Own.push_back(Section("Intro", 0, 0));
+	Own.push_back(Section("A", 1, 2));
+	Own.push_back(Section("A 2", 3, 4));
+	Own.push_back(Section("B", 5, 6));
+	CHECK(LaidOutShape(Own, "Town", 120.0, FindSongShape("town")) == 0);
+	ShapeLayout L;
+	R = AskShape("night");
+	R.Add.push_back("climax");
+	CHECK(MakeSongShape(R, C, Error) && LayOutShape(C.Shape, true, 16, 64, 1, 128, false, L, Error));
+	CHECK(LaidOutShape(L.Sections, "Moon", 75.0) == FindSongShape("night"));
+	CHECK_EQ(SectionHoverText("Climax", 29, 36, GuessSongShape(L.Sections, "Moon", 75.0)), "Climax (bars 29-36): " +
+		PartLine("Climax", FindSongShape("night")));
+}
+
+// song_shape's options as the tool takes them: listed, the variant named with the others, about alone, parts, and the
+// refusals as errors that change nothing
+void TestSongShapeOptions()
+{
+	FakeSong Song(1);
+	Song.Info.DirectChanges = true;
+	const ToolResult Listed = Run(Song, "song_shape", "{}");
+	CHECK_HAS(Listed.Text, "\nOptions: variant");
+	CHECK_HAS(Listed.Text, "\nExamples: song_shape {\"shape\": \"night\", \"add\": [\"climax\"]}");
+	CHECK_HAS(Listed.Text, "- stage (Lively stage, 40 bars, 5 variants)");
+	CHECK(Run(Song, "song_shape", "{\"bars\": 40}").IsError);
+	// A calm area with a climax, by the name's variant
+	ToolResult Laid = Run(Song, "song_shape", "{\"shape\": \"night\", \"add\": \"climax\"}");
+	CHECK(!Laid.IsError);
+	CHECK_HAS(Laid.Text, "Changed the song: laid out a calm night, 48 bars in 12 frames of 4 bars.");
+	CHECK_HAS(Laid.Text, " (the track's name picks it; the same name always gets the same form). For another form give its variant: ");
+	CHECK_HAS(Laid.Text, "variant 1: Intro 4, A 8, A' 8, B 8, Break 4, A''");
+	CHECK_HAS(Laid.Text, "Added a climax.");
+	CHECK_HAS(Laid.Text, "\n- Climax (bars ");
+	CHECK_HAS(Laid.Text, "at its warmest; no drums added");
+	CHECK(Song.Info.Sections.size() == 7u);
+	const int Writes = Song.Writes;
+	CHECK_HAS(Run(Song, "song_shape", "{\"shape\": \"night\", \"add\": [\"climax\"]}").Text, "has the calm night's shape already");
+	CHECK(Song.Writes == Writes);
+	// Refusals change nothing
+	const char *const REFUSED[] = { "{\"shape\": \"stage\", \"drop\": [\"a\"]}", "{\"shape\": \"jingle\", \"add\": [\"outro\"]}",
+		"{\"parts\": \"A 8, A 8\"}", "{\"shape\": \"stage\", \"variant\": 7}", "{\"shape\": \"stage\", \"bars\": 4}",
+		"{\"parts\": \"A 8, B 8\", \"bars\": 40}", "{\"shape\": \"stage\", \"add\": [\"kazoo\"]}" };
+	for (const char *Args : REFUSED) {
+		const ToolResult Refused = Run(Song, "song_shape", Args);
+		Check(Refused.IsError && Song.Writes == Writes, (std::string(Args) + " " + Refused.Text).c_str(), __LINE__);
+	}
+	// Words alone pick the shape and say why
+	FakeSong Factory(1);
+	Factory.Info.DirectChanges = true;
+	Laid = Run(Factory, "song_shape", "{\"about\": \"a dangerous factory, but not hectic\"}");
+	CHECK(!Laid.IsError);
+	CHECK_HAS(Laid.Text, "laid out a lively stage");
+	CHECK_HAS(Laid.Text, "\nFrom the words: the lively stage (\"dangerous\" but \"not hectic\"");
+	// A list of parts
+	FakeSong Custom(1);
+	Custom.Info.DirectChanges = true;
+	Laid = Run(Custom, "song_shape", "{\"parts\": \"Intro 4, A 8, B 8, A' 8, Bridge 8, Break 4\"}");
+	CHECK(!Laid.IsError && Custom.Info.Sections.size() == 6u && Custom.Rows[0].size() == 10u * 64u);
+	CHECK_LACKS(Laid.Text, "For another form give variant");
+	CHECK_HAS(Laid.Text, "\n- Bridge (bars 29-36): ");
+	// A given variant, then another: the same song laid out anew
+	FakeSong Stage(1);
+	Stage.Info.DirectChanges = true;
+	CHECK(!Run(Stage, "song_shape", "{\"shape\": \"stage\", \"variant\": 3}").IsError && Stage.Info.Sections[3].Name == "Bridge");
+	CHECK(!Run(Stage, "song_shape", "{\"shape\": \"stage\", \"variant\": 2}").IsError && Stage.Info.Sections[4].Name == "B'");
+	CHECK(Stage.Undos.size() == 2u);
+}
+
+// what_next on forms song_shape varies: each walk from the laid-out song (or the words) to done, filling the parts in
+// order without a bar put in or a section named, clean at its end and its count of steps done never falling
+void FollowShapeWalk(const char *Name, const char *Shape, const char *Asked, const char *Style, int Line)
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = Name;
+	if (*Shape) {
+		const ToolResult Laid = Run(Song, "song_shape", Shape);
+		Check(!Laid.IsError, Laid.Text.c_str(), Line);
+	}
+	const SectionList Laid = Song.Info.Sections;
+	bool Finished = false;
+	const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 70, Finished, Line);
+	Check(Finished, (std::string(Name) + " " + Asked).c_str(), Line);
+	Check(CallIndex(Made, "insert_bars") < 0 && CallIndex(Made, "name_section") < 0, Name, Line);
+	if (*Shape)
+		Check(CallIndex(Made, "song_shape") < 0 && Song.Info.Sections == Laid, Name, Line);
+	else
+		Check(CallIndex(Made, "song_shape") >= 0, Name, Line);
+	// Every part laid out has its music
+	for (const Section &Part : Song.Info.Sections) {
+		bool Notes = false;
+		for (size_t c = 0; c < Song.Rows.size() && !Notes; ++c)
+			for (int r = Part.First * Song.Info.PatternLength; r < (Part.Last + 1) * Song.Info.PatternLength && !Notes; ++r)
+				Notes = Song.Rows[c][static_cast<size_t>(r)].Note != 0;
+		Check(Notes, (std::string(Name) + ": " + Part.Name).c_str(), Line);
+	}
+	const std::string StyleArg = *Style ? std::string(", \"style\": \"") + Style + "\"" : std::string();
+	const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + StyleArg + "}").Text);
+	const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "climax_repeats" };
+	bool Clean = true;
+	for (const char *Kind : CLEAN) {
+		Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(Name) + " " + Kind).c_str(), Line);
+		Clean = Clean && IntegerOf(Found.Get("counts"), Kind) == 0;
+	}
+	if (!Clean) {
+		std::printf("%s: %s\n%s\n", Name, Asked, Run(Song, "check_song", "{" + (StyleArg.empty() ? std::string() :
+			StyleArg.substr(2)) + "}").Text.c_str());
+		for (const Section &Part : Song.Info.Sections)
+			std::printf("  %s %d-%d\n", Part.Name.c_str(), Part.First, Part.Last);
+	}
+	const WhatNextAnswer Last = ReadWhatNext(Run(Song, "what_next", Asked).Text);
+	Check(Last.Done, Name, Line);
+}
+
+void TestWhatNextShapeVariations()
+{
+	// A calm area with a climax; a longer lively stage; a list of parts of one's own; words about the place alone
+	FollowShapeWalk("Moonlit pond", "{\"shape\": \"night\", \"add\": [\"climax\"]}", "{\"kind\": \"calm\"}", "calm", __LINE__);
+	FollowShapeWalk("Forest", "{\"shape\": \"stage\", \"bars\": 56}", "{\"kind\": \"lively\"}", "lively", __LINE__);
+	FollowShapeWalk("Market", "{\"parts\": \"Intro 4, A 8, B 8, A' 8, Bridge 8, A'' 8, Break 4\"}", "{}", "", __LINE__);
+	FollowShapeWalk("Factory", "", "{\"about\": \"a dangerous factory, but not hectic\"}", "lively", __LINE__);
+	// The variants the names pick, for each kind
+	struct Walk {
+		const char *Name, *Asked, *Style;
+	};
+	const Walk WALKS[] = { { "Castle", "{\"kind\": \"lively\"}", "lively" }, { "Cave", "{\"kind\": \"lively\"}", "lively" },
+		{ "Forest", "{\"kind\": \"calm\"}", "calm" }, { "Ice", "{\"kind\": \"calm\"}", "calm" },
+		{ "Shop", "{}", "" }, { "Field", "{}", "" }, { "Cave", "{\"kind\": \"action\"}", "" }, { "Home", "{\"kind\": \"action\"}", "" } };
+	for (const Walk &W : WALKS)
+		FollowShapeWalk(W.Name, "", W.Asked, W.Style, __LINE__);
+	// what_next passes the words on, and takes the kind from them
+	FakeSong Song(1);
+	NewSong(Song);
+	WhatNextAnswer A = AskWhatNext(Song, "{\"about\": \"a sleepy village at night\", \"skip\": [\"tempo\", \"key\"]}");
+	Check(A.Tool == "song_shape" && TextOf(&A.Arguments, "shape") == "night" && TextOf(&A.Arguments, "about") ==
+		"a sleepy village at night", A.Text.c_str(), __LINE__);
+	CHECK_HAS(A.Line, "Next (calm, ");
+	CHECK_HAS(A.Text, "as the words about the place ask");
+	CHECK_HAS(A.Text, "\"about\":\"a sleepy village at night\"");	// asked again with them
+}
+
 int main()
 {
 	TestJson();
@@ -27794,6 +28154,9 @@ int main()
 	TestExportResources();
 	TestBridgeResources();
 	TestShapeTownWords();
+	TestShapeVariations();
+	TestSongShapeOptions();
+	TestWhatNextShapeVariations();
 	TestWhatNextSavesForClient();
 	TestListenLowAsAdvice();
 	TestEchoKeepsItsChipsEffects();
