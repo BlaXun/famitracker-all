@@ -1029,7 +1029,8 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 		Out += Buffer;
 	}
 	if (Wave == "noise")
-		Out += "; its note picks the noise's pitch, from 0-# (dark, a deep wash) to F-# (bright, a hiss)";
+		Out += "; its note picks the noise's pitch, from 0-# (dark, a deep wash) to F-# (bright, a hiss): write_notes takes "
+			"those as the note (\"F-#\", or \"F\" in steps), without an octave, or kick, snare, hihat";
 	return Out;
 }
 

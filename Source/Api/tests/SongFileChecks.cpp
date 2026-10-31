@@ -21,8 +21,8 @@
 
 // check_song and what_next on real songs: a folder (the first argument, or the
 // FAMITRACKER_SONG_CHECKS environment variable) with "keep" (songs the user
-// likes, which must get no "too_busy" finding and no what_next step for it: a
-// failure) and "flag" (songs the user called too busy for the NES, which should
+// likes, which must get no "too_busy" or "climax_repeats" finding and no
+// what_next step for one: a failure) and "flag" (songs the user called too busy for the NES, which should
 // get one: listed when they don't, since not every busy song can be told from
 // the kept ones; see CLAUDE.md, "Busy for NES"). The songs are the user's own and stay out of the repository: without
 // the folder, nothing is checked and the test passes.
@@ -108,19 +108,26 @@ int CheckSong(const std::string &Path, bool Flagged, bool Verbose)
 			continue;
 		}
 		const Json *pFindings = Reply.Get("findings");
-		int Here = 0;
+		int Here = 0, Climaxes = 0;
 		for (size_t i = 0; pFindings != 0 && i < pFindings->Items().size(); ++i) {
 			const Json &F = pFindings->Items()[i];
 			const Json *pKind = F.Get("kind");
-			if (pKind == 0 || !pKind->IsString() || pKind->String() != "too_busy")
+			const bool Climax = pKind != 0 && pKind->IsString() && pKind->String() == "climax_repeats";
+			if (pKind == 0 || !pKind->IsString() || (pKind->String() != "too_busy" && !Climax))
 				continue;
-			++Here;
+			(Climax ? Climaxes : Here) += 1;
 			const Json *pMessage = F.Get("message");
 			std::printf("    %s track %d: %s\n", Path.substr(Path.find_last_of('/') + 1).c_str(), t + 1,
 				pMessage != 0 && pMessage->IsString() ? pMessage->String().c_str() : "");
 		}
 		const std::string Next = Tools.Call("what_next", Parse("{\"all\": true}")).Text;
 		const bool Step = Next.find("oo busy for the NES") != std::string::npos;
+		const bool ClimaxStep = Next.find("the song's high point, plays the melody") != std::string::npos;
+		if (!Flagged && (Climaxes > 0 || ClimaxStep)) {
+			std::printf("FAIL %s track %d: %d climax_repeats findings%s on a song the user keeps\n", Path.c_str(), t + 1, Climaxes,
+				ClimaxStep ? " and a what_next step" : "");
+			++g_Failures;
+		}
 		if (Flagged && Here > 0 && !Step) {
 			std::printf("FAIL %s track %d: what_next lists no step for its too_busy finding\n", Path.c_str(), t + 1);
 			++g_Failures;

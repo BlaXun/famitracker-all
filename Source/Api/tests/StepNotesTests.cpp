@@ -153,6 +153,17 @@ void TestDrumRuns()
 		HasNote(Line, 14, 1, "tom"));
 }
 
+// The noise's pitches as FamiTracker shows them and as a model writes them (from feat-tool-replies), and pitches spelled
+// with flats: each one step
+void TestNoiseAndFlats()
+{
+	StepLine Line = Parsed("F-# . F# . noise F noise 15 noise F-# 0-# | Eb4 - Bb3 Ab3 Db4 - . .");
+	CHECK(Line.Bars.size() == 2u && Line.Bars[0].Steps == 8 && Line.Bars[1].Steps == 8);
+	CHECK(HasNote(Line, 0, 1, "F-#") && HasNote(Line, 2, 1, "F#") && HasNote(Line, 4, 1, "noise F") && HasNote(Line, 5, 1, "noise 15") &&
+		HasNote(Line, 6, 1, "noise F-#") && HasNote(Line, 7, 1, "0-#"));
+	CHECK(HasNote(Line, 8, 2, "Eb4") && HasNote(Line, 10, 1, "Bb3") && HasNote(Line, 11, 1, "Ab3") && HasNote(Line, 12, 2, "Db4"));
+}
+
 // | ends a bar, as a new line does; | at a line's start or end, a double bar line and blank lines end no other
 void TestBarLines()
 {
@@ -244,6 +255,7 @@ int main()
 	TestBarNumbers();
 	TestFormat();
 	TestDrumRuns();
+	TestNoiseAndFlats();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

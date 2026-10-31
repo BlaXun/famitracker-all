@@ -810,6 +810,22 @@ std::string PitchText(const ChannelInfo &Channel, int Pitch)
 	return Channel.Kind == KIND_NOISE ? NoisePitchName(Pitch & 15) : PitchName(Pitch);
 }
 
+// A pitch spelled as a key spells it: "Eb4", "Bb3" in C minor, "F#4" in G major, "D-4" either way (pKey null: sharps,
+// as PitchName). ParsePitch reads both
+std::string KeyedPitchName(int Pitch, const Key *pKey)
+{
+	if (pKey == 0 || Pitch < 0 || Pitch >= PITCHES)
+		return PitchName(Pitch);
+	const std::string Class = NoteClassName(Pitch % 12, *pKey);
+	return Class + (Class.size() == 1 ? "-" : "") + std::to_string(Pitch / 12);
+}
+
+// The same on a channel: the noise's own names there
+std::string KeyedPitchText(const ChannelInfo &Channel, int Pitch, const Key *pKey)
+{
+	return Channel.Kind == KIND_NOISE ? NoisePitchName(Pitch & 15) : KeyedPitchName(Pitch, pKey);
+}
+
 // Stereo (this FamiTracker's own: the pan effect, 8xx; the NES, FamiTracker
 // 0.4.6 and NSF files are mono, the game's OGG files are stereo)
 
@@ -1315,6 +1331,40 @@ void OddDutyRemark(Session &S, const InstrumentInfo &I, const ChannelInfo &Info)
 		S.Remarks.push_back(Text);
 }
 
+// A name without the note its maker added at its end in parentheses: "Rust saw (saw)" is "Rust saw"; the name itself
+// when it has none
+std::string NameWithoutNote(const std::string &Name)
+{
+	const std::string Trimmed = Trim(Name);
+	const size_t Open = Trimmed.rfind(" (");
+	if (Open == std::string::npos || Open == 0 || Trimmed.empty() || Trimmed.back() != ')')
+		return Trimmed;
+	return Trimmed.substr(0, Open);
+}
+
+// How far apart two names are, for listing the nearest first: 0 when one holds the other, else the edits that make one
+// the other (letters put in, taken out or changed)
+int NameDistance(const std::string &A, const std::string &B)
+{
+	if (A.empty() || B.empty())
+		return static_cast<int>(A.size() + B.size());
+	if (A.find(B) != std::string::npos || B.find(A) != std::string::npos)
+		return 0;
+	std::vector<int> Row(B.size() + 1);
+	for (size_t j = 0; j <= B.size(); ++j)
+		Row[j] = static_cast<int>(j);
+	for (size_t i = 1; i <= A.size(); ++i) {
+		int Diagonal = Row[0];
+		Row[0] = static_cast<int>(i);
+		for (size_t j = 1; j <= B.size(); ++j) {
+			const int Up = Row[j];
+			Row[j] = std::min(std::min(Row[j] + 1, Row[j - 1] + 1), Diagonal + (A[i - 1] == B[j - 1] ? 0 : 1));
+			Diagonal = Up;
+		}
+	}
+	return Row[B.size()];
+}
+
 // An instrument for notes on a channel: one in the song (by name, or by its
 // number as FamiTracker shows it), or a preset, which is added
 int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
@@ -1484,16 +1534,40 @@ int ResolveInstrument(Session &S, const std::string &Wanted, int Channel)
 			return Number;
 		}
 	}
+	// A song instrument by its name without what its maker added in parentheses: design_instrument's "Rust saw (saw)" as
+	// "Rust saw", when one instrument of the chip has that name. Last, so presets and the chips' sounds keep their names
+	{
+		std::vector<const InstrumentInfo *> Mine, Others;
+		for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
+			const InstrumentInfo &I = S.Song.Instruments[i];
+			const std::string Base = Lowercase(Trim(NameWithoutNote(I.Name)));
+			if (Base != Lower)
+				continue;
+			(I.Chip == Chip ? Mine : Others).push_back(&I);
+		}
+		if (Mine.size() == 1) {
+			if (Info.Kind == KIND_SAWTOOTH && Mine[0]->OddDuty)
+				OddDutyRemark(S, *Mine[0], Info);
+			return Mine[0]->Index;
+		}
+		if (Mine.empty() && Others.size() == 1 && pWrongChip == 0)
+			pWrongChip = Others[0];
+	}
 	if (pWrongChip != 0)
 		throw Problem(Format("\"%s\" is %s instrument; %s needs %s one. A preset name (like \"soft lead\") adds one.",
 			pWrongChip->Name.c_str(), AChip(pWrongChip->Chip).c_str(), Info.FullName().c_str(), AChip(Chip).c_str()));
+	// The chip's instruments, the names nearest the one asked for first
+	std::vector<std::pair<int, std::string> > Near;
+	for (size_t i = 0; i < S.Song.Instruments.size(); ++i)
+		if (S.Song.Instruments[i].Chip == Chip)
+			Near.push_back(std::make_pair(NameDistance(Lower, Lowercase(S.Song.Instruments[i].Name)), S.Song.Instruments[i].Name));
+	std::stable_sort(Near.begin(), Near.end(), [](const std::pair<int, std::string> &A, const std::pair<int, std::string> &B) {
+		return A.first < B.first; });
 	std::string Names;
-	for (size_t i = 0; i < S.Song.Instruments.size(); ++i) {
-		if (S.Song.Instruments[i].Chip != Chip)
-			continue;
+	for (size_t i = 0; i < Near.size(); ++i) {
 		if (!Names.empty())
 			Names += ", ";
-		Names += "\"" + S.Song.Instruments[i].Name + "\"";
+		Names += "\"" + Near[i].second + "\"";
 	}
 	if (Chip == "VRC7")
 		throw Problem(Format("No instrument or VRC7 sound called \"%s\". VRC7 instruments in the song: %s. VRC7 sounds: %s (or a preset's "
@@ -2782,12 +2856,22 @@ std::string GridsThatFit(const Timing &T)
 }
 
 // A pitch as the steps write it: "D4", "C#4"; the noise's "D-#"
-std::string StepPitch(const ChannelInfo &Info, int Pitch)
+std::string StepPitch(const ChannelInfo &Info, int Pitch, const Key *pKey = 0)
 {
-	std::string Text = PitchText(Info, Pitch);
+	std::string Text = Info.Kind == KIND_NOISE ? PitchText(Info, Pitch) : KeyedPitchName(Pitch, pKey);
 	if (Info.Kind != KIND_NOISE && Text.size() == 3 && Text[1] == '-')
 		Text.erase(1, 1);
 	return Text;
+}
+
+// The pitch a note of a melodic channel is heard holding: a scoop's (polish's Qxy on its first row, the note written
+// under its target) where it lands; the noise's and the samples' as written
+int HeldPitchOf(const ChannelInfo &Info, const NoteInfo &N)
+{
+	if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM)
+		return N.Pitch;
+	const int Landed = LandedPitch(N);
+	return Landed >= 0 && Landed < PITCHES ? Landed : N.Pitch;
 }
 
 const char *const STEP_HELP = " In steps, every token is a step: a pitch (D4, C#4, Bb3) starts a note, - holds it a step more "
@@ -2807,6 +2891,9 @@ std::string ReadNotesInSteps(Session &S, const Json &Args, std::string &Why)
 	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
 	const int First = S.Time.BarStart(From), End = S.Time.BarEnd(To);
 	const int Wanted = StepArg(Args);
+	// Pitches spelled as the track's key spells them (flats in C minor)
+	Key SpellKey;
+	const Key *pSpell = TrackKey(S, 0, S.Time.TotalRows(), SpellKey) ? &SpellKey : 0;
 
 	// The grid asked for, else a finer one the notes sit on
 	StepGrid Grid = GridOf(S.Time, Wanted);
@@ -2866,7 +2953,7 @@ std::string ReadNotesInSteps(Session &S, const Json &Args, std::string &Why)
 			StepLineNote L;
 			L.Step = (N.Row - First) / Grid.Rows;
 			L.Steps = std::max(1, (Z - N.Row) / Grid.Rows);
-			L.Pitch = StepPitch(Info, N.Pitch);
+			L.Pitch = StepPitch(Info, HeldPitchOf(Info, N), pSpell);
 			L.Volume = N.VolumeSet ? N.Volume : -1;
 			Line.Notes.push_back(L);
 			Shown.push_back(&N);
@@ -2884,7 +2971,8 @@ std::string ReadNotesInSteps(Session &S, const Json &Args, std::string &Why)
 	Text += std::string(". A pitch starts a note, - holds it a step more, . is a step of rest") + (Volumes ? ", and v after a "
 		"pitch is its volume (the notes after it keep it)" : "") + ":";
 	if (pHeld != 0)
-		Text += Format("\nIt starts by holding %s from %s (the - at its start).", PitchText(Info, pHeld->Pitch).c_str(),
+		Text += Format("\nIt starts by holding %s from %s (the - at its start).", KeyedPitchText(Info, HeldPitchOf(Info, *pHeld),
+			pSpell).c_str(),
 			S.Time.Position(pHeld->Row).c_str());
 	// The instruments, where they change
 	{
@@ -2912,7 +3000,27 @@ std::string ReadNotesInSteps(Session &S, const Json &Args, std::string &Why)
 
 	if (pOn != 0)
 		Text += Format("\n%s rings on into bar %d: left as it is, it goes on ringing; a . at the line's end stops it there.",
-			PitchText(Info, pOn->Pitch).c_str(), To + 1);
+			KeyedPitchText(Info, HeldPitchOf(Info, *pOn), pSpell).c_str(), To + 1);
+	// Scoops and slides as a note starts: the line shows the pitch each lands on and holds
+	{
+		std::string List;
+		int Count = 0;
+		for (size_t i = 0; i < Shown.size(); ++i) {
+			const int Held = HeldPitchOf(Info, *Shown[i]);
+			if (Held == Shown[i]->Pitch)
+				continue;
+			if (++Count > MAX_LISTED)
+				continue;
+			List += Format("%s%s %s (%s from %s)", List.empty() ? "" : ", ", S.Time.Position(Shown[i]->Row).c_str(),
+				StepPitch(Info, Held, pSpell).c_str(), Held > Shown[i]->Pitch ? "scoops up" : "slides down",
+				KeyedPitchName(Shown[i]->Pitch, pSpell).c_str());
+		}
+		if (Count > MAX_LISTED)
+			List += Format(" and %d more", Count - MAX_LISTED);
+		if (Count > 0)
+			Text += "\nSlides into a note (Qxy, Rxy on its first row) show in the line as the pitch it lands on and holds; written "
+				"back at the same step with that pitch, a note keeps its slide: " + List + ".";
+	}
 	{
 		std::string List;
 		int Count = 0;
@@ -2925,7 +3033,7 @@ std::string ReadNotesInSteps(Session &S, const Json &Args, std::string &Why)
 			for (size_t e = 0; e < Shown[i]->Effects.size(); ++e)
 				Effects += (e == 0 ? "" : " ") + EffectText(Shown[i]->Effects[e].second.first, Shown[i]->Effects[e].second.second);
 			List += Format("%s%s %s %s", List.empty() ? "" : ", ", S.Time.Position(Shown[i]->Row).c_str(),
-				StepPitch(Info, Shown[i]->Pitch).c_str(), Effects.c_str());
+				StepPitch(Info, HeldPitchOf(Info, *Shown[i]), pSpell).c_str(), Effects.c_str());
 		}
 		if (Count > MAX_LISTED)
 			List += Format(" and %d more", Count - MAX_LISTED);
@@ -2981,6 +3089,23 @@ bool SameEffects(const Cell &A, const Cell &B)
 std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vector<Cell> &Cells,
 	const std::vector<std::pair<int, int> > &Spans, bool Direct, bool Core, const StepLine *pLine);
 std::string WarningLines(const std::vector<std::string> &Warnings);
+
+// What write_notes says of a token the noise channel can't play (Steps: in a line of steps). A pitch with an octave
+// ("F#3", a guess at FamiTracker's "F-#") is told apart: FamiTracker would play it as the noise pitch of its note counted
+// round 16 (F#3 as A-#), which is rarely the sound meant
+std::string NoiseSoundError(const std::string &Which, const std::string &Token, bool Steps)
+{
+	const std::string Forms = Steps ? "Write F-# (or F) for the brightest hiss, 0-# (or 0) for the darkest rumble, or a drum: "
+		"kick, snare, hihat, open hihat, crash, tom: \"kick . hihat . snare . hihat .\"" : "Write \"pitch\": \"F-#\" for the "
+		"brightest hiss, \"0-#\" for the darkest rumble, or a drum: kick, snare, hihat, open hihat, crash, tom";
+	int Pitch = 0;
+	if (ParsePitch(Token, Pitch))
+		return Format("%s: \"%s\" has an octave, which the noise's pitches don't: FamiTracker shows its 16 pitches as 0-# (darkest) "
+			"to F-# (brightest), and would play %s as %s (its note counted round 16). %s.", Which.c_str(), Token.c_str(),
+			Token.c_str(), NoisePitchName(Pitch & 15).c_str(), Forms.c_str());
+	return Format("%s: \"%s\" isn't a noise sound. The noise channel plays 16 pitches, 0-# (darkest) to F-# (brightest hiss), "
+		"with no octave. %s.", Which.c_str(), Token.c_str(), Forms.c_str());
+}
 
 // write_notes' instruments for each kind of drum hit ({"kick": "Kick", "open hihat": 5}) on the noise and DPCM channels, by
 // the kinds' names as the hits are read: ParseNoisePitch's on the noise ("hi-hat", "open hi-hat"), the kit's keys on the DPCM
@@ -3240,8 +3365,7 @@ std::string WriteNotesInSteps(Session &S, const Json &Args, bool Core = false)
 		}
 		else if (Noise) {
 			if (!ParseNoisePitch(L.Pitch, Pitch, Drum))
-				throw Problem(Format("%s: \"%s\" isn't a noise sound. Use kick, snare, hihat, open hihat or a noise pitch 0-# to F-#.",
-					Which.c_str(), L.Pitch.c_str()));
+				throw Problem(NoiseSoundError(Which, L.Pitch, true));
 			Kind = Drum;
 		}
 		else if (!ParsePitch(L.Pitch, Pitch))
@@ -3249,7 +3373,8 @@ std::string WriteNotesInSteps(Session &S, const Json &Args, bool Core = false)
 				"(FamiTracker octaves: C-3 is middle C, from C-0 to B-7).", Which.c_str(), L.Pitch.c_str()));
 		int Same = -1;
 		for (size_t i = 0; i < Old.size() && Same < 0 && Old[i].Row <= Row; ++i)
-			if (Old[i].Row == Row && (Noise ? (Old[i].Pitch & 15) == (Pitch & 15) : Old[i].Pitch == Pitch))
+			if (Old[i].Row == Row && (Noise ? (Old[i].Pitch & 15) == (Pitch & 15) :
+				HeldPitchOf(Info, Old[i]) == Pitch))	// a scoop by the pitch it lands on, as read_notes shows it
 				Same = static_cast<int>(i);
 		PartNote N;
 		if (Same >= 0) {
@@ -3450,6 +3575,17 @@ std::string ReadChannel(Session &S, const Json &Args)
 			S.Time.RowsPerBar / S.Time.RowsPerBeat, S.Time.RowsPerBeat);
 	int Instrument = -1, Volume = -1, Pan = -1;
 	size_t Shown = 0;
+	// Pitches spelled as the track's key spells them, and a note that slides as it starts says where it lands
+	Key SpellKey;
+	const Key *pSpell = TrackKey(S, 0, S.Time.TotalRows(), SpellKey) ? &SpellKey : 0;
+	auto Pitched = [&](const NoteInfo &N) {
+		const int Held = HeldPitchOf(Info, N);
+		std::string Text = KeyedPitchText(Info, N.Pitch, pSpell);
+		if (Held != N.Pitch)
+			Text += Format(" (%s %s at once, and holds it)", Held > N.Pitch ? "scoops up to" : "slides down to",
+				KeyedPitchName(Held, pSpell).c_str());
+		return Text;
+	};
 	for (int Bar = From; Bar <= To; ++Bar) {
 		const int BarFirst = S.Time.BarStart(Bar), BarEnd = S.Time.BarEnd(Bar);
 		bool Any = false;
@@ -3462,11 +3598,11 @@ std::string ReadChannel(Session &S, const Json &Args)
 			++Shown;
 			std::string Line;
 			if (Held)
-				Line = Format("\n(held from %s: %s, %s more)", S.Time.Position(N.Row).c_str(), PitchText(Info, N.Pitch).c_str(),
+				Line = Format("\n(held from %s: %s, %s more)", S.Time.Position(N.Row).c_str(), Pitched(N).c_str(),
 					S.Time.Length(N.Row + N.Rows - First).c_str());
 			else {
 				Line = Format("\nbar %d beat %s: %s, %s", Bar, FormatNumber(S.Time.BeatOf(N.Row)).c_str(),
-					PitchText(Info, N.Pitch).c_str(), S.Time.Length(N.Rows).c_str());
+					Pitched(N).c_str(), S.Time.Length(N.Rows).c_str());
 				if (N.Instrument != Instrument && N.Instrument != NO_INSTRUMENT)
 					Line += ", " + InstrumentLabel(S.Song, N.Instrument);
 				if (N.VolumeSet || (Volume < 0 && N.Volume != 15))
@@ -3572,8 +3708,7 @@ std::string WriteNotes(Session &S, const Json &Args, bool Core)
 		}
 		else if (Noise) {
 			if (!ParseNoisePitch(Pitch, Note.Pitch, Drum))
-				throw Problem(Format("%s: \"%s\" isn't a noise sound. Use kick, snare, hihat, open hihat or a noise pitch 0-# to F-#.",
-					Which.c_str(), Pitch.c_str()));
+				throw Problem(NoiseSoundError(Which, Pitch, false));
 			Kind = Drum;
 		}
 		else if (!ParsePitch(Pitch, Note.Pitch))
@@ -13656,7 +13791,7 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main part (IntroFinding); and (BusyFindings) a part too busy for the NES. Each carries the call
 // that fixes it where one does (the intro's may be advice alone: Fix null)
 enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO, ARRANGE_BUSY,
-	ARRANGE_KINDS };
+	ARRANGE_CLIMAX, ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -14243,12 +14378,88 @@ void BarsAlike(Session &S, int Channel, int FromA, int FromB, int Bars, int &Sam
 	}
 }
 
+// A climax that repeats (from feat-tool-replies): a section named as the song's high point (Climax, Peak, Finale:
+// IsClimaxName) whose melody plays an earlier section's of its length note for note, or nearly (REPEAT_MELODY of their
+// bars alike, as BarsAlike compares them), whatever the other parts add there: a local model copied A into its Climax
+// with copy_bars, added drums and a harmony, and the review gave it 10. The tune itself has to lift at the high point. Its
+// fix takes the climax's melody an octave up (vary_part octave_up) while that keeps it under CLIMAX_TOP as it sounds,
+// else it's advice. None of the user's 43 kept songs has one (their climaxes, where named, play a tune of their own)
+const int CLIMAX_TOP = 64;	// E-5, where the soundtrack's leads peak at most (GUARD_LEAD_TOP's measure): an octave up stays there
+
+void ClimaxFindings(Session &S, int Melody, int From, int To, std::vector<ArrangeFinding> &Out)
+{
+	const SectionList &List = S.Song.Sections;
+	if (Melody < 0)
+		return;
+	for (size_t y = 0; y < List.size(); ++y) {
+		if (!IsClimaxName(List[y].Name))
+			continue;
+		const int YFrom = SectionFirstBar(S, List[y]), YTo = SectionLastBar(S, List[y]);
+		if (YFrom < From || YTo > To)
+			continue;
+		for (size_t x = 0; x < y; ++x) {
+			const int XFrom = SectionFirstBar(S, List[x]), XTo = SectionLastBar(S, List[x]);
+			if (XTo - XFrom != YTo - YFrom || XFrom < From || XTo >= YFrom)
+				continue;
+			const int Bars = XTo - XFrom + 1;
+			int Same = 0, Playing = 0, InX = 0, InY = 0, Notes = 0;
+			BarsAlike(S, Melody, XFrom, YFrom, Bars, Same, Playing, InX, InY, Notes);
+			const double Tune = Playing > 0 ? Same / static_cast<double>(Playing) : 0.0;
+			if (InX < Bars / 2 || InX < 2 || InY < Bars / 2 || Tune < REPEAT_MELODY)
+				continue;
+			// The climax's highest melody note as it sounds
+			const ChannelInfo &Info = S.Channel(Melody);
+			const int First = S.Time.BarStart(YFrom), End = S.Time.BarEnd(YTo);
+			int Top = -1;
+			for (const NoteInfo &N : S.Notes(Melody))
+				if (N.Row >= First && N.Row < End && N.Volume > 0)
+					Top = std::max(Top, LandedPitch(N) - Written(Info, 0));
+			const bool Lifts = Top >= 0 && Top + 12 <= CLIMAX_TOP;
+			const bool Exact = Tune >= 0.999;
+			ArrangeFinding F;
+			F.Kind = ARRANGE_CLIMAX;
+			F.Channel = Melody;
+			F.FromBar = YFrom;
+			F.ToBar = YTo;
+			F.Weight = 1.0;
+			F.Text = Format("\"%s\" (%s), the song's high point, plays the melody of \"%s\" (%s) %s: whatever the other parts add "
+				"there, it's heard as %s once more, not a climax. Lift the tune itself: %s, or a phrase of its own that climbs to "
+				"the song's highest note.", List[y].Name.c_str(), RangeText(YFrom, YTo).c_str(), List[x].Name.c_str(),
+				RangeText(XFrom, XTo).c_str(), Exact ? "note for note" : "nearly note for note", List[x].Name.c_str(), Lifts ?
+				"an octave up there (vary_part octave_up on its bars)" : "higher notes at its peak (write_notes)");
+			F.Summary = Format("the climax \"%s\" repeats \"%s\"'s melody %s", List[y].Name.c_str(), List[x].Name.c_str(),
+				Exact ? "note for note" : "nearly note for note");
+			F.Details.Set("section", List[y].Name);
+			F.Details.Set("repeats", List[x].Name);
+			F.Details.Set("repeats_from_bar", XFrom);
+			F.Details.Set("melody_alike", Json::NumberText(FormatNumber(std::floor(Tune * 100 + 0.5) / 100)));
+			if (Lifts) {
+				Json Vary = Json::MakeObject();
+				Vary.Set("channel", Info.FullName());
+				Vary.Set("variation", "octave_up");
+				Vary.Set("section", List[y].Name);
+				F.Fix = ToolCall("vary_part", Vary, "takes the melody in \"" + List[y].Name + "\" an octave up, so the high point "
+					"lifts");
+			}
+			else
+				F.Fix = Json();
+			Out.push_back(F);
+			break;
+		}
+	}
+}
+
 void RepeatFindings(Session &S, int Melody, int From, int To, std::vector<ArrangeFinding> &Out)
 {
 	const SectionList &List = S.Song.Sections;
 	if (Melody < 0)
 		return;
 	std::set<size_t> Found;
+	// A climax found repeating is that finding's (ClimaxFindings)
+	for (size_t y = 0; y < List.size(); ++y)
+		for (size_t i = 0; i < Out.size(); ++i)
+			if (Out[i].Kind == ARRANGE_CLIMAX && Out[i].FromBar == SectionFirstBar(S, List[y]))
+				Found.insert(y);
 	for (size_t y = 0; y < List.size(); ++y) {
 		const int YFrom = SectionFirstBar(S, List[y]), YTo = SectionLastBar(S, List[y]);
 		if (YFrom < From || YTo > To || Found.count(y) > 0)
@@ -14714,6 +14925,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	BassFindings(S, Melody, From, To, Calm, K, Out);
 	SoundFindings(S, From, To, Out);
 	FadersFinding(S, Ears, Melody, From, To, Calm, Out);
+	ClimaxFindings(S, Melody, From, To, Out);
 	RepeatFindings(S, Melody, From, To, Out);
 	LoopFinding(S, Style, Use, Out);
 	IntroFinding(S, Ears, Melody, From, Style, Out);
@@ -14827,6 +15039,43 @@ struct ReviewTip {
 	ReviewTip() : Weight(0.0) {}
 };
 
+// The first bars a text names, as it names them: "bars 5-10, 13-18 and 29-34", "bar 9"; empty for none
+std::string BarsNamedIn(const std::string &Text)
+{
+	for (size_t At = Text.find("bar"); At != std::string::npos; At = Text.find("bar", At + 3)) {
+		if (At > 0 && std::isalpha(static_cast<unsigned char>(Text[At - 1])))
+			continue;
+		size_t i = At + 3;
+		if (i < Text.size() && Text[i] == 's')
+			++i;
+		if (i + 1 >= Text.size() || Text[i] != ' ' || !std::isdigit(static_cast<unsigned char>(Text[i + 1])))
+			continue;
+		// The list: numbers, ranges, ", " and " and " between them
+		size_t End = i + 1;
+		for (size_t k = i + 1; k < Text.size(); ) {
+			if (std::isdigit(static_cast<unsigned char>(Text[k]))) {
+				End = ++k;
+				continue;
+			}
+			if (Text[k] == '-' && k + 1 < Text.size() && std::isdigit(static_cast<unsigned char>(Text[k + 1]))) {
+				++k;
+				continue;
+			}
+			if (Text.compare(k, 2, ", ") == 0 && k + 2 < Text.size() && std::isdigit(static_cast<unsigned char>(Text[k + 2]))) {
+				k += 2;
+				continue;
+			}
+			if (Text.compare(k, 5, " and ") == 0 && k + 5 < Text.size() && std::isdigit(static_cast<unsigned char>(Text[k + 5]))) {
+				k += 5;
+				continue;
+			}
+			break;
+		}
+		return Text.substr(At, End - At);
+	}
+	return std::string();
+}
+
 // A tip as the short forms give it: its summary and call, or else its first clause (up to a colon or a full stop) and
 // the tool its text names first
 std::string ShortTip(const std::string &Text, const std::string &Summary, const Json &Fix)
@@ -14841,6 +15090,10 @@ std::string ShortTip(const std::string &Text, const std::string &Summary, const 
 	if (Cut == std::string::npos || Cut > 160)
 		Cut = std::min<size_t>(Text.size(), 160);
 	std::string Line = Text.substr(0, Cut);
+	// A tip about places keeps them: "The melody hardly pauses (bars 5-10, 13-18 and 29-34)"
+	std::string Places = BarsNamedIn(Text);
+	if (Line.find("bar") != std::string::npos)
+		Places.clear();
 	static const char *const TOOLS[] = { "add_chords_and_bass", "add_counter_melody", "add_harmony", "add_drums", "add_echo",
 		"add_sample_drums", "add_vibrato", "polish", "mix", "write_notes", "transpose", "vary_part", "set_pan", "design_instrument",
 		"set_instrument", "insert_bars", "copy_bars", "set_loop", "set_mixer", "set_tempo", "change_mood" };
@@ -14857,7 +15110,9 @@ std::string ShortTip(const std::string &Text, const std::string &Summary, const 
 			Tool = TOOLS[t];
 		}
 	}
-	return Line + (Tool.empty() ? "." : " (" + Tool + ").");
+	if (Places.empty())
+		return Line + (Tool.empty() ? "." : " (" + Tool + ").");
+	return Line + " (" + Places + (Tool.empty() ? ")." : "; " + Tool + ").");
 }
 
 // review_arrangement's short form: the score, the parts, the numbers that matter, and the three tips that matter most
@@ -15405,7 +15660,8 @@ std::string ReviewTool(Session &S, const Json &Args)
 		if (High - Low < 7 && Tune.size() >= 8)
 			Tip(1.0, "The melody stays within a few notes: let a phrase climb to a high point (a climax) and fall back.");
 		if (!Repeats.empty() && Repeats.size() * 4 >= static_cast<size_t>(BarCount))
-			Tip(1.0, "Phrases come back unchanged: vary the repeat (another ending, an octave up, a counter-melody "
+			Tip(1.0, std::string("Phrases come back unchanged") + (Repeats.size() == 1 ? Format(" in bar %d", Repeats[0]) : " in bars " +
+				BarList(Repeats)) + ": vary the repeat (another ending, an octave up, a counter-melody "
 				"only the second time, busier drums).");
 		if (LongBare > 0)
 			Tip(0.5, Plural(LongBare, "long melody note has", "long melody notes have") + std::string(Calm ? " no vibrato: polish "
@@ -15766,7 +16022,7 @@ std::string ReviewTool(Session &S, const Json &Args)
 		BusyFound = BusyFound || Arranged[i].Kind == ARRANGE_BUSY;
 	for (size_t i = 0; BusyFound && i < Tips.size(); ) {
 		const std::string &Said = Tips[i].Text;
-		if (Said.compare(0, 26, "The melody has no company:") == 0 || Said.compare(0, 31, "Phrases come back unchanged: va") == 0 ||
+		if (Said.compare(0, 26, "The melody has no company:") == 0 || Said.compare(0, 27, "Phrases come back unchanged") == 0 ||
 			Said.compare(0, 28, "A repeat with nothing new is") == 0) {
 			Missing -= Tips[i].Weight;
 			Tips.erase(Tips.begin() + static_cast<std::ptrdiff_t>(i));
@@ -21234,6 +21490,22 @@ std::string FetchText(const Caller &Who, const std::vector<SavedFile> &Saved, bo
 // export_for_game. Who: who asks (Caller): a client over MCP gets a song without a file saved into the Songs folder first,
 // and one on another computer the files' links. Files: the files saved, as the reply links them as MCP resources (and
 // carries them, with attach)
+// What export_for_game's reply ends with when a program calls it (not FamiTracker's own windows) for a song not listened
+// to as it is (no kept listen with its print, SoundPrint): one line pointing to finish_song or listen, since a local model
+// polished, mixed and exported one by one and never heard the result. Empty otherwise
+std::string ExportListenHint(Session &S, const Caller &Who)
+{
+	if (!Who.Client || UseOfTrack(S).Use != TRACK_MUSIC)
+		return std::string();
+	Json Kept;
+	const Json *pPrint = !S.Host().LastListen().empty() && ParseJson(S.Host().LastListen(), Kept) ? Kept.Get("print") : 0;
+	if (pPrint != 0 && pPrint->IsString() && pPrint->String() == SoundPrint(S))
+		return std::string();
+	return Who.Core && !ToolSet::IsCoreTool("finish_song") ? "\nNot listened to as it is: listen hears it as an ear would." :
+		"\nNot listened to as it is: finish_song polishes, mixes, fixes the seam, listens and exports in one call (or listen "
+		"hears it as it is now).";
+}
+
 std::string ExportTool(Session &S, const Json &Args, const Caller &Who, std::vector<ToolFile> &Files)
 {
 	const float Quality = static_cast<float>(NumberArg(Args, "quality", 0.6, 0.0, 1.0));
@@ -24289,18 +24561,21 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // that jumps into the main part
 // WARBLE (from feat-listen): FDS notes held past where a fast, deep modulator comes in, heard as a fluttering echo.
 // TOO_BUSY (from feat-busy-check): the arrangement's ARRANGE_BUSY, a part too busy for the NES (BusyFindings); BUSY is a
-// bar of quick notes, the older and smaller check
+// bar of quick notes, the older and smaller check. CLIMAX (from feat-tool-replies): ARRANGE_CLIMAX, a section named as the
+// high point whose melody repeats an earlier one's (ClimaxFindings)
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
-	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY, FOUND_KINDS };
+	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY,
+	FOUND_CLIMAX, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy" };
+	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "medium", "high", "medium" };
+	"medium", "low", "low", "low", "medium", "high", "medium", "medium" };
 
 // The check_song kind of one of ArrangeFindings' (arrange_kind)
 int ArrangeCheckKind(int Kind)
 {
-	return Kind == ARRANGE_BUSY ? static_cast<int>(FOUND_TOO_BUSY) : FOUND_PHRASES + Kind;
+	return Kind == ARRANGE_BUSY ? static_cast<int>(FOUND_TOO_BUSY) : Kind == ARRANGE_CLIMAX ? static_cast<int>(FOUND_CLIMAX) :
+		FOUND_PHRASES + Kind;
 }
 
 // A note a finding is about
@@ -24808,7 +25083,7 @@ std::string CheckTool(Session &S, const Json &Args)
 	}
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
-		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY] };
+		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX] };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -29357,6 +29632,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		return "Make the loop longer";
 	if (Id == "too_busy")
 		return Where(Tool == "vary_part" ? "Simplify a part too busy for the NES" : "Clear a line that competes with the melody", true);
+	if (Id == "climax_repeats")
+		return Where("Lift the climax's melody an octave", true);
 	// The recipe's steps
 	if (Id == "tempo")
 		return "Set the tempo to " + FormatNumber(Number("bpm")) + " BPM";
@@ -30054,7 +30331,10 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"The notes of one channel in musical terms: bar, beat, note, length in beats, instrument, volume, effects and pan "
 		"(where it changes). Up to 64 bars or 600 notes per call (whole bars); when it reads fewer bars than asked, its first "
 		"line says which and how to read the rest. With format steps, the part as write_notes takes a melody in steps, a bar "
-		"to a line, to change and give back (notes between the steps read at a finer step, or as notes).",
+		"to a line, to change and give back (notes between the steps read at a finer step, or as notes). Pitches are spelled in "
+		"the track's key (Eb4, Bb3 in C minor). A note that scoops or slides into its pitch as it starts (polish's Qxy, written "
+		"a semitone or two under it) shows as the pitch it lands on and holds, not a chromatic step: given back at the same "
+		"step it keeps its slide.",
 		Schema().Add("channel", ChannelProp("Channel name (\"VRC6 Pulse 1\", \"Triangle\") or number from get_song."), true).Range()
 			.Add("format", EnumProp("notes (the default: each note's bar, beat and length) or steps (a line of steps, as write_notes "
 				"takes a melody).", std::vector<std::string>{ "notes", "steps" }))
@@ -31956,7 +32236,10 @@ ToolResult ToolSet::Call(const std::string &Name, const Json &Arguments, const C
 		else if (Name == "song_shape") Result.Text = SongShapeTool(S, Args);
 		else if (Name == "set_key") Result.Text = SetKeyTool(S, Args);
 		else if (Name == "set_mixer") Result.Text = SetMixerTool(S, Args);
-		else if (Name == "export_for_game") Result.Text = ExportTool(S, Args, Who, Result.Files);
+		else if (Name == "export_for_game") {
+			Result.Text = ExportTool(S, Args, Who, Result.Files);
+			Result.Text += ExportListenHint(S, Who);
+		}
 		else if (Name == "finish_song") Result.Text = FinishSongTool(S, Args, Who, Result.Files);
 		else if (Name == "measure_mix") Result.Text = MeasureMixTool(S, Checked);
 		else if (Name == "set_pan") Result.Text = SetPanTool(S, Args);
@@ -32194,9 +32477,9 @@ std::string ToolSet::CoreInstructions()
 		"- Stereo: a note's \"pan\" in write_notes (left, right, center) lasts for the notes after it; keep the "
 		"melody, bass and drums in the middle.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
-		"- Finish: polish, then mix last in the kind's style (it balances the parts in the notes: faders at 0 dB), "
-		"export_for_game at the kind's loudness (about -20 LUFS, -22 calm, -19 action); what_next gives each. finish_song "
-		"listens after its mix: fix what it heard (what_next gives the steps), then export_for_game again.\n"
+		"- Finish: when the parts are written, call finish_song with the kind: it polishes, mixes, fixes the loop's seam, "
+		"listens and exports in one call (not polish, mix and export_for_game one by one). Fix what it heard with the calls "
+		"it gives, then export_for_game again.\n"
 
 		"Rules that decide how it sounds:\n"
 		"- Notes that vanish: a tune's notes need a sound that lasts. On a pluck that's gone within a few frames (15 10 5 2 1 "
@@ -32240,8 +32523,9 @@ std::string ToolSet::Instructions()
 		"clicks, sounds that hold on after their notes, notes hardly heard, harsh or muddy stretches): run it once the "
 		"parts are written and again after changing an FDS or N163 sound, not after every small edit; fix its high "
 		"and medium findings with the call each gives, and play a low one's bars to the user (it has no call): change "
-		"them only if the user wants; the user's own ear has the final word. finish_song listens after its mix and lists what it heard: fix those (what_next gives "
-		"them as steps), then export_for_game again. Run "
+		"them only if the user wants; the user's own ear has the final word. When the parts are written, call finish_song (with the "
+		"kind): it polishes, mixes, fixes the loop's seam, listens and exports in one call, rather than polish, mix and "
+		"export_for_game one by one; fix what it heard with the calls it lists, then export_for_game again. Run "
 		"check_song after writing, "
 		"look at the result with look_at_song, review_arrangement for depth, and use play so the user can listen, then ask them. "
 		"check_song's clashes (two parts a semitone apart) are harmony, which listen doesn't judge: make the fix a clash gives "
@@ -32589,8 +32873,11 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"11. set_loop from the bar after the intro, then check_loop and fix_loop until the seam is clean; look_at_song on a "
 		"section or two.\n"
 		"12. save_song; measure_mix with loudness " + std::string(Calm ? "-22" : Lively ? "-20" : "-19") + " and stems false "
-		"shows each section as the file will have it; then export_for_game with that loudness. Play it for me and ask what "
-		"I'd change; keep what I like in soundtrack_notes.\n\n";
+		"shows each section as the file will have it. Play it for me and ask what I'd change; keep what I like in "
+		"soundtrack_notes.\n"
+		"When the parts are written, finish_song with kind " + std::string(Calm ? "calm" : Lively ? "lively" : "action") + " does "
+		"step 9, step 11's seam and the file in one call: it polishes, mixes, fixes the loop's seam, listens and exports at "
+		"that loudness. Fix what it heard with the calls it gives, then export_for_game again.\n\n";
 	T += StyleGuideTopic(Kind);
 	return T;
 }
@@ -32625,10 +32912,12 @@ static std::string CoreRecipe(const std::string &Kind)
 		"longer notes.\n"
 		"5. Depth: add_harmony in the repeat, vary_part where a part comes back unchanged, and add_echo a beat behind, last "
 		"(delay_beats 1, detune 1, pan opposite, volume 5). No drums.\n"
-		"6. polish with style calm, then mix with style calm (the melody 2-3 dB over the chords).\n"
-		"7. check_song with style calm (0 clicking, 0 vanishing, no held lead) and review_arrangement with style calm (8 or "
+		"6. check_song with style calm (0 clicking, 0 vanishing, no held lead) and review_arrangement with style calm (8 or "
 		"more; tips that the melody is quiet or has few, long notes are expected here). Fix what they find and check again.\n"
-		"8. save_song, then export_for_game with loudness -22, and play it for the user.";
+		"7. When the parts are written: finish_song with kind calm. It polishes (style calm), mixes (the melody 2-3 dB over "
+		"the chords), fixes the loop's seam, listens and exports at -22 LUFS in one call; fix what it heard with the calls it "
+		"gives, then export_for_game again.\n"
+		"8. save_song, and play it for the user.";
 	if (Kind == "lively")
 		return
 		"A lively stage (a level to explore): it bounces and drives, its lead inside a full band, and it builds to a climax. "
@@ -32655,11 +32944,13 @@ static std::string CoreRecipe(const std::string &Kind)
 		"gentle place); then depth: add_harmony in the repeat and in the climax (a second voice harmonizing the tune), which "
 		"plays 2-4 dB over the first A, vary_part "
 		"where a part comes back unchanged, and add_echo a beat behind on the other side, last (delay_beats 1, pan opposite).\n"
-		"6. polish with style lively (accents, vibrato, separate, clicks), then mix with style lively (the melody's loudest at "
-		"9, the bass about level with it, the chords 3-4 dB under it, the band louder than it).\n"
-		"7. check_song (0 clicking, 0 vanishing) and review_arrangement with style lively (8 or more). Fix what they find and "
+		"6. check_song (0 clicking, 0 vanishing) and review_arrangement with style lively (8 or more). Fix what they find and "
 		"check again.\n"
-		"8. save_song, then export_for_game with loudness -20, and play it for the user.";
+		"7. When the parts are written: finish_song with kind lively. It polishes (accents, vibrato, separate, clicks), mixes "
+		"(the melody's loudest at 9, the bass about level with it, the chords 3-4 dB under it, the band louder than it), fixes "
+		"the loop's seam, listens and exports at -20 LUFS in one call; fix what it heard with the calls it gives, then "
+		"export_for_game again.\n"
+		"8. save_song, and play it for the user.";
 	if (Kind == "action")
 		return
 		"An action track (a fight, a boss, a chase): punchy and driving, the melody on top. With this set's tools.\n"
@@ -32682,9 +32973,11 @@ static std::string CoreRecipe(const std::string &Kind)
 		"D4 - | 8: C4 - - - - - . .\"\n"
 		"5. add_drums with groove driving and fills where phrases end; then depth: add_harmony in the repeat, vary_part where "
 		"a part comes back unchanged, and add_echo where the melody leaves room, last.\n"
-		"6. polish (its default touches: accents, vibrato, separate, clicks), then mix (style soft).\n"
-		"7. check_song (0 clicking, 0 vanishing) and review_arrangement (8 or more). Fix what they find and check again.\n"
-		"8. save_song, then export_for_game with loudness -19, and play it for the user.";
+		"6. check_song (0 clicking, 0 vanishing) and review_arrangement (8 or more). Fix what they find and check again.\n"
+		"7. When the parts are written: finish_song with kind action. It polishes (accents, vibrato, separate, clicks), mixes "
+		"(style soft), fixes the loop's seam, listens and exports at -19 LUFS in one call; fix what it heard with the calls it "
+		"gives, then export_for_game again.\n"
+		"8. save_song, and play it for the user.";
 	return
 		"Choose the kind of song from the user's words, then ask get_recipe for it:\n"
 		"- calm: only when the user asks for calm, peaceful or relaxing music (a place to rest, a night scene, a lullaby). The "
