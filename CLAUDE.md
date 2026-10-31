@@ -2475,6 +2475,35 @@ one fits. `TestWhatNextMelodyRoles` walks Night
 Harbor, and `CheckMelodyContrast` checks B's opening and the climax's top in
 `TestWhatNextLoop`'s and the shape walks.
 
+Hooks, journeys and vibratos (from `fix-gen4-melody`): six songs made by
+following `what_next` shared one hook rhythm (ExampleTune's closing cell),
+and a hut and a shop got the same B hook. `OfferedHook` now draws a song
+with a seed from `HookTune`'s pools in `WhatNext.cpp` (by `SeededHash` of
+the track's name and kind with the seed, `Mixed` salting each pool, the
+variant moving every pick): a figure of the kind's pace (`HookPace`: slow
+for a calm tune, busy for action and festive, else medium; `SLOW_FIGURES`,
+`MEDIUM_FIGURES`, `BUSY_FIGURES`: pickups, long-short, dotted, syncopated,
+a held opening note, call and answer, some a bar long), a contour
+(`CONTOURS`: arch, rise, fall, leap then steps, turn, dip), the degree it
+starts on and, for two bars, the one it rests on in the octave nearest. Its
+pitches are chosen as ExampleTune's (chord tones on strong beats, nothing a
+semitone from another part, `TuneHome`-5 to +12), a leap answered and no
+note three times running. A song without a seed gets ExampleTune's two bars
+as before (so `TestWhatNextLoop`'s walks are unchanged); B's and the
+climax's hooks come from the same pools (`ContrastingHooks`,
+`ClimbingHooks`). An adventure's words that ask for the kind (field, road,
+overworld, plains: `KindWordRow::Unshaped`) no longer pick the town's
+shape: "flying an airship high over green fields" is a stage. A pitch
+sequence's step is more cents the higher the note, so the bloom lead's
+gentle vibrato (3 steps) swung -75 to +60 cents at E-5 (Guard Tower):
+`design_instrument` takes `vibrato_at`, a note where the sound mostly
+plays, and `FitVibratoSwing` gives the steps that swing the depth's cents
+there (20, 40, 60; never more than the depth's own, on the period chips
+only), which `VibratoSwingItems` spreads over each quarter
+(`SoundDesign::VibratoSwing`); `what_next`'s lead step passes it at
+`TuneHome`'s sixth. `TestOfferedHooks`, `TestKindShapes` and
+`TestLeadVibratoFits` cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

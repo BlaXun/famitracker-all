@@ -107,6 +107,28 @@ std::vector<int> VibratoItems(int Delay, int Depth, int Rate, int &Loop)
 	return Items;
 }
 
+// A vibrato that swings Swing steps either way over a quarter of its Rate frames: VibratoItems' triangle with the steps
+// spread over each quarter (some frames still where Swing is under the quarter's frames), so a high note's vibrato can
+// swing fewer steps than a frame each (fix-gen4-melody); Swing of Depth times the quarter is VibratoItems' own
+std::vector<int> VibratoSwingItems(int Delay, int Swing, int Rate, int &Loop)
+{
+	std::vector<int> Items(static_cast<size_t>(std::max(0, Delay)), 0);
+	Loop = static_cast<int>(Items.size());
+	const int Quarter = std::max(1, Rate / 4);
+	std::vector<int> Up;
+	for (int i = 0; i < Quarter; ++i)
+		Up.push_back((i + 1) * Swing / Quarter - i * Swing / Quarter);
+	for (int i = 0; i < Quarter; ++i)
+		Items.push_back(Up[static_cast<size_t>(i)]);
+	for (int i = 0; i < Quarter; ++i)
+		Items.push_back(-Up[static_cast<size_t>(Quarter - 1 - i)]);
+	for (int i = 0; i < Quarter; ++i)
+		Items.push_back(-Up[static_cast<size_t>(i)]);
+	for (int i = 0; i < Quarter; ++i)
+		Items.push_back(Up[static_cast<size_t>(Quarter - 1 - i)]);
+	return Items;
+}
+
 // The faint vibrato (VIBRATO_FAINT): Delay frames of nothing, then the period one step longer for half of each cycle of
 // Rate frames and back for the other half, looping
 std::vector<int> FaintVibratoItems(int Delay, int Rate, int &Loop)
@@ -644,7 +666,7 @@ const Vrc7Patch *FindVrc7Patch(const std::string &Name)
 
 SoundDesign::SoundDesign() : Drum(false), Peak(13), Attack(1), AttackFrom(0), Decay(8), DecayStyle(DECAY_SMOOTH), Sustain(10),
 	Release(6), Restrike(0), Echo(false), Duty(1), Vrc6Duty(-1), Motion(DUTY_STILL), Click(false), Vibrato(0), VibratoDelay(20),
-	VibratoRate(12), AttackPitch(PITCH_PLAIN), ArpeggioFrames(1), Kind(DRUM_KICK), Tone(0), Length(0)
+	VibratoRate(12), VibratoSwing(0), AttackPitch(PITCH_PLAIN), ArpeggioFrames(1), Kind(DRUM_KICK), Tone(0), Length(0)
 {
 }
 
@@ -922,8 +944,8 @@ Preset DesignPreset(const SoundDesign &D)
 	if (D.Vibrato > 0) {
 		int Loop;
 		const int Delay = std::max(0, D.VibratoDelay - static_cast<int>(Pitch.size())), Rate = std::max(4, D.VibratoRate / 4 * 4);
-		const std::vector<int> Wave = D.Vibrato == VIBRATO_FAINT ? FaintVibratoItems(Delay, Rate, Loop) :
-			VibratoItems(Delay, Clamp(D.Vibrato, 1, 3), Rate, Loop);
+		const std::vector<int> Wave = D.Vibrato == VIBRATO_FAINT ? FaintVibratoItems(Delay, Rate, Loop) : D.VibratoSwing > 0 ?
+			VibratoSwingItems(Delay, D.VibratoSwing, Rate, Loop) : VibratoItems(Delay, Clamp(D.Vibrato, 1, 3), Rate, Loop);
 		PitchLoop = static_cast<int>(Pitch.size()) + Loop;
 		Pitch.insert(Pitch.end(), Wave.begin(), Wave.end());
 	}
@@ -1030,11 +1052,12 @@ std::string DescribeDesign(const SoundDesign &D, int FrameRate, const std::strin
 			// shorter): the swing at A-3, A-4 and A-5 on this channel's divider (the triangle's period counts 32 cycles, the
 			// sawtooth's 14; Guard Tower's gentle lead was heard 60 cents either way at E-5, said as 20 at A-3)
 			const int Divider = Wave == "triangle" ? 32 : Wave == "sawtooth" ? 14 : 16;
+			const double Swing = D.VibratoSwing > 0 ? D.VibratoSwing : 3.0 * Depth;	// (steps either way)
 			int At[3];
 			for (int o = 0; o < 3; ++o) {
 				const double Period = std::floor(1789773.0 / (Divider * 440.0 * std::pow(2.0, o)) - 1.0 + 0.5);
 				const double Cents = Depth == VIBRATO_FAINT ? 600.0 * std::log2((Period + 1.0) / Period) :
-					600.0 * std::log2((Period + 3.0 * Depth) / std::max(1.0, Period - 3.0 * Depth));
+					600.0 * std::log2((Period + Swing) / std::max(1.0, Period - Swing));
 				At[o] = Cents < 10.0 ? static_cast<int>(std::floor(Cents + 0.5)) : 5 * static_cast<int>(std::floor(Cents / 5.0 + 0.5));
 			}
 			std::snprintf(Buffer, sizeof(Buffer), "; a %s vibrato from %d frames (%.2g s) into each note, about %d cents either way at "

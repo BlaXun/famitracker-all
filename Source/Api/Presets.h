@@ -124,6 +124,8 @@ struct SoundDesign {
 	int Vibrato;				// 0 none, 1 gentle, 2 medium, 3 strong, VIBRATO_FAINT
 	int VibratoDelay;			// frames before it comes in
 	int VibratoRate;			// frames a cycle, a multiple of 4
+	int VibratoSwing;			// the period's steps it swings either way, 0 for the depth's own (3 a step of Vibrato at a rate of 12);
+								// fewer where a note is high and a step is more cents (FitVibratoSwing)
 	int AttackPitch;			// attack_pitch: plain, an octave up for two frames, up into the note from below, falling,
 								// a quick flick up and back, a thump (from a fourth above, dropping into the note)
 	std::vector<int> Arpeggio;	// semitones looped ({0, 4, 7}); empty for none

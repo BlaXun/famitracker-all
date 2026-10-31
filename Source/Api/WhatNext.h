@@ -211,7 +211,23 @@ struct TuneNote {
 // Chord and Sounding have a row each from the phrase's first row (RowsPerBeat
 // rows a beat, BeatsPerBar beats a bar): the pitch classes of the chord there
 // and of the notes the other parts sound (empty for none).
+// The tonic the offered phrases are around (ExampleTune's home, the hooks' too): from G-3 to F#4 as a pulse plays it
+int TuneHome(const Key &K);
+
 std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int BeatsPerBar, int RowsPerBeat,
 	const std::vector<std::vector<int> > &Chord, const std::vector<std::vector<int> > &Sounding, bool Calm, int Variant);
+
+// A hook what_next offers a song with a seed (fix-gen4-melody): a bar or two (Bars says which) from FirstBar, drawn from
+// pools by Pick (the song's seed and name hashed with its kind) and Variant: a rhythm figure of the kind's pace (0 slow, for
+// calm songs; 1 medium; 2 busy, for action and festive ones: pickups, long-short, syncopated, dotted, a held opening note,
+// call and answer), a contour (an arch, a rise, a fall, a leap then steps back, a turn around a neighbour, a dip), the
+// degree it starts on and the one it ends on. Singable as ExampleTune's: chord tones on the strong beats and long notes,
+// steps mostly, a leap answered by a step the other way, nothing a semitone from another part, from a fourth under the
+// home tonic (TuneHome) to an octave over it. Other meters than 4/4 get ExampleTune's two bars. Pick 0 is ExampleTune's
+// own two bars, as a song without a seed keeps
+std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int RowsPerBeat, const std::vector<std::vector<int> > &Chord,
+	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars);
+// How many hook figures each pace draws from (HookTune's pools), for the tests
+int HookFigures(int Pace);
 
 }	// namespace ftapi

@@ -5046,6 +5046,24 @@ int NoisePitchArg(const Json &Args)
 	}
 }
 
+// The period's steps a pitch-sequence vibrato of Depth (1-3: gentle, medium, strong, about 20, 40 and 60 cents either way)
+// swings either way at Pitch on a channel whose pitch sequence moves a period (the 2A03's, the MMC5's, the VRC6's and the
+// 5B's tones): as many as come nearest those cents there, at least 1 and no more than the depth's own (Depth a frame over a
+// quarter of Rate); 0 where the pitch sequence moves a frequency (the FDS, the N163) or there's no pitch. A step is about
+// 1731 cents over the period, so the gentle lead's 3 steps swung 60 cents at E-5 (Guard Tower, fix-gen4-melody)
+int FitVibratoSwing(const ChannelInfo &Info, int Pitch, int Depth, int Rate, bool Pal)
+{
+	if ((Info.Chip != "2A03" && Info.Chip != "MMC5" && Info.Chip != "VRC6" && Info.Chip != "5B") || Info.Kind == KIND_NOISE ||
+		Info.Kind == KIND_DPCM || Depth < 1 || Depth > 3)
+		return 0;
+	const double Step = ListenNoteTuning(Info.Chip, Info.Kind, Pitch, 0, Info.ChipChannels, 16, Pal).CentsPerStep;
+	if (!(Step > 0.0))
+		return 0;
+	static const double CENTS[] = { 0.0, 20.0, 40.0, 60.0 };
+	const int Own = Depth * std::max(1, Rate / 4);
+	return std::max(1, std::min(Own, static_cast<int>(std::floor(CENTS[Depth] / Step + 0.5))));
+}
+
 std::string DesignInstrumentTool(Session &S, const Json &Args)
 {
 	const std::string Name = StringArg(Args, "name");
@@ -5055,8 +5073,9 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 		throw Problem("name: up to 60 characters.");
 	std::string Chip = "2A03";
 	bool Sawtooth = false, Triangle = false, Noise = false, Low = false;
+	int Channel = -1;
 	if (Arg(Args, "channel") != 0) {
-		const int Channel = ChannelArg(S, Args, "channel");
+		Channel = ChannelArg(S, Args, "channel");
 		Chip = InstrumentChip(S.Channel(Channel));
 		Sawtooth = S.Channel(Channel).Kind == KIND_SAWTOOTH;
 		Triangle = S.Channel(Channel).Kind == KIND_TRIANGLE;
@@ -5180,6 +5199,23 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	}
 	else if (D.Vibrato == VIBRATO_FAINT && Arg(Args, "vibrato") != 0 && !IsCalmKind(Kind))
 		D.VibratoDelay = std::max(D.VibratoDelay, 24);	// as late as the calm references' comes in
+	// The vibrato fitted to where the notes play (vibrato_at): fewer steps where a note is high, so it swings the cents its
+	// depth means there rather than three times as many (fix-gen4-melody)
+	std::string Fitted;
+	if (Arg(Args, "vibrato_at") != 0) {
+		int At = 0;
+		if (!ParsePitch(StringArg(Args, "vibrato_at"), At))
+			throw Problem("vibrato_at: a note like \"C#5\", where the sound mostly plays.");
+		const int Depth = D.Vibrato == VIBRATO_FAINT ? 0 : std::max(0, std::min(3, D.Vibrato));
+		const int Swing = Channel >= 0 && Depth > 0 ? FitVibratoSwing(S.Channel(Channel), At, Depth, D.VibratoRate, S.Song.Pal) : 0;
+		if (Swing > 0 && Swing < Depth * std::max(1, D.VibratoRate / 4)) {
+			D.VibratoSwing = Swing;
+			const ChannelInfo &Info = S.Channel(Channel);
+			const double Step = ListenNoteTuning(Info.Chip, Info.Kind, At, 0, Info.ChipChannels, 16, S.Song.Pal).CentsPerStep;
+			Fitted = Format(" Its vibrato is fitted to %s: %s either way, about %d cents there.", PitchName(At).c_str(),
+				Plural(Swing, "step", "steps").c_str(), static_cast<int>(std::floor(Swing * Step + 0.5)));
+		}
+	}
 	D.AttackPitch = WordArg(Args, "attack_pitch", D.AttackPitch, PITCHES_WORDS, PITCH_VALUES, 6, 0);
 	if (Arg(Args, "restrike_beats") != 0) {
 		const double Beats = NumberArg(Args, "restrike_beats", 0.5, 0.0, 4.0);
@@ -5385,7 +5421,7 @@ std::string DesignInstrumentTool(Session &S, const Json &Args)
 	return "Added " + InstrumentLabel(S.Song, Index) + " (" + Chip + " instrument): " + Head + DescribeDesign(D, S.Song.FrameRate,
 		Sawtooth ? "sawtooth" : Triangle ? "triangle" : Noise && !D.Drum ? "noise" : NoiseAlone ? "5B noise" : Square ? "square" : "pulse") +
 		(Without.empty() ? std::string() : " (without the " + Without + " asked for: on the noise they'd make it warble or ring "
-			"metallic)") + "." + (Square && !NoiseAlone && (Arg(Args, "duty") != 0 || Arg(Args, "duty_motion") != 0 || D.Click) ?
+			"metallic)") + "." + Fitted + (Square && !NoiseAlone && (Arg(Args, "duty") != 0 || Arg(Args, "duty_motion") != 0 || D.Click) ?
 			" The 5B's square is always 50%, so it plays without the duty." : "") +
 		(NoisePitch >= 0 ? " The 5B's three channels share one noise pitch: two of its noise sounds playing at once both take the one "
 			"set last." : "") + DesignWordsText(W) + Timeline + Clicks + NoRestrike + RestrikeText(D, FramesPerBeat, Triangle) +
@@ -28483,6 +28519,7 @@ private:
 	bool StepsOf(const std::vector<TuneNote> &Tune, int FirstBar, int Bars, bool Numbered, std::string &Text) const;
 	std::string MelodySound() const;
 	std::string OfferedHook(int FirstBar, int Variant) const;
+	int HookPace() const;
 	std::vector<std::string> ContrastingHooks(int FirstBar, int Variant, const std::string &Own) const;
 	std::vector<std::string> ClimbingHooks(int FirstBar, int Variant, int Over) const;
 	std::string HookText(const StepLine &Line) const;
@@ -29314,17 +29351,27 @@ std::string WhatNext::MelodySound() const
 	return pSound != 0 ? pSound->Name : std::string("soft lead");
 }
 
-// A hook to start from in bars [FirstBar, FirstBar + 2): ExampleTune's two-bar phrase on the chords there (4-6 notes,
-// ending on a held note and a rest), in steps; empty when the bars don't take eighths
+// A hook to start from in bars [FirstBar, FirstBar + 2) on the chords there (4-7 notes, ending on a held note), in steps;
+// empty when the bars don't take eighths. A song with a seed draws it from HookTune's pools by its seed, its track's name
+// and its kind, so songs of one kind don't share a rhythm (the six songs of gen4 shared one, and a hut and a shop the same
+// B hook: fix-gen4-melody); one without (made before seeds) gets ExampleTune's two bars, as it did
 std::string WhatNext::OfferedHook(int FirstBar, int Variant) const
 {
 	const int First = S.Time.BarStart(FirstBar), End = S.Time.BarEnd(FirstBar + 1);
 	std::vector<std::vector<int> > Chord, Sounding;
 	Surroundings(First, End, Chord, Sounding);
-	const std::vector<TuneNote> Tune = ExampleTune(m_HasKey ? m_Key : Key(0, MODE_MAJOR), FirstBar, 2, S.Time.BeatsPerBar(FirstBar),
-		S.Time.RowsPerBeat, Chord, Sounding, CalmTune(), Variant);
+	const unsigned int Pick = m_Seed == 0 ? 0u : std::max(1u, SeededHash("hook", S.Song.TrackName + "|" + Kind().Name, m_Seed));
+	int Bars = 2;
+	const std::vector<TuneNote> Tune = HookTune(m_HasKey ? m_Key : Key(0, MODE_MAJOR), FirstBar, S.Time.BeatsPerBar(FirstBar),
+		S.Time.RowsPerBeat, Chord, Sounding, HookPace(), Pick, Variant, Bars);
 	std::string Text;
-	return Tune.size() >= 4 && Tune.size() <= 7 && StepsOf(Tune, FirstBar, 2, false, Text) ? Text : std::string();
+	return Tune.size() >= 4 && Tune.size() <= 7 && StepsOf(Tune, FirstBar, Bars, false, Text) ? Text : std::string();
+}
+
+// The pace of the hooks offered (HookTune's): slow for a calm tune, busy for action and festive songs, else medium
+int WhatNext::HookPace() const
+{
+	return CalmTune() ? 0 : m_KindId == NEXT_ACTION || m_KindId == NEXT_FESTIVE || Kind().Grow == 3 ? 2 : 1;
 }
 
 // A hook in steps (OfferedHook's, SongHook's) read back: its notes with their pitches as written; false when it doesn't read
@@ -29950,6 +29997,17 @@ void WhatNext::Parts()
 			A.Set("vibrato", "gentle");
 		if (Calm())
 			CalmLeadArgs(A, S.Channel(Lead));
+		// Its vibrato fitted to where the tune will play, the upper part of the offered hooks' range (TuneHome's sixth): a pitch
+		// sequence's step is more cents the higher the note, and the action lead's gentle vibrato swung -75 to +60 cents at
+		// E-5 (Guard Tower, fix-gen4-melody)
+		SoundDesign Design;
+		const std::string Asked = A.Get("vibrato") != 0 ? A.Get("vibrato")->String() : std::string();
+		const int Depth = Asked == "gentle" ? 1 : Asked == "medium" ? 2 : Asked == "strong" ? 3 : !Asked.empty() ? 0 :
+			DesignOfKind(m_Picks.Lead.Value, Design) && Design.Vibrato != VIBRATO_FAINT ? std::max(0, std::min(3, Design.Vibrato)) : 0;
+		const int At = TuneHome(m_HasKey ? m_Key : Key(0, MODE_MAJOR)) + 9;
+		const int Swing = Depth > 0 ? FitVibratoSwing(S.Channel(Lead), At, Depth, Design.VibratoRate, S.Song.Pal) : 0;
+		if (Swing > 0 && Swing < Depth * std::max(1, Design.VibratoRate / 4))
+			A.Set("vibrato_at", StepPitch(S.Channel(Lead), At));
 		Json Find = Json::MakeObject();
 		Find.Set("kind", "lead");
 		Find.Set("channel", ChannelName(Lead));
@@ -32232,6 +32290,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				std::vector<std::string>{ "none", "faint", "gentle", "medium", "strong" }))
 			.Add("vibrato_delay_beats", Prop("number", "When the vibrato comes in, in beats at the song's tempo (default: a third of "
 				"a second)."))
+			.Add("vibrato_at", Prop("string", "The note where the sound mostly plays, like \"C#5\" (with a channel): its vibrato is "
+				"fitted to swing about the cents its depth gives there, since a step of a pitch sequence is more cents the higher the "
+				"note."))
 			.Add("attack_pitch", EnumProp("The attack's pitch: none, blip (an octave up for two frames, like a bell), scoop (up into "
 				"the note from a whole step below, over two frames), drop (falls, like a laser or a tom), flick (a quick flick up and back), thump (from a fourth above, "
 				"dropping into the note: a bass that thumps).", std::vector<std::string>{ "none", "blip", "scoop", "drop", "flick",

@@ -1213,6 +1213,7 @@ struct KindWordRow {
 	const char *Shapes;		// the shapes it takes, its own first
 	bool Gentle;			// not over intense words
 	const char *Over;		// the shapes whose words it may be over (0: any but a fight's or a jingle's)
+	const char *Unshaped;	// of Words, those that don't pick its shape too (an adventure's fields are a journey's, not a town's)
 };
 
 // Their order on a tie, documented in CLAUDE.md: tense (sneaking outweighs the place it happens in), bittersweet (a
@@ -1221,29 +1222,29 @@ struct KindWordRow {
 // twice), floating ("Waiting for the Airship"), playful ("a toy shop"), cozy ("Hut in a Field"), adventure
 const KindWordRow KIND_WORDS[] = {
 	{ "tense", "tense", "tense tension sneak sneaks sneaking sneaky stealth stealthy guard guards guarded prison prisons jail "
-		"lurk lurking lurks watched spy spies infiltrate infiltration hiding", 0, 0, "town night", false, 0 },
+		"lurk lurking lurks watched spy spies infiltrate infiltration hiding", 0, 0, "town night", false, 0, 0 },
 	{ "bittersweet", "bittersweet", "bittersweet farewell farewells goodbye goodbyes memory memories memorial sunset sunsets "
-		"endings grave graves parting nostalgia nostalgic", " the ending, an ending, game ending,", 0, "night town", true, 0 },
+		"endings grave graves parting nostalgia nostalgic", " the ending, an ending, game ending,", 0, "night town", true, 0, 0 },
 	{ "melancholic", "melancholic", "sad sadness sorrow sorrowful grief grieving mourning mourn mournful lonely loneliness "
 		"tears tearful weeping crying melancholy melancholic heartbroken lament", " abandoned home, abandoned house, lost friend, "
-		"rain soaked, rainy day,", 0, "night town", true, 0 },
+		"rain soaked, rainy day,", 0, "night town", true, 0, 0 },
 	{ "festive", "festive", "festive festival festivals fair fairs fairground celebration celebrations celebrate party parties "
-		"holiday holidays carnival parade feast", " market day,", 0, "stage town", false, 0 },
+		"holiday holidays carnival parade feast", " market day,", 0, "stage town", false, 0, 0 },
 	{ "mysterious", "mysterious", "mystery mysteries mysterious mystic cave caves cavern caverns sewer sewers ruin ruins crypt "
 		"crypts catacomb catacombs tomb tombs mine mines eerie hidden secret secrets forgotten labyrinth underground grotto", 0, 0,
-		"night town", true, 0 },
+		"night town", true, 0, 0 },
 	{ "atmospheric", "atmospheric", "ambient atmosphere atmospheric ambience vast empty void alien abyss deep", " eerie silence,",
-		0, "night town", true, 0 },
+		0, "night town", true, 0, 0 },
 	{ "floating", "floating", "float floats floating floaty afloat sky skies cloud clouds underwater drift drifting waiting wait "
-		"dock docks pier lagoon dawn", 0, 0, "night town", true, 0 },
+		"dock docks pier lagoon dawn", 0, 0, "night town", true, 0, 0 },
 	{ "playful", "playful", "playful minigame minigames game games toy toys silly funny clown clowns goofy cheeky circus prank "
-		"jester", 0, 0, "small town", false, 0 },
+		"jester", 0, 0, "small town", false, 0, 0 },
 	{ "cozy", "a warm place, cozy", "cozy cosy homey homely warm warmth friendly hut cabin cottage shop store inn tavern bakery cafe "
 		"teahouse house kitchen hearth fireplace indoors indoor granny grandma grandmother grandpa elderly shopkeeper", 0,
-		"shop store inn tavern cafe house", "town small", true, "night town small" },
+		"shop store inn tavern cafe house", "town small", true, "night town small", 0 },
 	{ "adventure", "adventure", "adventure adventures adventurous journey journeys travel travels traveling travelling voyage "
 		"field fields road roads flying flight airship airships explore exploring exploration overworld quest plains", 0, 0,
-		"stage town", false, 0 },
+		"stage town", false, 0, "field fields road roads overworld plains" },
 };
 
 }	// namespace
@@ -1359,18 +1360,24 @@ ShapeWords ReadShapeWords(const std::string &About, bool Name)
 		Out.KindWords = Said;
 		// Its shape: the words' own where it's one of the kind's, else the first of the kind's whose words are there, else
 		// the kind's own (the first)
-		const std::vector<std::string> Shapes = WordsOf(pBest->Shapes);
-		const SongShape *pOwn = 0;
-		if (pAsked != 0 && std::find(Shapes.begin(), Shapes.end(), pAsked->Id) != Shapes.end())
-			pOwn = pAsked;
-		for (size_t s = 0; s < Shapes.size() && pOwn == 0; ++s) {
-			const SongShape *pTry = ShapeById(Shapes[s]);
+		// (a word of the kind's Unshaped picks no shape: "flying over green fields" is an adventure's journey, a stage, not a
+		// town, fix-gen4-melody)
+		const std::vector<std::string> Shapes = WordsOf(pBest->Shapes), Unshaped = WordsOf(pBest->Unshaped != 0 ? pBest->Unshaped : "");
+		auto Names = [&](const SongShape *pTry) {
 			const ShapeRow *pRow = pTry != 0 ? RowOf(*pTry) : 0;
 			const std::vector<std::string> Own = pRow != 0 ? WordsOf(pRow->Words) : std::vector<std::string>();
-			for (size_t i = 0; i < Words.size() && pOwn == 0; ++i)
-				if (!Negated(Words, i) && std::find(Own.begin(), Own.end(), Words[i]) != Own.end())
-					pOwn = pTry;
-		}
+			for (size_t i = 0; i < Words.size(); ++i)
+				if (!Negated(Words, i) && std::find(Own.begin(), Own.end(), Words[i]) != Own.end() && std::find(Unshaped.begin(),
+					Unshaped.end(), Words[i]) == Unshaped.end())
+					return true;
+			return false;
+		};
+		const SongShape *pOwn = 0;
+		if (pAsked != 0 && std::find(Shapes.begin(), Shapes.end(), pAsked->Id) != Shapes.end() && Names(pAsked))
+			pOwn = pAsked;
+		for (size_t s = 0; s < Shapes.size() && pOwn == 0; ++s)
+			if (Names(ShapeById(Shapes[s])))
+				pOwn = ShapeById(Shapes[s]);
 		pShape = pOwn != 0 ? pOwn : ShapeById(Shapes[0]);
 		std::string Quoted;
 		for (size_t i = 0; i < Said.size(); ++i)

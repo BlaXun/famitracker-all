@@ -28960,6 +28960,246 @@ void TestKindPools()
 		}
 }
 
+// The offered hooks drawn from pools (fix-gen4-melody): the six songs of gen4 shared one rhythm, and a hut and a shop the
+// same B hook. Seeded songs of several kinds and names each get a hook of their own, in several rhythms, singable, the
+// same again for the same name and seed
+std::string HookRhythmOf(const std::string &Hook)
+{
+	// Each token a pitch, a hold, a rest or a bar line: the pitches as x
+	std::string Out, Token;
+	for (size_t i = 0; i <= Hook.size(); ++i) {
+		if (i < Hook.size() && Hook[i] != ' ') {
+			Token += Hook[i];
+			continue;
+		}
+		if (!Token.empty())
+			Out += (Token == "-" || Token == "." || Token == "|" ? Token : std::string("x")) + " ";
+		Token.clear();
+	}
+	return Out;
+}
+
+std::string FirstOfferedHook(int Kind, const char *Name, unsigned int Seed, int Line)
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = Name;
+	Song.Info.Seed = Seed;
+	const std::string Asked = std::string("{\"kind\": \"") + NextKindInfo(Kind).Name + "\"}";
+	bool Finished = false;
+	std::vector<std::string> Replies;
+	FollowWhatNext(Song, Asked, 40, Finished, Line, false, "grow_melody", &Replies);
+	const WhatNextAnswer N = Replies.empty() ? WhatNextAnswer() : ReadWhatNext(Replies.back());
+	Check(N.Tool == "grow_melody", (Asked + " " + Name + ": " + (Replies.empty() ? std::string() : Replies.back())).c_str(), Line);
+	return N.Tool == "grow_melody" ? TextOf(&N.Arguments, "motif") : std::string();
+}
+
+void TestOfferedHooks()
+{
+	const int KINDS[] = { NEXT_COZY, NEXT_LIVELY, NEXT_ACTION, NEXT_CALM, NEXT_ADVENTURE, NEXT_FESTIVE };
+	const char *const NAMES[] = { "Old Mill", "Lost n Found" };
+	std::set<std::string> Hooks, Rhythms;
+	std::map<std::string, std::string> Of;
+	unsigned int Seed = 7001;
+	for (int Kind : KINDS)
+		for (const char *Name : NAMES) {
+			const std::string Hook = FirstOfferedHook(Kind, Name, Seed++, __LINE__);
+			const std::string What = std::string(NextKindInfo(Kind).Name) + " " + Name + ": " + Hook;
+			Check(!Hook.empty(), What.c_str(), __LINE__);
+			if (Hook.empty())
+				continue;
+			Check(Hooks.insert(Hook).second, (What + ", as " + Of[Hook]).c_str(), __LINE__);
+			Of[Hook] = What;
+			Rhythms.insert(HookRhythmOf(Hook));
+			// Singable: 4-7 notes, steps mostly, a leap of more than a fourth at most once and answered the other way
+			StepLine L;
+			std::string Error;
+			Check(ParseStepLine(Hook, 0, L, Error) && L.Notes.size() >= 4 && L.Notes.size() <= 7, What.c_str(), __LINE__);
+			std::vector<int> P;
+			for (const StepLineNote &Note : L.Notes) {
+				int Pitch = 0;
+				CHECK(ParsePitch(Note.Pitch, Pitch));
+				P.push_back(Pitch);
+			}
+			int Leaps = 0, Steps = 0;
+			for (size_t i = 1; i < P.size(); ++i) {
+				const int Move = P[i] - P[i - 1];
+				Steps += std::abs(Move) <= 2 ? 1 : 0;
+				if (std::abs(Move) > 5) {
+					++Leaps;
+					Check(i + 1 == P.size() || (P[i + 1] - P[i]) * Move <= 0, (What + ": a leap answered").c_str(), __LINE__);
+				}
+			}
+			Check(Leaps <= 1 && P.size() >= 2 && *std::max_element(P.begin(), P.end()) - *std::min_element(P.begin(), P.end()) <= 14,
+				What.c_str(), __LINE__);
+			if (!Environment("HOOKS_SHOW").empty())
+				std::printf("hook %s\n", What.c_str());
+		}
+	// Not one template: the twelve in many rhythms, more than one in each pace
+	Check(Rhythms.size() >= 7, std::to_string(Rhythms.size()).c_str(), __LINE__);
+	CHECK(HookFigures(0) >= 5 && HookFigures(1) >= 5 && HookFigures(2) >= 5);
+	// The same name and seed: the same hook; another seed: another hook somewhere
+	CHECK_EQ(FirstOfferedHook(NEXT_COZY, "Old Mill", 7001, __LINE__), FirstOfferedHook(NEXT_COZY, "Old Mill", 7001, __LINE__));
+	std::set<std::string> Seeded;
+	for (unsigned int s = 0; s < 4; ++s)
+		Seeded.insert(HookRhythmOf(FirstOfferedHook(NEXT_LIVELY, "Brook", 9100 + s * 17, __LINE__)));
+	CHECK(Seeded.size() >= 2);
+	// HookTune's pools alone: on C major's chords, every variant of every pace singable and in the range
+	const Key C(0, MODE_MAJOR);
+	std::vector<std::vector<int> > Chord(32, std::vector<int>{ 0, 4, 7 }), Sounding(32);
+	for (int Pace = 0; Pace <= 2; ++Pace) {
+		std::set<std::string> Shapes;
+		for (int v = 0; v < 8; ++v) {
+			int Bars = 0;
+			const std::vector<TuneNote> Tune = HookTune(C, 1, 4, 4, Chord, Sounding, Pace, 12345u, v, Bars);
+			CHECK(Bars == 1 || Bars == 2);
+			CHECK(Tune.size() >= 4 && Tune.size() <= 7);
+			std::string Shape;
+			for (const TuneNote &T : Tune) {
+				CHECK(T.Pitch >= TuneHome(C) - 5 && T.Pitch <= TuneHome(C) + 12);
+				if (T.Beats >= 1.0 || std::fabs(T.Beat - 1.0) < 1e-9 || std::fabs(T.Beat - 3.0) < 1e-9)
+					Check(T.Pitch % 12 == 0 || T.Pitch % 12 == 4 || T.Pitch % 12 == 7, "a chord tone on a strong beat", __LINE__);
+				Shape += FormatNumber(T.Beat) + "/" + FormatNumber(T.Beats) + " ";
+			}
+			Shapes.insert(Shape);
+		}
+		Check(Shapes.size() >= 4, std::to_string(Pace).c_str(), __LINE__);
+		// Pick 0 is ExampleTune's own
+		int Bars = 0;
+		const std::vector<TuneNote> Old = HookTune(C, 1, 4, 4, Chord, Sounding, Pace, 0u, 2, Bars),
+			Example = ExampleTune(C, 1, 2, 4, 4, Chord, Sounding, Pace == 0, 2);
+		CHECK(Bars == 2 && Old.size() == Example.size());
+	}
+}
+
+// A journey's shape and the later kinds' defaults (fix-gen4-melody): "flying an airship high over green fields" asked for
+// the town by its fields; an adventure is a stage unless its words name a town
+void TestKindShapes()
+{
+	ShapeWords W = ReadShapeWords("flying an airship high over green fields, bright and adventurous");
+	Check(W.Kind == "adventure" && W.pShape != 0 && W.pShape->Id == "stage", W.pShape != 0 ? W.pShape->Id.c_str() : "none", __LINE__);
+	W = ReadShapeWords("a long journey down the road through the plains");
+	CHECK(W.Kind == "adventure" && W.pShape != 0 && W.pShape->Id == "stage");
+	W = ReadShapeWords("an adventure through a busy market town");
+	CHECK(W.pShape != 0 && W.pShape->Id == "town");
+	// The others as they were: a hut in a field is cozy in a town's shape, a shop a short loop
+	W = ReadShapeWords("a cozy hut in a field");
+	CHECK(W.Kind == "cozy" && W.pShape != 0 && W.pShape->Id == "town");
+	W = ReadShapeWords("a cozy little shop");
+	CHECK(W.Kind == "cozy" && W.pShape != 0 && W.pShape->Id == "small");
+	// Each kind's own shape: a journey and a festival stages, the gentle kinds nights, playful a short loop
+	const struct { const char *Kind, *Shape; } OWN[] = { { "adventure", "stage" }, { "festive", "stage" }, { "lively", "stage" },
+		{ "floating", "night" }, { "mysterious", "night" }, { "bittersweet", "night" }, { "melancholic", "night" },
+		{ "atmospheric", "night" }, { "playful", "small" }, { "cozy", "town" }, { "tense", "town" }, { "action", "boss" } };
+	for (const auto &O : OWN)
+		Check(ShapeForKind(O.Kind).Id == O.Shape, O.Kind, __LINE__);
+	CHECK(ShapeForKind("adventure", "Flying the Airship").Id == "stage");
+	// what_next lays the airship out as a stage
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = "Flying the Airship";
+	bool Finished = false;
+	std::vector<std::string> Replies;
+	const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"adventure\", \"about\": \"flying an airship high over green "
+		"fields, bright and adventurous\"}", 10, Finished, __LINE__, false, "design_instrument", &Replies);
+	bool Shaped = false;
+	for (const std::string &Call : Made)
+		if (Call.compare(0, 11, "song_shape ") == 0) {
+			Shaped = true;
+			Check(Contains(Call, "\"shape\":\"stage\""), Call.c_str(), __LINE__);
+		}
+	CHECK(Shaped);
+}
+
+// The lead's vibrato fitted to where the tune plays (fix-gen4-melody): Guard Tower's action lead, a gentle vibrato of 3
+// steps a quarter, swung -75 to +60 cents at E-5 on a VRC6 pulse. The steps either way a pitch sequence swings
+int PitchSwing(const SequenceInfo &Pitch)
+{
+	if (Pitch.Items.empty() || Pitch.Loop < 0)
+		return 0;
+	int Sum = 0, High = 0, Low = 0;
+	for (size_t i = static_cast<size_t>(Pitch.Loop); i < Pitch.Items.size(); ++i) {
+		Sum += Pitch.Items[i];
+		High = std::max(High, Sum);
+		Low = std::min(Low, Sum);
+	}
+	return std::max(High, -Low);
+}
+
+void TestLeadVibratoFits()
+{
+	// design_instrument with vibrato_at: fewer steps high up, about the depth's cents there; as before without it
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6\"]}").IsError);
+		const ToolResult Plain = Run(Song, "design_instrument", "{\"name\": \"Plain lead\", \"kind\": \"bloom lead\", \"channel\": "
+			"\"VRC6 Pulse 1\"}");
+		const ToolResult Fit = Run(Song, "design_instrument", "{\"name\": \"Fit lead\", \"kind\": \"bloom lead\", \"channel\": "
+			"\"VRC6 Pulse 1\", \"vibrato_at\": \"E5\"}");
+		const ToolResult Low = Run(Song, "design_instrument", "{\"name\": \"Low lead\", \"kind\": \"bloom lead\", \"channel\": "
+			"\"VRC6 Pulse 1\", \"vibrato_at\": \"A3\"}");
+		CHECK(!Plain.IsError && !Fit.IsError && !Low.IsError);
+		CHECK_HAS(Fit.Text, "Its vibrato is fitted to E-5");
+		CHECK_LACKS(Low.Text, "fitted");
+		CHECK(Run(Song, "design_instrument", "{\"name\": \"Bad\", \"channel\": \"VRC6 Pulse 1\", \"vibrato_at\": \"high\"}").IsError);
+		const ChannelInfo *pPulse = 0;
+		for (const ChannelInfo &C : Song.Info.Channels)
+			if (C.FullName() == "VRC6 Pulse 1")
+				pPulse = &C;
+		CHECK(pPulse != 0);
+		int E5 = 0;
+		CHECK(ParsePitch("E-5", E5));
+		const double Step = ListenNoteTuning("VRC6", pPulse->Kind, E5, 0, pPulse->ChipChannels, 16, false).CentsPerStep;
+		for (const InstrumentInfo &I : Song.Info.Instruments) {
+			const int Swing = PitchSwing(I.Pitch);
+			if (I.Name == "Plain lead" || I.Name == "Low lead")
+				Check(Swing == 3, I.Name.c_str(), __LINE__);
+			if (I.Name == "Fit lead")
+				Check(Swing >= 1 && Swing * Step >= 10.0 && Swing * Step <= 30.0, std::to_string(Swing * Step).c_str(), __LINE__);
+		}
+	}
+	// Every kind's lead, as what_next designs it: its vibrato swings 30 cents or less either way at the hooks' upper part
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k)
+		for (const char *Chips : { "", "VRC6" }) {
+			FakeSong Song(1);
+			NewSong(Song);
+			Song.Info.TrackName = Song.Tracks[0].Name = "Guard Tower";
+			if (*Chips != 0)
+				CHECK(!Run(Song, "set_expansion", std::string("{\"chips\": [\"") + Chips + "\"]}").IsError);
+			const std::string Asked = k == NEXT_GENERAL ? std::string("{}") : std::string("{\"kind\": \"") + NextKindInfo(k).Name + "\"}";
+			bool Finished = false;
+			const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 12, Finished, __LINE__, false, "add_chords_and_bass");
+			std::string Design;
+			for (const std::string &Call : Made)
+				if (Call.compare(0, 18, "design_instrument ") == 0)
+					Design = Call;
+			Check(!Design.empty(), Asked.c_str(), __LINE__);
+			Json Args;
+			if (Design.empty() || !ParseJson(Design.substr(18), Args))
+				continue;
+			int Channel = -1;
+			for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
+				if (Song.Info.Channels[c].FullName() == TextOf(&Args, "channel"))
+					Channel = static_cast<int>(c);
+			CHECK(Channel >= 0);
+			const InstrumentInfo *pLead = 0;
+			for (const InstrumentInfo &I : Song.Info.Instruments)
+				if (I.Name == TextOf(&Args, "name"))
+					pLead = &I;
+			Check(pLead != 0, Design.c_str(), __LINE__);
+			if (pLead == 0 || Channel < 0)
+				continue;
+			// Where the hooks' upper part plays: vibrato_at when given, else C-5 (the highest home's sixth)
+			int At = 0;
+			CHECK(ParsePitch(Args.Get("vibrato_at") != 0 ? TextOf(&Args, "vibrato_at") : std::string("C-5"), At));
+			const ChannelInfo &Info = Song.Info.Channels[static_cast<size_t>(Channel)];
+			const double Cents = PitchSwing(pLead->Pitch) * ListenNoteTuning(Info.Chip, Info.Kind, At, 0, Info.ChipChannels, 16,
+				false).CentsPerStep;
+			Check(Cents <= 30.0, (Asked + " " + Chips + ": " + FormatNumber(Cents) + " cents, " + Design).c_str(), __LINE__);
+		}
+}
+
 // The melody's roles on a calm VRC6 Plus song (fix-melody-roles, Night Harbor): voiced chords on the soft layer are no
 // melody, the lead what_next designed gets the tune on its own channel, and no chord voice goes there
 void TestWhatNextMelodyRoles()
@@ -29317,6 +29557,9 @@ int main()
 	TestReviewKeepsItsStyle();
 	TestMinorLeadingTone();
 	TestWhatNextMelodyRoles();
+	TestOfferedHooks();
+	TestKindShapes();
+	TestLeadVibratoFits();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }
