@@ -25,6 +25,7 @@
 // the changes they ask for. McpConnection.cpp implements it over the open
 // FamiTracker document; the tests implement it in memory.
 
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -572,6 +573,25 @@ public:
 	// before the finish: kept by the host while it runs, not in the song
 	void KeepListen(const std::string &Text) { m_LastListen = Text; }
 	const std::string &LastListen() const { return m_LastListen; }
+	// The kind of music what_next was last given for a track of the open song (or took from the words or the track's
+	// name: next_kind's name, "cozy"), so review_arrangement, check_song and measure_mix judge the song as its kind wants
+	// without being told: kept by the host while it runs, by the song (SongIdentity's serial) and the track, not in the song.
+	// KeptKind gives "" when what_next had none for it
+	void KeepKind(int Track, const std::string &Kind)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		m_Kinds[std::make_pair(Serial, Track)] = Kind;
+	}
+	std::string KeptKind(int Track)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		const std::map<std::pair<long long, int>, std::string>::const_iterator It = m_Kinds.find(std::make_pair(Serial, Track));
+		return It != m_Kinds.end() ? It->second : std::string();
+	}
 
 	// Which song is open, for its agent log (AgentLog.h): Serial changes whenever another song comes in its place (File >
 	// New, Open, a song from the tools), FileName is its file's name ("Town.ftm", "" while it has none). A host without
@@ -590,6 +610,7 @@ public:
 
 private:
 	std::string m_LastListen;
+	std::map<std::pair<long long, int>, std::string> m_Kinds;
 	AgentLog m_Log;
 	bool m_LogFollowed = false;
 	long long m_LogSerial = 0;
