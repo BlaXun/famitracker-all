@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 #include "stdafx.h"
+#include "Api/Json.h"
 #include "Api/Music.h"
 #include "Api/SongShapes.h"
 #include "FamiTracker.h"
@@ -90,37 +91,55 @@ public:
 	enum { IDD = IDD_SONG_SHAPE };
 
 	const ftapi::SongShape *GetShape() const { return m_pShape; }
-	bool AddBars() const { return m_bAddBars; }
+	// song_shape's arguments for the form picked (the shape, its variant, the parts added or dropped, the length or a
+	// list of parts) and whether to add the bars it lacks
+	const std::string &GetArguments() const { return m_Arguments; }
+	const std::string &GetTitle() const { return m_Title; }
 
 protected:
 	virtual BOOL OnInitDialog();
 	virtual void OnOK();
 	afx_msg void OnShapeChanged();
 	afx_msg void OnShapeDoubleClicked();
+	afx_msg void OnOptionChanged();
 
 	DECLARE_MESSAGE_MAP()
 
 private:
 	bool Plan(const ftapi::SongShape &Shape, bool AddFrames, ftapi::ShapeLayout &Out) const;
+	// The request the controls make for the shape picked; false when none is picked
+	bool Request(ftapi::ShapeRequest &Out) const;
+	bool Choose(ftapi::ShapeChoice &Out, std::string &Error) const;
+	void FillVariants();
 	void ShowShape();
 
 	CMainFrame *m_pMainFrame;
 	CFamiTrackerDoc *m_pDocument;
 	unsigned int m_iTrack;
 	bool m_bNotes;
+	bool m_bReady;
 	const ftapi::SongShape *m_pShape;
-	bool m_bAddBars;
+	std::string m_Arguments, m_Title;
 	CListBox m_cList;
+	CComboBox m_cVariant;
 };
 
 BEGIN_MESSAGE_MAP(CSongShapeDlg, CDialog)
 	ON_LBN_SELCHANGE(IDC_SHAPE_LIST, OnShapeChanged)
 	ON_LBN_DBLCLK(IDC_SHAPE_LIST, OnShapeDoubleClicked)
+	ON_CBN_SELCHANGE(IDC_SHAPE_VARIANT, OnOptionChanged)
+	ON_EN_CHANGE(IDC_SHAPE_BARS, OnOptionChanged)
+	ON_EN_CHANGE(IDC_SHAPE_CUSTOM, OnOptionChanged)
+	ON_BN_CLICKED(IDC_SHAPE_ADD_CLIMAX, OnOptionChanged)
+	ON_BN_CLICKED(IDC_SHAPE_ADD_BRIDGE, OnOptionChanged)
+	ON_BN_CLICKED(IDC_SHAPE_ADD_OUTRO, OnOptionChanged)
+	ON_BN_CLICKED(IDC_SHAPE_NO_INTRO, OnOptionChanged)
+	ON_BN_CLICKED(IDC_SHAPE_NO_BREAK, OnOptionChanged)
 END_MESSAGE_MAP()
 
 CSongShapeDlg::CSongShapeDlg(CMainFrame *pMainFrm) : CDialog(IDD_SONG_SHAPE, pMainFrm), m_pMainFrame(pMainFrm),
 	m_pDocument(CFamiTrackerDoc::GetDoc()), m_iTrack(static_cast<unsigned int>(pMainFrm->GetSelectedTrack())), m_bNotes(false),
-	m_pShape(NULL), m_bAddBars(false)
+	m_bReady(false), m_pShape(NULL)
 {
 }
 
@@ -131,10 +150,56 @@ bool CSongShapeDlg::Plan(const ftapi::SongShape &Shape, bool AddFrames, ftapi::S
 	return ftapi::LayOutShape(Shape, !m_bNotes, Time.RowsPerBar, Time.PatternLength, Time.Frames, MAX_FRAMES, AddFrames, Out, Error);
 }
 
+bool CSongShapeDlg::Request(ftapi::ShapeRequest &Out) const
+{
+	const std::vector<ftapi::SongShape> &All = ftapi::SongShapes();
+	const int Index = m_cList.GetCurSel();
+	if (Index < 0 || Index >= static_cast<int>(All.size()))
+		return false;
+	Out = ftapi::ShapeRequest();
+	Out.Shape = All[static_cast<size_t>(Index)].Id;
+	Out.TrackName = std::string(static_cast<LPCTSTR>(m_pDocument->GetTrackTitle(m_iTrack)));
+	CString Text;
+	GetDlgItemText(IDC_SHAPE_CUSTOM, Text);
+	Out.Parts = std::string(static_cast<LPCTSTR>(Text));
+	if (!Out.Parts.empty())
+		return true;	// the whole list: the other options give way to it
+	const int Variant = m_cVariant.GetCurSel();
+	Out.Variant = Variant > 0 ? Variant : 0;
+	GetDlgItemText(IDC_SHAPE_BARS, Text);
+	Out.Bars = Text.IsEmpty() ? 0 : _ttoi(Text);
+	if (IsDlgButtonChecked(IDC_SHAPE_ADD_CLIMAX) == BST_CHECKED)
+		Out.Add.push_back("climax");
+	if (IsDlgButtonChecked(IDC_SHAPE_ADD_BRIDGE) == BST_CHECKED)
+		Out.Add.push_back("bridge");
+	if (IsDlgButtonChecked(IDC_SHAPE_ADD_OUTRO) == BST_CHECKED)
+		Out.Add.push_back("outro");
+	if (IsDlgButtonChecked(IDC_SHAPE_NO_INTRO) == BST_CHECKED)
+		Out.Drop.push_back("intro");
+	if (IsDlgButtonChecked(IDC_SHAPE_NO_BREAK) == BST_CHECKED)
+		Out.Drop.push_back("break");
+	return true;
+}
+
+bool CSongShapeDlg::Choose(ftapi::ShapeChoice &Out, std::string &Error) const
+{
+	ftapi::ShapeRequest R;
+	if (!Request(R)) {
+		Error = "Pick a shape.";
+		return false;
+	}
+	if (R.Bars != 0 && (R.Bars < 4 || R.Bars > 256)) {
+		Error = "Give the length from 8 to 256 bars, or leave it empty for the shape's own.";
+		return false;
+	}
+	return ftapi::MakeSongShape(R, Out, Error);
+}
+
 BOOL CSongShapeDlg::OnInitDialog()
 {
 	CDialog::OnInitDialog();
 	m_cList.SubclassDlgItem(IDC_SHAPE_LIST, this);
+	m_cVariant.SubclassDlgItem(IDC_SHAPE_VARIANT, this);
 	m_bNotes = TrackHasNotes(m_pDocument, m_iTrack);
 
 	// The shapes, the one the track's sections are (or its name says) picked; on a song with notes, those that fit in the
@@ -160,21 +225,56 @@ BOOL CSongShapeDlg::OnInitDialog()
 	if (pGuess == NULL && Fitting >= 0)
 		Picked = Fitting;
 	m_cList.SetCurSel(Picked);
+	m_bReady = true;
+	FillVariants();
 	ShowShape();
 	m_cList.SetFocus();
 	return FALSE;
 }
 
-// The shape picked: its parts and what each is for, and what laying it out does to this song
-void CSongShapeDlg::ShowShape()
+// The shape's forms: the one the track's name picks first, then each variant with its parts
+void CSongShapeDlg::FillVariants()
 {
 	const std::vector<ftapi::SongShape> &All = ftapi::SongShapes();
 	const int Index = m_cList.GetCurSel();
+	m_cVariant.ResetContent();
 	if (Index < 0 || Index >= static_cast<int>(All.size()))
 		return;
-	const ftapi::SongShape &Shape = All[static_cast<size_t>(Index)];
+	const std::vector<ftapi::SongShape> Variants = ftapi::VariantsOf(All[static_cast<size_t>(Index)]);
+	const int Named = ftapi::VariantOfName(std::string(static_cast<LPCTSTR>(m_pDocument->GetTrackTitle(m_iTrack))),
+		static_cast<int>(Variants.size()));
+	CString Item;
+	Item.Format(_T("The track's name picks (form %d)"), Named);
+	m_cVariant.AddString(Item);
+	for (size_t v = 0; v < Variants.size(); ++v) {
+		Item.Format(_T("Form %d: %s"), static_cast<int>(v) + 1, Variants[v].PartsText().c_str());
+		m_cVariant.AddString(Item);
+	}
+	m_cVariant.SetCurSel(0);
+	m_cVariant.EnableWindow(Variants.size() > 1);
+}
+
+// The form picked: its parts and what each is for, and what laying it out does to this song
+void CSongShapeDlg::ShowShape()
+{
+	if (!m_bReady)
+		return;
+	ftapi::ShapeChoice Choice;
+	std::string Error;
+	if (!Choose(Choice, Error)) {
+		SetDlgItemText(IDC_SHAPE_PARTS, CString(Error.c_str()));
+		SetDlgItemText(IDC_SHAPE_NOTE, _T("Change the options to lay this shape out."));
+		GetDlgItem(IDOK)->EnableWindow(FALSE);
+		return;
+	}
+	GetDlgItem(IDOK)->EnableWindow(TRUE);
+	const ftapi::SongShape &Shape = Choice.Shape;
 	CString Parts(Shape.About.c_str());
-	Parts += _T("\r\n");
+	CString Length;
+	Length.Format(_T(" (%s)"), static_cast<LPCTSTR>(Bars(Shape.Bars())));
+	Parts += Length + _T("\r\n");
+	for (size_t i = 0; i < Choice.Changes.size(); ++i)
+		Parts += CString(Choice.Changes[i].c_str()) + _T(" ");
 	for (size_t p = 0; p < Shape.Parts.size(); ++p) {
 		CString Line;
 		Line.Format(_T("\r\n%s (%s): %s"), Shape.Parts[p].Name.c_str(), static_cast<LPCTSTR>(Bars(Shape.Parts[p].Bars)),
@@ -186,7 +286,8 @@ void CSongShapeDlg::ShowShape()
 	ftapi::ShapeLayout Laid;
 	CString Note;
 	const ftapi::Timing Time = TrackTiming(m_pDocument, m_iTrack);
-	if (!Plan(Shape, true, Laid))
+	const bool Planned = Plan(Shape, true, Laid);
+	if (!Planned)
 		Note = _T("This shape doesn't fit in a track's frames here.");
 	else if (!m_bNotes) {
 		Note.Format(_T("The song has no notes yet: it gets %d frames of %s (%d rows), each part a named section%s. Fill the parts ")
@@ -209,15 +310,20 @@ void CSongShapeDlg::ShowShape()
 			Note += Frame;
 		}
 	}
-	const ftapi::SectionList &Own = m_pDocument->GetSections()->Get(static_cast<int>(m_iTrack));
-	if (ftapi::MatchSongShape(Own, std::string(), 0.0, &Shape) == &Shape)
-		Note = _T("The song is laid out in this shape already.");
-	else if (!Own.empty())
+	if (Planned && Laid.Sections == m_pDocument->GetSections()->Get(static_cast<int>(m_iTrack)))
+		Note = _T("The song is laid out in this form already.");
+	else if (!m_pDocument->GetSections()->Get(static_cast<int>(m_iTrack)).empty())
 		Note += _T(" The song's own section names give way to the shape's.");
 	SetDlgItemText(IDC_SHAPE_NOTE, Note);
 }
 
 void CSongShapeDlg::OnShapeChanged()
+{
+	FillVariants();
+	ShowShape();
+}
+
+void CSongShapeDlg::OnOptionChanged()
 {
 	ShowShape();
 }
@@ -231,13 +337,17 @@ void CSongShapeDlg::OnOK()
 {
 	const std::vector<ftapi::SongShape> &All = ftapi::SongShapes();
 	const int Index = m_cList.GetCurSel();
-	if (Index < 0 || Index >= static_cast<int>(All.size()))
+	ftapi::ShapeRequest R;
+	ftapi::ShapeChoice Choice;
+	std::string Error;
+	if (Index < 0 || Index >= static_cast<int>(All.size()) || !Request(R) || !Choose(Choice, Error))
 		return;
 	m_pShape = &All[static_cast<size_t>(Index)];
-	m_bAddBars = false;
+	m_Title = Choice.Shape.Title;
+	bool AddBars = false;
 	// A song with notes, shorter than the shape: the empty bars it needs go at the end only when the user says so
 	ftapi::ShapeLayout Laid;
-	if (m_bNotes && Plan(*m_pShape, true, Laid) && Laid.FrameChange > 0) {
+	if (m_bNotes && Plan(Choice.Shape, true, Laid) && Laid.FrameChange > 0) {
 		const int Have = TrackTiming(m_pDocument, m_iTrack).BarCount(), Need = Laid.NeededFrames * Laid.BarsPerFrame;
 		CString Question;
 		Question.Format(_T("The song has %s and the %s takes %s.\n\nAdd the %d empty bars it needs at the end of the song? Every note ")
@@ -247,8 +357,28 @@ void CSongShapeDlg::OnOK()
 		const int Answer = AfxMessageBox(Question, MB_YESNOCANCEL | MB_ICONQUESTION);
 		if (Answer == IDCANCEL)
 			return;
-		m_bAddBars = Answer == IDYES;
+		AddBars = Answer == IDYES;
 	}
+	// song_shape's arguments: the variant as shown (the track's name picks it when the first line is chosen)
+	ftapi::Json Args = ftapi::Json::MakeObject();
+	if (!R.Parts.empty())
+		Args.Set("parts", R.Parts);
+	Args.Set("shape", R.Shape);
+	if (R.Variant > 0)
+		Args.Set("variant", R.Variant);
+	if (R.Bars > 0)
+		Args.Set("bars", R.Bars);
+	for (int Pass = 0; Pass < 2; ++Pass) {
+		const std::vector<std::string> &Words = Pass == 0 ? R.Add : R.Drop;
+		if (Words.empty())
+			continue;
+		ftapi::Json List = ftapi::Json::MakeArray();
+		for (size_t i = 0; i < Words.size(); ++i)
+			List.Push(Words[i]);
+		Args.Set(Pass == 0 ? "add" : "drop", List);
+	}
+	Args.Set("add_bars", AddBars);
+	m_Arguments = ftapi::WriteJson(Args);
 	CDialog::OnOK();
 }
 
@@ -263,11 +393,8 @@ void ShowSongShapes(CMainFrame *pMainFrm)
 	CSongShapeDlg Dialog(pMainFrm);
 	if (Dialog.DoModal() != IDOK || Dialog.GetShape() == NULL)
 		return;
-	const ftapi::SongShape &Shape = *Dialog.GetShape();
-	CString Arguments;
-	Arguments.Format(_T("{\"shape\": \"%s\", \"add_bars\": %s}"), Shape.Id.c_str(), Dialog.AddBars() ? _T("true") : _T("false"));
 	std::string Reply;
-	if (!pTools->RunTool("song_shape", std::string(static_cast<LPCSTR>(CStringA(Arguments))), Reply)) {
+	if (!pTools->RunTool("song_shape", Dialog.GetArguments(), Reply)) {
 		AfxMessageBox(CString(Reply.c_str()), MB_ICONINFORMATION);
 		return;
 	}
@@ -275,7 +402,7 @@ void ShowSongShapes(CMainFrame *pMainFrm)
 	pDoc->UpdateAllViews(NULL, UPDATE_FRAME);
 	CString Done;
 	Done.Format(_T("Laid out a %s. Point at a section in the frame editor to see what it's for; Ctrl+Z takes it back."),
-		CString(Shape.Title.c_str()).MakeLower().GetString());
+		CString(Dialog.GetTitle().c_str()).MakeLower().GetString());
 	pMainFrm->SetMessageText(Done);
 }
 

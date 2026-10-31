@@ -578,8 +578,9 @@ is the recipes':
    calm, a boss fight for action, a town otherwise, or the short loop when
    the track's name asks for one, like "Shop" or Help > Exercises' "A first
    small song", while a town's or a village's name keeps the town, "Home
-   village" too; see [Song shapes](#song-shapes)), so every part has its
-   place and its job first.
+   village" too, in the variant the track's name picks, or the shape the
+   words in `about` ask for; see [Song shapes](#song-shapes) and [Varied
+   forms](#varied-forms)), so every part has its place and its job first.
 3. The parts and the form: the lead's sound, an A part's chords and bass,
    its sections named, the melody, A again, a B part on other chords, A
    once more, and drums (none for calm; a sampled kick and snare under
@@ -1127,7 +1128,7 @@ before a batch of changes.
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it. A whole section copied becomes its repeat, numbered the way the song numbers it: `A 2`, or `A3` beside an `A2`, never a name that reads as another's |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start. Bars put in after a swing swing as the bars before them do (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |
-| `song_shape` | Lays out a kind of song's shape: its named sections, each with its bars and what it's for, in the frames (an empty song gets the frames, the sections and its loop; a song with notes keeps them all, and gets the bars a longer shape needs only with `add_bars`). Without `shape` it lists the shapes. See [Song shapes](#song-shapes) (direct changes only; undoable) |
+| `song_shape` | Lays out a kind of song's shape: its named sections, each with its bars and what it's for, in the frames (an empty song gets the frames, the sections and its loop; a song with notes keeps them all, and gets the bars a longer shape needs only with `add_bars`). Varied by `variant` (else the track's name picks one), `add`, `drop`, `bars`, `parts` or words in `about`. Without `shape`, `about` or `parts` it lists the shapes. See [Song shapes](#song-shapes) and [Varied forms](#varied-forms) (direct changes only; undoable) |
 | `name_section` | Names bars as one of the song's sections (Intro, A, B, Bridge, Outro), renames a section or takes its name off. A section is whole frames, so bars inside a frame widen to it, and the reply says so. See [Sections](#sections) (direct changes only; undoable) |
 | `set_key` | Chooses the track's key ("D dorian", "A minor pentatonic", or "auto" to find it from the notes again), as the piano roll's Key button does; it moves no notes. See [The key](#the-key) (direct changes only; undoable) |
 | `set_mixer` | Sets channels' faders (`level` in dB, -24 to +6, or `change` to add), starting pans (`pan`), `soft` and `space` (0-100) in FamiTracker's mixer, and the space they send to (`room`, `echo` in beats, `repeats`), or puts them back (`reset`); `write_into_notes` writes the faders and pans into the notes for NSF files, in every track, and sets them back. See [The mixer](#the-mixer) (direct changes only; each call one undoable change) |
@@ -1378,6 +1379,70 @@ the track's sections are (else the one the track's name says: "Boss",
 "Night"), so nothing new is saved and older songs' names get lines too (Intro, A, A2,
 A', B, Bridge, Verse, Chorus, Climax, Break, Outro). A part's repeats (A',
 A'', A 2) have its color in the frame editor and on the ruler.
+
+#### Varied forms
+
+Songs of one kind shouldn't all share a form, and the user (or a local
+model) needn't know music theory to ask for another. `song_shape` takes,
+besides `shape`:
+
+- **`variant`**: each shape has a few forms of its own (a stage with a
+  second B, a bridge in B's place, B before A', or a turnaround Outro in
+  the break's place; a night with its break at the end, B first, or a warm
+  climax as its last part; a town with a second B, a bridge or an outro; a
+  boss with a second theme, a longer peak or a short bridge; a small place
+  with its contrast first, a break or A''). Without `variant` the track's
+  name picks one (a stable hash: the same name always gets the same form),
+  and the reply names the variant and lists the others ("variant 2: Intro
+  4, A 8, ...").
+- **`add` and `drop`**: parts from a fixed vocabulary (climax, break,
+  bridge, outro, intro, b, a'), put where the shape's own way puts them (a
+  climax after the contrast, a break or an outro at the end, a second B
+  after B, another A at the end of the body). What makes no sense is
+  refused with a reason: dropping A, a jingle with other parts, a part the
+  form has already or lacks, a form left with A alone.
+- **`bars`**: about how long (8-256). The shape grows its own way first (a
+  stage: B', A'', a bridge; a night: a climax, B'; a town: B', a bridge,
+  A''; a boss: a second theme, A''), then its phrases twice as long; it
+  shrinks by its extra parts, then shorter phrases (never under 4 bars;
+  intros and breaks stay short). The nearest form in whole phrases wins,
+  and the reply says when it isn't the length asked.
+- **`parts`**: the whole list as text, "Intro 4, A 8, A' 8, B 8, Climax 8,
+  Break 4": even bars, names of their own (a repeat with a prime, no longer
+  than its part), the loop after an intro. Not with `add`, `drop` or
+  `bars`.
+- **`about`**: words about the place. Without `shape` they pick it (a
+  factory, a cave or a forest is a stage; a boss or danger a fight, unless
+  the words say it isn't hectic, when a place to explore is a stage and
+  else a calm night; sleepy or calm words a night), and they suggest parts
+  ("with a climax", "no intro", an outro) and a length ("longer",
+  "short"), where `add`, `drop` and `bars` don't say. A stage that isn't
+  hectic gets no climax: the tune's last time round is its high point. The
+  reply says in one line what the words chose.
+
+Examples, on a track named "Town":
+
+| Call | Form |
+|---|---|
+| `{"shape": "night", "add": ["climax"]}` | Intro 4, A 8, A' 8, B 8, Climax 8, A'' 8, Break 4 (the climax: "the tune once more, higher, at its warmest; no drums added") |
+| `{"shape": "stage", "bars": 56, "variant": 1}` | Intro 4, A 8, A' 8, B 8, B' 8, Climax 8, A'' 8, Break 4 |
+| `{"about": "a dangerous factory, but not hectic"}` | a lively stage without its climax: Intro 4, A 8, A' 8, B 8, A'' 8, Outro 4 |
+
+`what_next` lays out its kind's shape (with the variant the track's name
+picks) on an empty track without sections, and takes `about` too: it
+passes the words on to `song_shape` and, without a kind, takes the kind
+from the shape they pick ("a sleepy village at night" is calm). On a
+track already laid out, varied or from a list of parts (sections from the
+first frame without a gap, every name a part's, repeats marked with
+primes), it fills the parts in order: A's chords and melody first, a
+repeat (A', B') its original's music to vary later, a climax A's (which
+check_song's climax finding then takes up an octave), a part of its own (B,
+a bridge) new chords, the intro, a break and an outro A's chords and bass;
+the form is done once every part laid out has its music, and a form laid
+out without a break or an intro gets none. FamiTracker's Module > Song
+shape has the same options: the form (the track's name's, or one of the
+variants), a length, Add a climax, a bridge or an outro, No intro, No
+break, and a box for a list of parts.
 
 ### The key
 

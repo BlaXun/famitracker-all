@@ -9,7 +9,7 @@ text: This is the What next panel. It gives your song's one next step, says why,
 step
 show: what-next
 check: first-song
-text: Make a small song with it: press Do it, listen (the song's Play button, or the space bar), and press Do it again. It picks a key, lays out the song's shape (a short loop of 14 bars, as the song's name asks), writes [[chords|chord]] and a [[bass line]], then offers a [[melody]]: Grow one gives you versions to pick from.
+text: Make a small song with it: press Do it, listen (the song's Play button, or the space bar), and press Do it again. It picks a key, lays out the song's shape (a short loop, as the song's name asks), writes [[chords|chord]] and a [[bass line]], then offers a [[melody]]: Grow one gives you versions to pick from.
 
   Press Check once its [[A part|a-part]] has a tune, chords and a bass, and the song goes round as a [[loop]].
 hint: Each Do it is one Ctrl+Z, so nothing is lost by trying. Skip leaves out a step you don't want. Grow one plays each version as you pick it.

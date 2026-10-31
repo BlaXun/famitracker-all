@@ -82,13 +82,73 @@ std::string PartLine(const std::string &Name, const SongShape *pShape = 0);
 // Whether a section's name makes it the song's high point: Climax, Peak or Finale (numbered or primed too: "Climax 2"),
 // the words PartLine gives the climax's line for
 bool IsClimaxName(const std::string &Name);
+// Variations (from feat-shape-variations): song_shape makes a shape's form
+// from simple words, so songs of one kind don't all share a form. Each shape
+// has variants of its own (VariantsOf: a stage with A'' after B, a bridge, B
+// before A', a turnaround...), picked by number or, without one, from the
+// track's name (a stable hash: the same name always gets the same form); then
+// parts added or dropped from a fixed vocabulary (climax, break, bridge,
+// outro, intro, b, a), then stretched or shortened toward a length in bars
+// in whole phrases and in the shape's own way. A list of parts as text
+// ("Intro 4, A 8, A' 8, B 8") takes the place of all of it, and words about
+// the place ("a sleepy village at night") pick the shape and suggest the
+// rest. Everything is deterministic.
+struct ShapeRequest {
+	std::string Shape;		// an id or words for one; empty: from About, else the general recipe's town
+	std::string About;		// words about the place or scene
+	std::string TrackName;	// for the variant when none is given
+	std::string Parts;		// a whole list of parts as text; takes the place of the rest
+	std::vector<std::string> Add, Drop;
+	int Bars;				// about how long; 0: the variant's own
+	int Variant;			// from 1; 0: from the track's name
+	ShapeRequest() : Bars(0), Variant(0) {}
+};
+
+struct ShapeChoice {
+	SongShape Shape;		// the form to lay out (Id and Kind the base's; each part's Line)
+	const SongShape *pBase;	// the shape it's a variation of
+	int Variant, Variants;	// 0 of 0 for a list of parts
+	bool VariantFromName;
+	std::string FromWords;	// what the words about the place chose, a line ("" without them)
+	std::vector<std::string> Changes;	// what add, drop and bars did, a sentence each
+	std::vector<std::string> Others;	// the other variants as "variant 2: Intro 4, A 8, ..."
+	ShapeChoice() : pBase(0), Variant(0), Variants(0), VariantFromName(false) {}
+};
+
+// The form a request asks for; false with Error (in plain words) when it makes no sense
+bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &Error);
+// A shape's variants, the first its plain form
+std::vector<SongShape> VariantsOf(const SongShape &Shape);
+// The variant (from 1) a track's name picks among Count
+int VariantOfName(const std::string &TrackName, int Count);
+// The words add and drop take, "climax, break, bridge, outro, intro, b (another contrast) or a (another time round of A)"
+std::string ShapePartWords();
+// Reads a list of parts ("Intro 4, A 8, A' 8"); false with Error
+bool ReadShapeParts(const std::string &Text, std::vector<ShapePart> &Parts, std::string &Error);
+// What words about a place ask for: the shape (null for none), parts to add and drop, a length in bars (0: the shape's)
+// and a line on why
+struct ShapeWords {
+	const SongShape *pShape;
+	std::vector<std::string> Add, Drop;
+	double Length;			// a factor on the shape's bars, 1 for none
+	std::string Why;
+	ShapeWords() : pShape(0), Length(1.0) {}
+};
+ShapeWords ReadShapeWords(const std::string &About);
+
+// The shape a track's sections were laid out in by song_shape, varied or not: MatchSongShape's, else (sections that
+// read as a laid-out form: from the first frame on without a gap, every name a shape's part, A's repeats marked with
+// primes, not numbers as the tools number their copies) the shape whose parts' names they share most, in order
+// (pPrefer when they read so, the kind what_next follows); null for none
+const SongShape *LaidOutShape(const SectionList &Sections, const std::string &TrackName, double Bpm, const SongShape *pPrefer = 0);
+
 // The shape a track's sections were laid out in: their names, in order, are
 // its parts' (should two shapes share their names, pPrefer when it's one of
 // them, else a calm word in the track's name or a tempo of 90 BPM or under
 // picks the calm night); null for none
 const SongShape *MatchSongShape(const SectionList &Sections, const std::string &TrackName, double Bpm,
 	const SongShape *pPrefer = 0);
-// That shape, else the one the track's name says ("Boss", "Night", "Shop"):
+// LaidOutShape's, else the one the track's name says ("Boss", "Night", "Shop"):
 // the song's kind, for the lines of its sections; null for none
 const SongShape *GuessSongShape(const SectionList &Sections, const std::string &TrackName, double Bpm);
 // The line shown where a section is named (the frame editor, the piano roll's

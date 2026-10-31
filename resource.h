@@ -952,6 +952,14 @@
 #define IDC_SHAPE_LIST                  2350
 #define IDC_SHAPE_PARTS                 2351
 #define IDC_SHAPE_NOTE                  2352
+#define IDC_SHAPE_VARIANT               2820
+#define IDC_SHAPE_BARS                  2821
+#define IDC_SHAPE_ADD_CLIMAX            2822
+#define IDC_SHAPE_ADD_BRIDGE            2823
+#define IDC_SHAPE_ADD_OUTRO             2824
+#define IDC_SHAPE_NO_INTRO              2825
+#define IDC_SHAPE_NO_BREAK              2826
+#define IDC_SHAPE_CUSTOM                2827
 
 // View > Ask (AskPanel.cpp): the user's own model asked from FamiTracker, its settings dialog and the panel's
 // controls: resources 740-749, controls 2500-2549, commands 38000-38049

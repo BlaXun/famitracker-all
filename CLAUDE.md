@@ -2151,6 +2151,44 @@ a melody, and the kept songs reach as high. `song_file_checks` checks
 `TestWhatNextLoop` (the rhythms, and no `chord_drone` after a walk) cover
 it.
 
+Varied song shapes (from `feat-shape-variations`): `song_shape` makes a
+form from simple words, so songs of one kind don't all share one.
+`MakeSongShape` in `SongShapes.cpp` takes a `ShapeRequest` (`ShapeRequestOf`
+in `Tools.cpp` reads the tool's arguments) and gives a `ShapeChoice`: the
+shape's variant (`VariantsOf`, the plain form first and then `VARIANTS`:
+a second B, a bridge, B before A', an outro; a night's break at the end or
+its climax...), picked by `variant` or else by the track's name
+(`VariantOfName`, FNV-1a of its words), then `add` and `drop` from a fixed
+vocabulary (`PartWord`: climax, break, bridge, outro, intro, b, a'; placed
+by `AddKind`, refused in plain words by `AddKind` and `DropKind`: A itself,
+a jingle, a part it has or lacks, A alone left), then `bars` (`FitBars`:
+the shape's own growth, `GROWTH`, then phrases twice as long, or its extra
+parts out and phrases halved; the nearest in whole phrases). `parts` is a
+whole list (`ReadShapeParts`: even bars, names of their own, a repeat or a
+climax no longer than its part), and `about` words (`ReadShapeWords`: the
+shape by `FindSongShape`'s lists, which now know places like factory, cave
+and forest, a danger that "isn't hectic" a stage rather than a boss, parts
+asked for or said not to be, `Negated`, and longer or short) fill what the
+other arguments leave. A part a variation adds has its shape's own line
+(`EXTRA_LINES`, through `PartLine`; a calm climax "the tune once more,
+higher, at its warmest; no drums added"). `LaidOutShape` reads a track's
+sections as a laid-out form, varied or a list (from frame 0 without a gap,
+every name a part kind's, repeats with primes, not the tools' numbers), and
+replaces `MatchSongShape` in `what_next` (the shape milestone, the form done
+once every part laid out has notes, no break or intro asked of a form laid
+out without one) and in `GuessSongShape`. `what_next` takes `about` (passed
+on to song_shape; without `kind` its shape's kind is the kind,
+`WhatNext::m_pShape`), and `GrowForm` fills a part laid out by its name:
+a repeat its original's music (B' B's), a climax A's (the climax finding
+lifts it), a part of its own new chords (a second one `ShiftedProgression`'s).
+Module > Song shape has a form combo, a length box, five checkboxes and a
+box for parts (`IDC_SHAPE_VARIANT` to `IDC_SHAPE_CUSTOM`, 2820-2827).
+`TestShapeVariations`, `TestSongShapeOptions` and
+`TestWhatNextShapeVariations` (walks on a night with a climax, a stage of
+56 bars, a list of parts, words alone and the variants eight names pick)
+cover them; the older shape tests pass `variant` 1 where they need the plain
+form.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
