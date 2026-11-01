@@ -3021,6 +3021,42 @@ flagged. FakeSong's `ChipRounding` renders notes at their registers' pitch.
 `TestCrossChipDoubles`, `TestFinishStepsKept`, `TestMelodyVeryHigh` and
 `TestSeam` (`listen_tests`) cover them.
 
+The judges' melody, a triangle beside samples and the climax's register (from
+`fix-r6-judges`): once the Caves' chords played in A' where the lead rested,
+check_song, the review and listen without `melody_channel` took 2A03 Pulse 2's
+broken chords for the melody. `GuessMelodyChannel` now asks `DesignedLeadIn`
+first: the channel the host keeps for the track (`SongHost::KeepLead` and
+`KeptLead` in `Song.h`, kept with the kind by `WhatNextTool` from
+`WhatNext::LeadToKeep`: a `melody_channel` given, the designed lead's channel
+or the one it was made for, never a guess) where it plays in the bars, else
+the channel playing most notes on an instrument named as a kind's lead
+(`NextKind::LeadName`, the kept kind's first; not an echo of another, the
+higher of two lines on it); a part mostly of chords or a steady run is left
+out in the guess's second pass too. listen measured the Airship's bass (short
+D-2 to D-3 triangle notes under the kit's samples on every beat) as a warble
+22 times a second, which the user didn't hear: rendered on FamiTracker's own
+APU and mixer (`Source/Tests`' stand-ins) the stem was clean, and a tenth of
+the samples' walk added to it gave the very finding, so `ListenPart::Pin` (2:
+the 2A03's triangle, noise and DPCM) lets `PinCleaned` in `Listen.cpp` take
+out of a pitched part what follows the others on its pin (least squares in
+blocks of `PIN_BLOCK` seconds) before `TrackNote`, and `TrackNote` takes a
+swing as a wobble only when its window follows it (`WOBBLE_FOLLOWED`: the
+rate times the window, the note's longest period at least; 38's FDS warble
+0.12). Climaxes: grown climax versions all peaked at B-5 (a sixth over the
+motif's top) and write_notes then said "sits high ... transpose -12", which
+would put the climax under A. `ClimaxOver` (before `GrowMelodyTool`) gives
+bars in a section `IsClimaxName` names the melody's highest note before it
+(intros, breaks and outros aside) as `GrowRequest::Over`; `ChoosePeaks` aims
+each version (`Grower`'s `m_Version`) 2, 4 or 5 semitones over it, never more
+than a fifth; `WritingWarnings` judges a climax by `CLIMAX_LEAD_MIDDLE` and
+`CLIMAX_LEAD_TOP` (a fourth higher) and `MELODY_HIGHEST`, offering the octave
+down only when it still climbs over the tune before, else advice; and
+`ClimbingHooks` may reach a fourth over that tune (the Airship's A and B
+reached E-5, and no hook's move landed on F#5 or G-5, so the climax was
+offered one under A's top). `TestLeadOverActivity`, `TestTriangleBesideSamples`
+(`listen_tests`) and `CheckMelodyContrast` (the climax's top a step to a fifth
+over the tune before it, in every walk) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

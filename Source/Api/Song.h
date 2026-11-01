@@ -592,6 +592,24 @@ public:
 		const std::map<std::pair<long long, int>, std::string>::const_iterator It = m_Kinds.find(std::make_pair(Serial, Track));
 		return It != m_Kinds.end() ? It->second : std::string();
 	}
+	// The channel the lead what_next designed (or was given) plays on in a track of the open song, kept with its kind, so
+	// the checks without melody_channel take the tune where what_next put it (the Caves' chords, broken chords on 2A03 Pulse
+	// 2, were taken for the melody once they played in A' where the lead rested: fix-r6-judges); -1 for none
+	void KeepLead(int Track, int Channel)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		m_Leads[std::make_pair(Serial, Track)] = Channel;
+	}
+	int KeptLead(int Track)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		const std::map<std::pair<long long, int>, int>::const_iterator It = m_Leads.find(std::make_pair(Serial, Track));
+		return It != m_Leads.end() ? It->second : -1;
+	}
 
 	// The finishing steps that ran on a track of the open song (polish with its finishing touches, the mix; finish_song's or
 	// called alone), each with the song's print (SoundPrint) after it: what_next counts polish done only once one ran (not a
@@ -634,6 +652,7 @@ public:
 private:
 	std::string m_LastListen;
 	std::map<std::pair<long long, int>, std::string> m_Kinds;
+	std::map<std::pair<long long, int>, int> m_Leads;
 	std::map<std::pair<std::pair<long long, int>, std::string>, std::string> m_Steps;
 	AgentLog m_Log;
 	bool m_LogFollowed = false;

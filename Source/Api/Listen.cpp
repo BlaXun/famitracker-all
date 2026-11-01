@@ -167,6 +167,7 @@ const double PITCH_APERIODIC = 0.3, PITCH_QUIET_DB = 18.0;
 // A wobble: the pitch swinging WOBBLE_MIN cents or more either way within WOBBLE_WINDOW seconds (the 5th to the 95th
 // percentile of its frames there, so one stray frame doesn't make one), for 1.5 of its cycles or more
 const double WOBBLE_MIN = 12.0, WOBBLE_WINDOW = 0.25;
+const double WOBBLE_FOLLOWED = 0.3;	// a swing's cycle three windows long or more (38's FDS warble, 14.5 Hz at A-4: 0.12)
 
 // A note's pitch track, kept for the clicks inside it
 struct Track {
@@ -392,7 +393,13 @@ Track TrackNote(const std::vector<float> &Samples, int Rate, long long Begin, lo
 		// way now and then is a sound's noise (an N163 pad's first quiet frames) or a trill, not a wobble
 		const double Middle = Median(Stretch), Up = P.High - Middle, Down = Middle - P.Low;
 		const bool BothWays = std::min(Up, Down) >= std::max(Up, Down) / 3.0;
-		P.Wobbles = P.WobbleSeconds >= 0.12 && (P.Rate <= 0.0 || P.WobbleSeconds * P.Rate >= 1.5) && P.Swing >= WOBBLE_MIN && BothWays;
+		// ...and slowly enough for the window to follow: YIN looks through the note's longest period at least (TrackPitch's
+		// rule), and a swing faster than WOBBLE_FOLLOWED of that window's own rate is the window's unevenness, not the pitch's
+		// (a low triangle's D-2, an 18 ms window, measured 22 swings a second under the samples: fix-r6-judges)
+		const double Window = std::max(PITCH_WINDOW, 1.0 / Options.minFrequency);
+		const bool Followed = P.Rate <= 0.0 || P.Rate * Window <= WOBBLE_FOLLOWED;
+		P.Wobbles = P.WobbleSeconds >= 0.12 && (P.Rate <= 0.0 || P.WobbleSeconds * P.Rate >= 1.5) && P.Swing >= WOBBLE_MIN && BothWays &&
+			Followed;
 		P.Steady = Before.size() >= 12 ? Median(Before) : Median(Stretch);
 		P.HeldSeconds = Before.size() >= 12 ? static_cast<double>(Before.size()) * PITCH_HOP : 0.0;
 		if (!P.Wobbles) {
@@ -922,12 +929,48 @@ bool Ears::Loud(int Part) const
 	return m_PartDb[static_cast<size_t>(Part)] >= Most - 10.0;
 }
 
+// A pitched part on the 2A03's second pin (ListenPart::Pin) with what the others there bleed into its render taken out, for
+// measuring its pitch: in each block of PIN_BLOCK seconds, the share of each other's render that its own follows (least
+// squares). The Airship's bass, short low triangle notes under the kit's samples on every beat, measured as a warble 22
+// times a second, 39 to 53 cents either way, which the user didn't hear: a tenth of the samples' walk in the triangle's
+// render does that to a D-2 (fix-r6-judges)
+const double PIN_BLOCK = 1.0;
+
+std::vector<float> PinCleaned(const ListenSong &S, size_t p)
+{
+	const ListenPart &P = S.Parts[p];
+	std::vector<float> Out = P.Samples;
+	if (P.Pin == 0 || !P.Pitched)
+		return Out;
+	const size_t Block = static_cast<size_t>(std::max(1.0, PIN_BLOCK * S.Rate));
+	for (size_t o = 0; o < S.Parts.size(); ++o) {
+		const ListenPart &Other = S.Parts[o];
+		if (o == p || Other.Pin != P.Pin)
+			continue;
+		for (size_t From = 0; From < Out.size(); From += Block) {
+			const size_t To = std::min(Out.size(), std::min(Other.Samples.size(), From + Block));
+			double Both = 0.0, Theirs = 0.0;
+			for (size_t n = From; n < To; ++n) {
+				Both += static_cast<double>(Out[n]) * Other.Samples[n];
+				Theirs += static_cast<double>(Other.Samples[n]) * Other.Samples[n];
+			}
+			if (Theirs <= 1e-9)
+				continue;
+			const double Share = Both / Theirs;
+			for (size_t n = From; n < To; ++n)
+				Out[n] -= static_cast<float>(Share * Other.Samples[n]);
+		}
+	}
+	return Out;
+}
+
 void Ears::Measure()
 {
 	m_Tracks.resize(S.Parts.size());
 	m_PartDb.assign(S.Parts.size(), -200.0);
 	for (size_t p = 0; p < S.Parts.size(); ++p) {
 		const ListenPart &P = S.Parts[p];
+		const std::vector<float> Clean = PinCleaned(S, p);
 		m_Tracks[p].resize(P.Notes.size());
 		std::vector<double> Levels;
 		for (size_t i = 0; i < P.Notes.size(); ++i) {
@@ -939,7 +982,7 @@ void Ears::Measure()
 			if (Level > -150.0)
 				Levels.push_back(Level);
 			if (P.Pitched && N.Hz > 0.0 && N.Steady)
-				m_Tracks[p][i] = TrackNote(P.Samples, S.Rate, N.Begin, N.End, N.Hz);
+				m_Tracks[p][i] = TrackNote(Clean, S.Rate, N.Begin, N.End, N.Hz);
 		}
 		m_PartDb[p] = Levels.empty() ? -200.0 : Median(Levels);
 	}

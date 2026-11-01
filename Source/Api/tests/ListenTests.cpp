@@ -29,6 +29,7 @@
 // ApiTests.cpp.
 
 #include "../Listen.h"
+#include "../DpcmKit.h"
 
 #include <cmath>
 #include <cstdio>
@@ -492,9 +493,93 @@ void TestWords()
 
 }	// namespace
 
+// The Airship's bass (fix-r6-judges): short low triangle notes, two rows (0.2 s) each, under the kit's samples on every beat
+// at Z40, rendered as FamiTracker renders a part alone: the 2A03's second pin plays the triangle and the DMC together
+// (159.79 / (1 / (t / 8227 + d / 22638) + 100)), and the triangle's stem is that pin less the pin with the DMC alone, so the
+// samples' levels move the triangle's own steps in the stem. listen said its pitch "warbles -39 to +53 cents, 22 times a
+// second"; the user heard a steady bass
+void TestTriangleBesideSamples()
+{
+	const double Hz[4] = { 73.42, 110.0, 146.83, 110.0 };	// D-2, A-2, D-3 and A-2 as the triangle plays them
+	const double Row = 0.1, Seconds = 6.4;
+	const size_t Count = static_cast<size_t>(Seconds * RATE);
+	const DpcmKit &Kit = SampleDrums();
+	const DpcmKey *pKick = FindSampleDrum("kick"), *pSnare = FindSampleDrum("snare");
+	CHECK(pKick != 0 && pSnare != 0);
+	if (pKick == 0 || pSnare == 0)
+		return;
+	const std::vector<int> Kick = DecodeDpcm(Kit.Samples[static_cast<size_t>(pKick->Sample)].Data, 64);
+	const std::vector<int> Snare = DecodeDpcm(Kit.Samples[static_cast<size_t>(pSnare->Sample)].Data, 64);
+	ListenPart Tri, Dmc;
+	Tri.Name = "2A03 Triangle";
+	Tri.Smooth = true;
+	Dmc.Name = "2A03 DPCM";
+	Dmc.Pitched = false;
+	Tri.Samples.assign(Count, 0.0f);
+	Dmc.Samples.assign(Count, 0.0f);
+	double Phase = 0.0;
+	int Level = 64;
+	for (size_t n = 0; n < Count; ++n) {
+		const double t = static_cast<double>(n) / RATE;
+		const int r = static_cast<int>(t / Row);
+		const double Into = t - r * Row;
+		// The bass: a note every two rows, on a 32-step wave
+		Phase = std::fmod(Phase + Hz[(r / 2) % 4] / RATE, 1.0);
+		const int Step = static_cast<int>(Phase * 32.0);
+		const int Tone = Step < 16 ? 15 - Step : Step - 16;
+		// The samples: a kick on rows 0, 8 and 10 of every 16, a snare on 4 and 12, each from Z40 (level 64)
+		const int InBar = r % 16;
+		const bool KickRow = InBar == 0 || InBar == 8 || InBar == 10, SnareRow = InBar == 4 || InBar == 12;
+		const std::vector<int> *pHit = KickRow ? &Kick : SnareRow ? &Snare : 0;
+		const size_t At = static_cast<size_t>(Into * 33144.0);
+		if (pHit != 0 && At < pHit->size())
+			Level = (*pHit)[At];
+		else if (pHit != 0 && At == 0)
+			Level = 64;
+		auto Pin = [](double t, double d) { return t + d <= 0.0 ? 0.0 : 159.79 / (1.0 / (t / 8227.0 + d / 22638.0) + 100.0); };
+		Dmc.Samples[n] = static_cast<float>(Pin(0.0, Level) - Pin(0.0, 64.0));
+		// (and a share of the samples' walk, as the pin's whole steps leave it there: a tenth of it measured as the Airship's
+		// warble, on FamiTracker's own APU and mixer rendering the triangle's stem under the kit)
+		Tri.Samples[n] = static_cast<float>(Pin(Tone, Level) - Pin(0.0, Level) + 0.15 * Dmc.Samples[n]);
+	}
+	Tri.Pin = Dmc.Pin = 2;
+	for (int r = 0; r * Row < Seconds - 2 * Row; r += 2) {
+		ListenNote N;
+		N.Row = r;
+		N.Rows = 2;
+		N.Begin = static_cast<long long>(r * Row * RATE);
+		N.End = static_cast<long long>((r + 2) * Row * RATE);
+		N.Hz = Hz[(r / 2) % 4];
+		Tri.Notes.push_back(N);
+	}
+	for (int r = 0; r * Row < Seconds; ++r)
+		if (r % 16 == 0 || r % 16 == 4 || r % 16 == 8 || r % 16 == 10 || r % 16 == 12) {
+			ListenNote N;
+			N.Row = r;
+			N.Begin = static_cast<long long>(r * Row * RATE);
+			N.End = N.Begin + static_cast<long long>(Row * RATE);
+			Dmc.Notes.push_back(N);
+		}
+	// Measured as it was before: the low notes wobble (the bleed's swings, faster than their window follows)
+	int Wobbled = 0;
+	for (size_t i = 0; i < Tri.Notes.size(); ++i)
+		Wobbled += MeasurePitch(Tri.Samples, RATE, Tri.Notes[i].Begin, Tri.Notes[i].End, Tri.Notes[i].Hz).Wobbles ? 1 : 0;
+	std::printf("Triangle beside samples: %d of %d notes wobble measured alone\n", Wobbled, static_cast<int>(Tri.Notes.size()));
+	std::vector<ListenPart> Parts;
+	Parts.push_back(Tri);
+	Parts.push_back(Dmc);
+	const std::vector<ListenFinding> Found = ListenToSong(SongOf(Parts));
+	CHECK_EQ(CountKind(Found, LISTEN_WOBBLE), 0);
+	CHECK_EQ(CountKind(Found, LISTEN_TUNING), 0);
+	// The same bass without the samples' render to take out: its low notes' swings are too fast for their window
+	const std::vector<ListenFinding> Alone = ListenToSong(SongOf(std::vector<ListenPart>(1, Tri)));
+	CHECK_EQ(CountKind(Alone, LISTEN_WOBBLE), 0);
+}
+
 int main()
 {
 	std::setvbuf(stdout, 0, _IONBF, 0);
+	TestTriangleBesideSamples();
 	TestWarble();
 	TestGentleVibrato();
 	TestDeepVibrato();
