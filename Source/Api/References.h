@@ -73,6 +73,33 @@ struct ReferenceSound {
 	ReferenceSound() : Noise(false), Triangle(false), Sawtooth(false), Share(0), ModSpeed(0), ModDepth(0), ModDelay(0) {}
 };
 
+// How a reference's track is built (nsf::StudyPlan, feat-like-reference), kept with it so a song can be made like it:
+// what_next, song_shape and get_recipe take their picks from it (like)
+struct ReferenceBlock {
+	int FirstBar, Bars;					// from the first bar line, from 0
+	std::string Name;					// "intro", the form's letter ("A", "B'", "-" where the lead rests) or ""
+	std::vector<std::string> Parts;		// what plays: "lead", "bass", "chords", "second", "echo", "drums", "noise layer"
+	int Top;							// the lead's highest note, -1 where it rests
+	ReferenceBlock() : FirstBar(0), Bars(4), Top(-1) {}
+	bool Plays(const char *Part) const;
+};
+
+struct ReferencePlan {
+	bool Has;							// false for a reference studied before plans were kept (format 1): references restudy
+	int RowsPerBeat, BeatsPerBar, IntroBars;
+	std::string Form;					// the lead's four-bar phrases: "A A B A'"
+	int MotifNotes, MotifReturns, MotifShaped;
+	double RhythmReturn, ShapeReturn;
+	int LeadLow, LeadHigh;				// the lead's range
+	std::vector<ReferenceBlock> Blocks;
+	int PeakBar, PeakNote, Fullest;
+	std::string ChordChannel, ChordStyle, BassStyle, Groove, Intensity;	// "" for none
+	double DrumHits;
+	std::string Ambience, AmbienceKind;	// a noise layer apart from the drums; "" for none
+	ReferencePlan() : Has(false), RowsPerBeat(4), BeatsPerBar(4), IntroBars(0), MotifNotes(0), MotifReturns(0), MotifShaped(0),
+		RhythmReturn(0), ShapeReturn(0), LeadLow(-1), LeadHigh(-1), PeakBar(-1), PeakNote(-1), Fullest(-1), DrumHits(0) {}
+};
+
 struct Reference {
 	std::string Id;				// "bucky-o-hare-08": its file's name without ".json"
 	std::string Title, Game, Composer, Copyright;
@@ -87,8 +114,13 @@ struct Reference {
 	int LoopBars;				// 0 when it doesn't loop
 	std::string Study;			// the study in words
 	std::vector<ReferenceSound> Sounds;
-	Reference() : Track(0), Bpm(0), LoopBars(0) {}
+	ReferencePlan Plan;			// how it's built (feat-like-reference); Has false in a reference studied before
+	int Format;					// the file's format: 1 before plans were kept, REFERENCE_FORMAT (2) since
+	Reference() : Track(0), Bpm(0), LoopBars(0), Format(0) {}
 };
+
+// The library's file format now: 2 since the studies keep their plans (feat-like-reference)
+int ReferenceFormat();
 
 // "bucky-o-hare-08"
 std::string ReferenceId(const std::string &Game, int Track);

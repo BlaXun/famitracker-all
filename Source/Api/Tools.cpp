@@ -22362,6 +22362,9 @@ std::string SongShapesText(Session &S)
 std::vector<std::string> TagsArg(const Json &Args, const char *Name);
 
 // What song_shape's arguments ask for, for the tool and what_next
+// like's form length and kind (FindLike, after the reference library's tools); Missing says why when none is found
+int LikeBars(SongHost &Host, const std::string &Words, int FrameRate, int RowsPerBeat, int &Kind, std::string &Missing);
+
 ShapeRequest ShapeRequestOf(Session &S, const Json &Args)
 {
 	ShapeRequest R;
@@ -22372,6 +22375,16 @@ ShapeRequest ShapeRequestOf(Session &S, const Json &Args)
 	R.Add = TagsArg(Args, "add");
 	R.Drop = TagsArg(Args, "drop");
 	R.Bars = IntArg(Args, "bars", 0, 4, 256);
+	if (R.Bars == 0 && !Trim(StringArg(Args, "like")).empty()) {
+		// like: as long as the reference's loop (its intro too), the shape the kind its tempo and mode suggest without one
+		int Kind = -1;
+		std::string Missing;
+		R.Bars = LikeBars(S.Host(), StringArg(Args, "like"), S.Song.FrameRate, S.Time.RowsPerBeat, Kind, Missing);
+		if (!Missing.empty())
+			throw Problem(Missing);
+		if (R.Shape.empty() && R.About.empty() && R.Parts.empty() && Kind >= 0)
+			R.Shape = ShapeForKind(NextKindInfo(Kind).Name).Id;
+	}
 	R.Variant = IntArg(Args, "variant", 0, 1, 99);
 	R.Seed = RolledSeed(S.Song.Seed, IntArg(Args, "seed", 1, 1, 9999));
 	R.Roll = IntArg(Args, "seed", 1, 1, 9999);
@@ -28478,6 +28491,194 @@ std::string EffectsTool(Session &S, const Json &Args)
 	return Text;
 }
 
+// references with action restudy (feat-like-reference): the library's references studied again from their files, so a
+// study made before FamiTracker kept how a track is built (its plan: the motif, the texture by phrase, the peak, the
+// styles) gets one. Those whose plan is kept already are left (unless all, or a reference named); the user's tags and
+// notes stay. A file that isn't where it was studied is named, with what to do; at most MAX_STUDIED tracks a call
+// The words with Sep between them
+std::string JoinWords(const std::vector<std::string> &Words, const std::string &Sep)
+{
+	std::string Out;
+	for (size_t i = 0; i < Words.size(); ++i)
+		Out += (i ? Sep : std::string()) + Words[i];
+	return Out;
+}
+
+std::string RestudyReferences(Session &S, const Json &Args)
+{
+	const std::string Only = StringArg(Args, "reference");
+	const bool Every = BoolArg(Args, "all", false);
+	int Broken = 0;
+	std::vector<Reference> All = ReadLibrary(S, &Broken);
+	if (!Only.empty())
+		All = std::vector<Reference>(1, FindReference(S, Only));
+	// The references to study again, by their file
+	std::map<std::string, std::vector<Reference> > ByFile;
+	std::vector<std::string> FileOrder, NoSource;
+	int Current = 0, Wanted = 0;
+	for (size_t i = 0; i < All.size(); ++i) {
+		const Reference &R = All[i];
+		if (!Every && Only.empty() && R.Format >= ReferenceFormat() && R.Plan.Has) {
+			++Current;
+			continue;
+		}
+		if (R.Source.empty()) {
+			NoSource.push_back(R.Id);
+			continue;
+		}
+		if (!ByFile.count(R.Source))
+			FileOrder.push_back(R.Source);
+		ByFile[R.Source].push_back(R);
+		++Wanted;
+	}
+	std::vector<std::string> Done, Missing, Failed;
+	int Studied = 0, Left = 0;
+	const std::string Date = Today();
+	auto Keep = [&](Reference New, const Reference &Before) {
+		// the reference keeps its id (its file's name), what the user tagged and noted, and when it was first added
+		New.Id = Before.Id;
+		if (std::find(Before.Tags.begin(), Before.Tags.end(), "famitracker") != Before.Tags.end() ||
+			std::find(Before.Tags.begin(), Before.Tags.end(), "tracker-module") != Before.Tags.end() ||
+			std::find(Before.Tags.begin(), Before.Tags.end(), "midi") != Before.Tags.end()) {
+			for (size_t t = 0; t < Before.Tags.size(); ++t)
+				if (std::find(New.Tags.begin(), New.Tags.end(), Before.Tags[t]) == New.Tags.end())
+					New.Tags.push_back(Before.Tags[t]);
+			New.Notes = Before.Notes;
+		}
+		else
+			KeepOwnTags(New, Before);
+		if (!Before.Added.empty())
+			New.Added = Before.Added;
+		std::string Path;
+		SaveReference(S, New, Path);
+		Done.push_back(New.Id);
+	};
+	for (size_t f = 0; f < FileOrder.size(); ++f) {
+		const std::string &Source = FileOrder[f];
+		std::vector<Reference> &Refs = ByFile[Source];
+		if (Studied >= MAX_STUDIED) {
+			Left += static_cast<int>(Refs.size());
+			continue;
+		}
+		const Reference &First = Refs[0];
+		const bool Tagged = !First.Tags.empty();
+		auto Has = [&](const char *Tag) { return Tagged && std::find(First.Tags.begin(), First.Tags.end(), Tag) != First.Tags.end(); };
+		const std::string Local = S.Host().LocalPath(Source);
+		std::string Error;
+		if (Has("famitracker")) {
+			nsf::Module M;
+			nsf::FtmInfo Info;
+			if (!nsf::ReadFtmFile(Local, M, Info, Error)) {
+				for (size_t i = 0; i < Refs.size(); ++i)
+					Missing.push_back(Refs[i].Id + " (" + Source + ")");
+				continue;
+			}
+			for (size_t i = 0; i < Refs.size(); ++i) {
+				const int Track = Refs[i].Track - 1;
+				if (Track < 0 || Track >= static_cast<int>(M.Tracks.size())) {
+					Failed.push_back(Refs[i].Id + ": its track isn't in the module now");
+					continue;
+				}
+				Keep(MakeFtmReference(M, Track, nsf::StudyTrack(M, Track, nsf::FtmTrackReport(M, Info, Track)), Source, Date), Refs[i]);
+				++Studied;
+			}
+			continue;
+		}
+		if (Has("tracker-module") || Has("midi")) {
+			nsf::TrackerSong Song;
+			nsf::Module M;
+			nsf::TrackReport Report;
+			if (!nsf::ReadTrackerFile(Local, Song, Error)) {
+				for (size_t i = 0; i < Refs.size(); ++i)
+					Missing.push_back(Refs[i].Id + " (" + Source + ")");
+				continue;
+			}
+			if (Song.Title.empty())
+				Song.Title = Refs[0].Title;
+			if (!nsf::TrackerToModule(Song, M, Report, Error)) {
+				Failed.push_back(Refs[0].Id + ": " + Error);
+				continue;
+			}
+			Keep(MakeModuleReference(Song, nsf::StudyTrack(M, 0, Report), Source, Date), Refs[0]);
+			++Studied;
+			continue;
+		}
+		nsf::NsfFile File;
+		if (!nsf::ReadNsfFile(Local, File, Error)) {
+			for (size_t i = 0; i < Refs.size(); ++i)
+				Missing.push_back(Refs[i].Id + " (" + Source + ")");
+			continue;
+		}
+		std::vector<int> Tracks;
+		std::vector<size_t> Which;
+		for (size_t i = 0; i < Refs.size(); ++i) {
+			const int Track = Refs[i].Track - 1;
+			if (Track < 0 || Track >= File.Songs) {
+				Failed.push_back(Refs[i].Id + ": the NSF has no track " + std::to_string(Refs[i].Track) + " now");
+				continue;
+			}
+			if (Studied + static_cast<int>(Tracks.size()) >= MAX_STUDIED) {
+				++Left;
+				continue;
+			}
+			Tracks.push_back(Track);
+			Which.push_back(i);
+		}
+		if (Tracks.empty())
+			continue;
+		nsf::StudyOptions Options;
+		std::vector<nsf::StudiedTrack> Out;
+		if (!nsf::StudyTracks(File, Tracks, Options, Out, Error))
+			throw Problem("The study stopped: " + Error);
+		for (size_t i = 0; i < Out.size() && i < Which.size(); ++i) {
+			const Reference &Before = Refs[Which[i]];
+			if (!Out[i].Problem.empty()) {
+				Failed.push_back(Before.Id + ": " + ValidUtf8(Out[i].Problem));
+				continue;
+			}
+			Keep(MakeReference(File, Out[i].Track, Out[i].Study, Source, Date), Before);
+			++Studied;
+		}
+	}
+	std::string Text;
+	if (All.empty())
+		return "The reference library is empty: study_nsf and study_module add references to it.";
+	if (Wanted == 0 && NoSource.empty())
+		return Format("Every reference in the library (%d) was studied with its plan already (how its track is built: the motif, "
+			"the texture by phrase, the peak, the styles). all true studies them again anyway.", Current);
+	Text = Format("Studied again: %s", Plural(static_cast<int>(Done.size()), "reference", "references").c_str());
+	if (!Done.empty()) {
+		std::vector<std::string> Shown(Done.begin(), Done.begin() + std::min<size_t>(Done.size(), 12));
+		Text += " (" + JoinWords(Shown, ", ") + (Done.size() > 12 ? ", ..." : "") + ")";
+	}
+	Text += ", each keeping its tags and notes; their studies now say how the track is built (references show).";
+	if (Current > 0)
+		Text += Format(" %s had it already.", Plural(Current, "reference", "references").c_str());
+	if (!Missing.empty()) {
+		Text += Format("\nNot found, so not studied again (%d): ", static_cast<int>(Missing.size()));
+		for (size_t i = 0; i < Missing.size() && i < 20; ++i)
+			Text += (i ? "; " : "") + Missing[i];
+		Text += Missing.size() > 20 ? "; ..." : "";
+		Text += ". Their files aren't where they were studied: ask the user where they are now, then study_nsf (or study_module) "
+			"with that path studies them again, keeping their tags.";
+	}
+	if (!Failed.empty()) {
+		Text += "\nCouldn't be studied: ";
+		for (size_t i = 0; i < Failed.size() && i < 10; ++i)
+			Text += (i ? "; " : "") + Failed[i];
+		Text += ".";
+	}
+	if (!NoSource.empty())
+		Text += Format("\n%s keep no file to study again (%s): study_nsf with their NSF's path does it.", Plural(static_cast<int>(NoSource.size()),
+			"reference", "references").c_str(), JoinWords(NoSource, ", ").c_str());
+	if (Left > 0)
+		Text += Format("\n%d more to study again: references with action restudy again goes on with them (%d tracks a call).", Left,
+			MAX_STUDIED);
+	if (Broken > 0)
+		Text += Format("\n%s in the library folder couldn't be read.", Plural(Broken, "file", "files").c_str());
+	return Text;
+}
+
 std::string ReferencesTool(Session &S, const Json &Args)
 {
 	const std::string Action = Lowercase(StringArg(Args, "action", "list"));
@@ -28559,7 +28760,9 @@ std::string ReferencesTool(Session &S, const Json &Args)
 			throw Problem("The reference couldn't be deleted: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
 		return "Deleted the reference " + R.Id + " (" + R.Title + ").";
 	}
-	throw Problem("action: list, show, search, guide, tag or delete.");
+	if (Action == "restudy")
+		return RestudyReferences(S, Args);
+	throw Problem("action: list, show, search, guide, tag, delete or restudy.");
 }
 
 // A reference's sound as an instrument for Chip ("2A03", "VRC6", "FDS", "N163" or "5B"; Sawtooth for the VRC6's
@@ -29474,6 +29677,295 @@ std::string KindNoteOf(const std::string &Line)
 }
 
 // The steps a stage of what_next finds, worked out from the song as it is
+// like (feat-like-reference): a song made like a reference, its picks from the reference's study instead of the kind's
+// pools: the tempo, the key, the chord and bass styles and when the chords rest, the groove and how busy the drums are, the
+// lead's sound (reference_sound), the form's length. what_next, song_shape and get_recipe take it. The tune is never the
+// reference's: its hooks stay the song's own
+struct LikePicks {
+	bool Asked;				// like was given
+	bool Found;
+	std::string Words;		// as asked
+	Reference R;
+	bool Builtin;			// a built-in game's track: its sounds alone, no study
+	std::string Name;		// "Needle Man (Mega Man 3)"
+	double Bpm;				// the nearest BPM whose rows are even; 0 for none
+	std::string Key;		// "E minor"; "" for none
+	int Bars;				// the form's length, 0 for none
+	int LeadSound;			// the lead's sound, from 1; 0 for none
+	int Kind;				// the kind its tempo and mode suggest, -1 for none
+	bool Samples;			// sampled drums (DPCM)
+	std::vector<std::string> Near;	// what the library has near the words, when nothing matches
+	LikePicks() : Asked(false), Found(false), Builtin(false), Bpm(0), Bars(0), LeadSound(0), Kind(-1), Samples(false) {}
+	// " (from Needle Man (Mega Man 3), the reference this song is like)"
+	std::string From() const { return " (from " + Name + ", the reference this song is like)"; }
+	bool Plan() const { return Found && R.Plan.Has; }
+};
+
+std::vector<Reference> ReadLibraryOf(SongHost &Host)
+{
+	std::vector<std::string> Names;
+	std::string Error;
+	std::vector<Reference> Out;
+	if (!Host.ListLibrary(Names, Error))
+		return Out;
+	std::sort(Names.begin(), Names.end());
+	for (size_t i = 0; i < Names.size(); ++i) {
+		const std::string &Name = Names[i];
+		if (Name.size() <= std::strlen(REFERENCE_EXTENSION) ||
+			Lowercase(Name.substr(Name.size() - std::strlen(REFERENCE_EXTENSION))) != REFERENCE_EXTENSION)
+			continue;
+		std::string Bytes, Why;
+		Reference R;
+		if (!Host.ReadLibrary(Name, Bytes, Why) || !ReadReferenceFile(Bytes, R, Why))
+			continue;
+		R.Id = Name.substr(0, Name.size() - std::strlen(REFERENCE_EXTENSION));
+		Out.push_back(R);
+	}
+	return Out;
+}
+
+// The words of a text, lowercased, letters and digits ("Mega Man 3" is mega, man, 3; "MegaMan3" is megaman3)
+std::vector<std::string> LikeWords(const std::string &Text)
+{
+	std::vector<std::string> Out;
+	std::string Word;
+	for (size_t i = 0; i <= Text.size(); ++i) {
+		const unsigned char c = i < Text.size() ? static_cast<unsigned char>(Text[i]) : ' ';
+		if (std::isalnum(c))
+			Word += static_cast<char>(std::tolower(c));
+		else {
+			static const char *const FILLER[] = { "the", "a", "an", "of", "like", "from", "track", "song", "theme", "stage", "music",
+				"bgm", "nes", "in" };
+			bool Skip = Word.empty();
+			for (size_t k = 0; k < sizeof(FILLER) / sizeof(FILLER[0]) && !Skip; ++k)
+				Skip = Word == FILLER[k];
+			if (!Skip)
+				Out.push_back(Word);
+			Word.clear();
+		}
+	}
+	return Out;
+}
+
+// How many of the asked words a reference's names hold (its id, title, game, composer; a number as a word or a track's),
+// and of how many
+double LikeMatch(const std::vector<std::string> &Asked, const std::string &Names, int Track)
+{
+	if (Asked.empty())
+		return 0;
+	const std::vector<std::string> Have = LikeWords(Names);
+	std::string Squeezed;
+	for (size_t i = 0; i < Have.size(); ++i)
+		Squeezed += Have[i];
+	int Matched = 0;
+	for (size_t i = 0; i < Asked.size(); ++i) {
+		bool In = std::find(Have.begin(), Have.end(), Asked[i]) != Have.end() || (Asked[i].size() >= 4 && Squeezed.find(Asked[i]) !=
+			std::string::npos);
+		In = In || (Track > 0 && Asked[i] == std::to_string(Track));
+		Matched += In ? 1 : 0;
+	}
+	return static_cast<double>(Matched) / Asked.size();
+}
+
+// The nearest BPM to Bpm whose rows all last the same (a speed at the default tempo), as set_tempo makes them
+double EvenBpmNear(double Bpm, int FrameRate, int RowsPerBeat)
+{
+	const int Default = DefaultTempo(FrameRate);
+	double Best = 0;
+	for (int Speed = 2; Speed < 20; ++Speed) {
+		const double Candidate = BeatsPerMinute(Speed, Default, FrameRate, RowsPerBeat);
+		if (Best <= 0 || std::fabs(Candidate - Bpm) < std::fabs(Best - Bpm))
+			Best = Candidate;
+	}
+	return std::floor(Best * 10 + 0.5) / 10;
+}
+
+// The reference a song is like, by words (its game and track, its title, its id): the library's best match, else a
+// built-in game's track (its sounds alone)
+LikePicks FindLike(SongHost &Host, const std::string &Words, int FrameRate, int RowsPerBeat)
+{
+	LikePicks L;
+	L.Asked = !Trim(Words).empty();
+	L.Words = Trim(Words);
+	if (!L.Asked)
+		return L;
+	const std::vector<std::string> Asked = LikeWords(L.Words);
+	const std::vector<Reference> All = ReadLibraryOf(Host);
+	double Best = 0;
+	int BestScore = 0;
+	for (size_t i = 0; i < All.size(); ++i) {
+		const Reference &R = All[i];
+		if (Lowercase(R.Id) == Lowercase(L.Words)) {
+			L.R = R;
+			Best = 2;
+			break;
+		}
+		const double Match = LikeMatch(Asked, R.Id + " " + R.Title + " " + R.Game + " " + R.Composer, R.Track);
+		const int Score = ReferenceMatch(R, L.Words);
+		if (Match > Best + 1e-9 || (Match > 0 && std::fabs(Match - Best) < 1e-9 && Score > BestScore)) {
+			Best = Match;
+			BestScore = Score;
+			L.R = R;
+		}
+	}
+	// (a match of most of the words: "Mega Man 3 Needle Man" holds mega, man, 3, needle)
+	if (Best >= 0.75)
+		L.Found = true;
+	else {
+		// A built-in game's track
+		const std::vector<GameSoundGame> &Games = GameSoundGames();
+		std::set<std::string> Seen;
+		double BestBuiltin = 0;
+		std::string Id;
+		for (const GameSound &G : BuiltinGameSounds())
+			for (const GameSoundUse &U : G.Uses) {
+				if (!Seen.insert(U.Id).second)
+					continue;
+				const double Match = LikeMatch(Asked, U.Id + " " + U.Title + " " + (G.Game < Games.size() ? Games[G.Game].Name : std::string()),
+					U.Track);
+				if (Match > BestBuiltin + 1e-9) {
+					BestBuiltin = Match;
+					Id = U.Id;
+				}
+			}
+		Reference R;
+		if (BestBuiltin >= 0.75 && BuiltinReference(Id, R)) {
+			L.R = R;
+			L.Found = true;
+			L.Builtin = true;
+		}
+	}
+	if (!L.Found) {
+		// The nearest ones by their study's words, for the reply
+		std::vector<std::pair<int, size_t> > Scores;
+		for (size_t i = 0; i < All.size(); ++i) {
+			const int Score = ReferenceMatch(All[i], L.Words);
+			if (Score > 0)
+				Scores.push_back(std::make_pair(-Score, i));
+		}
+		std::sort(Scores.begin(), Scores.end());
+		for (size_t i = 0; i < Scores.size() && i < 3; ++i)
+			L.Near.push_back(All[Scores[i].second].Id + " (" + All[Scores[i].second].Title + (All[Scores[i].second].Game.empty() ? "" : ", " +
+				All[Scores[i].second].Game) + ")");
+		return L;
+	}
+	const Reference &R = L.R;
+	L.Name = R.Title + (R.Game.empty() || R.Game == R.Title ? std::string() : " (" + R.Game + ")");
+	if (R.Bpm > 0)
+		L.Bpm = EvenBpmNear(R.Bpm, FrameRate, RowsPerBeat);
+	Key K;
+	std::string KeyText = R.Key;
+	const size_t Both = KeyText.find(" (major and minor)");
+	if (Both != std::string::npos)
+		KeyText = KeyText.substr(0, Both) + " minor";
+	if (KeyText.compare(0, 12, "no clear key") != 0 && !KeyText.empty() && ParseKey(KeyText, K))
+		L.Key = KeyName(K);
+	if (R.LoopBars > 0)
+		L.Bars = std::max(16, std::min(64, (R.LoopBars + R.Plan.IntroBars + 2) / 4 * 4));
+	// Its lead's sound, where a pulse can play it
+	for (size_t i = 0; i < R.Sounds.size() && L.LeadSound == 0; ++i) {
+		const ReferenceSound &Sd = R.Sounds[i];
+		if (Sd.Role == "the lead" && !Sd.Noise && !Sd.Triangle && (Sd.Chip == "2A03" || Sd.Chip == "VRC6" || Sd.Chip == "MMC5"))
+			L.LeadSound = static_cast<int>(i) + 1;
+	}
+	L.Samples = std::find(R.Tags.begin(), R.Tags.end(), "dpcm-drums") != R.Tags.end();
+	// A kind from its tempo and its mode (the kind sets what the study doesn't)
+	if (L.Bpm > 0) {
+		const bool Minor = R.Key.find("minor") != std::string::npos || R.Key.find("dorian") != std::string::npos;
+		L.Kind = L.Bpm >= 140 && Minor ? NEXT_ACTION : L.Bpm < 95 ? (Minor ? NEXT_MYSTERIOUS : NEXT_CALM) : NEXT_LIVELY;
+	}
+	return L;
+}
+
+// What the reference says about the song's picks, for the notes and get_recipe: a line each
+std::vector<std::string> LikeLines(const LikePicks &L)
+{
+	std::vector<std::string> Out;
+	if (!L.Found)
+		return Out;
+	const Reference &R = L.R;
+	const ReferencePlan &P = R.Plan;
+	std::vector<std::string> Picks;
+	if (L.Bpm > 0)
+		Picks.push_back(FormatNumber(L.Bpm) + " BPM");
+	if (!L.Key.empty())
+		Picks.push_back(L.Key);
+	if (!P.ChordStyle.empty())
+		Picks.push_back("chords " + P.ChordStyle);
+	if (!P.BassStyle.empty())
+		Picks.push_back("bass " + P.BassStyle);
+	if (!P.Groove.empty())
+		Picks.push_back("the " + P.Groove + " groove (" + P.Intensity + (L.Samples ? ", kit samples" : "") + ")");
+	else if (P.Has)
+		Picks.push_back("no drums");
+	if (L.LeadSound > 0)
+		Picks.push_back(Format("its lead's sound (reference_sound %d)", L.LeadSound));
+	if (L.Bars > 0)
+		Picks.push_back(Format("a form of about %d bars", L.Bars));
+	// The picks, and the tune: the song's own (its motif's returns as the measure to write a hook by)
+	std::string First = "Like " + L.Name + " (reference \"" + R.Id + "\"): " + (Picks.empty() ? std::string("its sounds") :
+		JoinWords(Picks, ", ")) + "; the kind sets the rest" + (L.Builtin ? " (a built-in game's track keeps its sounds alone: "
+		"study_nsf its NSF for the rest)" : !P.Has ? " (its study is older than plans: references with action restudy learns its "
+		"chords, bass, drums and texture)" : "") + ". The tune stays this song's own: take the reference's craft, never its notes";
+	if (P.Has && P.MotifNotes > 0)
+		First += Format(" (its lead's opening motif comes back %s and %d%% of its bars bring back a rhythm: write a hook of your own "
+			"that comes back as often)", Plural(P.MotifReturns, "time", "times").c_str(), static_cast<int>(P.RhythmReturn * 100 + 0.5));
+	Out.push_back(First + ".");
+	if (P.Has) {
+		// When its chords rest, which parts join and drop, the peak, a noise layer: the plan to follow
+		std::vector<std::string> Texture;
+		for (size_t k = 0; k < P.Blocks.size() && k < 12; ++k) {
+			const ReferenceBlock &B = P.Blocks[k];
+			Texture.push_back((B.Name.empty() || B.Name == "-" ? Format("bars %d-%d", B.FirstBar + 1, B.FirstBar + B.Bars) : B.Name) + ": " +
+				(B.Parts.empty() ? std::string("silence") : JoinWords(B.Parts, " ")));
+		}
+		std::string Second;
+		if (!Texture.empty())
+			Second = "Its texture by phrase (which parts play): " + JoinWords(Texture, "; ") + (P.Blocks.size() > 12 ? "; ..." : "") +
+				". Let the song's parts join and drop the same way.";
+		if (P.Fullest >= 0 && P.Fullest < static_cast<int>(P.Blocks.size()))
+			Second += std::string(Second.empty() ? "" : " ") + "Its fullest stretch is " + (P.Blocks[P.Fullest].Name.empty() ?
+				Format("bars %d-%d", P.Blocks[P.Fullest].FirstBar + 1, P.Blocks[P.Fullest].FirstBar + P.Blocks[P.Fullest].Bars) :
+				P.Blocks[P.Fullest].Name) + (P.PeakNote >= 0 ? Format(", its lead's highest note in bar %d", P.PeakBar + 1) : std::string()) +
+				": give the song its peak in the same place of its form.";
+		if (!P.Ambience.empty())
+			Second += std::string(Second.empty() ? "" : " ") + "It has a noise layer apart from the drums, an ambience (" + P.Ambience +
+				"): a soft one fits under this song too.";
+		if (!Second.empty())
+			Out.push_back(Second);
+	}
+	return Out;
+}
+
+// what_next's first step when like finds no reference: study it first (the model asks the user for the NSF's path)
+std::string LikeMissingText(const LikePicks &L, bool Client, bool Core = false)
+{
+	if (Core)	// (study_nsf isn't in the small set)
+		return "No study of \"" + L.Words + "\" in the reference library" + (L.Near.empty() ? std::string() : " (nearest: " +
+			JoinWords(L.Near, "; ") + ")") + ", so its tempo, chords, bass, drums, texture and sounds aren't known yet. A study is "
+			"made from the game's NSF file with the full set of tools: ask the user for the NSF and to have it studied there (or "
+			"studied again from FamiTracker's library), then ask what_next again with the same like; or skip like to follow the "
+			"kind alone.";
+	std::string Text = "No study of \"" + L.Words + "\" in the reference library" + (L.Near.empty() ? std::string() : " (nearest: " +
+		JoinWords(L.Near, "; ") + ")") + ", so its tempo, chords, bass, drums, texture and sounds aren't known yet. Ask the user "
+		"for the NSF (or module) it's in, then study_nsf with its path studies it (study_module for a FamiTracker module, a "
+		"tracker module or a MIDI file); references with action search finds one studied under other words. Then ask what_next "
+		"again with the same like.";
+	if (Client)
+		Text += " The path is on FamiTracker's computer: a file on this one goes there first with send_file (into FamiTracker's "
+			"Inbox), then study_nsf with the path it gives.";
+	return Text + " Or skip like to follow the kind alone.";
+}
+
+int LikeBars(SongHost &Host, const std::string &Words, int FrameRate, int RowsPerBeat, int &Kind, std::string &Missing)
+{
+	const LikePicks L = FindLike(Host, Words, FrameRate, RowsPerBeat);
+	Kind = L.Kind;
+	if (!L.Found)
+		Missing = LikeMissingText(L, false);
+	return L.Bars;
+}
+
 class WhatNext {
 public:
 	// Client: a program connected over MCP (Caller::Client), which can't use File > Save As
@@ -29493,6 +29985,7 @@ private:
 	std::string m_About;		// words about the place (about), passed on to song_shape
 	const SongShape *m_pShape;	// the shape an empty song gets (its kind's, its name's or the words')
 	NextPicks m_Picks;			// what the kind's pools give this song (NextPicksOf): its lead, chords, bass, groove, tempo, key
+	LikePicks m_Like;			// like: the reference the song is like, whose study gives the picks it has (feat-like-reference)
 	unsigned int m_Seed;		// the song's seed rolled by the seed argument (RolledSeed), what the picks mix with the name
 	int m_Roll;					// the seed argument, 1 when none
 	std::vector<std::string> m_SkipWords;
@@ -29516,6 +30009,7 @@ private:
 	bool m_Finishing;			// finish_song is a step: the last steps after it are in it
 	bool m_Music;				// the track is music (not a cue or a sound effect): Work's
 	int m_Use;					// track_use: Work's
+	bool m_LikeTempo, m_LikeKey, m_LikeChords, m_LikeBass, m_LikeGroove;	// the picks the reference the song is like gave
 
 	const NextKind &Kind() const { return NextKindInfo(m_KindId); }
 	// The track's key for spelling the pitches of the steps given (KeyedPitchName: "Eb4" in Bb major, not "D#4"); null
@@ -29526,6 +30020,8 @@ private:
 	bool Calm() const { return m_KindId == NEXT_CALM; }
 	// Polished, mixed and checked in calm's style: a calm song, and a cozy one (calm's places, soft drums kept soft, no accents)
 	bool CalmStyle() const { return std::string(Kind().Style) == "calm" || std::string(Kind().Style) == "atmospheric"; }
+	// A step's words on a pick the reference the song is like gave (like): where it came from ("" when it didn't)
+	std::string LikeNote(bool FromLike) const { return FromLike ? m_Like.From() : std::string(); }
 	// A step's words on a pick from the kind's pool: one of several, and another fits ("" for a single value)
 	std::string PoolNote(const NextPick &P, const char *What) const
 	{
@@ -29573,6 +30069,7 @@ private:
 	void Frame();
 	void Parts();
 	void Colors();
+	void LikeTexture();
 	void Depth();
 	void BreakSound(const FormPart &Break, const FormPart &A);
 	void Tips();
@@ -29624,7 +30121,8 @@ private:
 WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(Song), m_Core(Core),
 	m_All(BoolArg(Args, "all", false)), m_Client(Client),
 	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
-	m_Finishing(false), m_Music(true), m_Use(TRACK_MUSIC)
+	m_Finishing(false), m_Music(true), m_Use(TRACK_MUSIC), m_LikeTempo(false), m_LikeKey(false), m_LikeChords(false),
+	m_LikeBass(false), m_LikeGroove(false)
 {
 	const std::string Asked = StringArg(Args, "kind");
 	m_About = Trim(StringArg(Args, "about"));
@@ -29661,6 +30159,13 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 			"follows the calm recipe", FormatNumber(std::floor(Bpm + 0.5)).c_str()) : "none given, so the general recipe; give kind " +
 			NextKindNames() + " for that one's";
 	}
+	// The reference the song is like: its tempo and mode choose the kind when nothing else does (not the track's name)
+	m_Like = FindLike(S.Host(), StringArg(Args, "like"), S.Song.FrameRate, S.Time.RowsPerBeat);
+	if (m_Like.Found && !m_KindAsked && Words.pShape == 0 && m_Like.Kind >= 0) {
+		m_KindId = m_Like.Kind;
+		m_KindNote = Format("%s, from the tempo and mode of %s, the reference the song is like (kind %s for another)", Kind().Name,
+			m_Like.Name.c_str(), NextKindNames().c_str());
+	}
 	// Steps to leave out, as words: "drums", "echo"...
 	const Json *pSkip = Arg(Args, "skip");
 	if (pSkip != 0 && pSkip->IsArray()) {
@@ -29686,7 +30191,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
 	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
 		"variation", "break", "intro", "loop", "tips", "colors", "echo", "ambience", "listen", "polish", "mix", "seam", "save",
-		"export" };
+		"export", "like", "texture" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
 		if (Word == "counter" || Word == "countermelody" || Word == "harmony" || Word == "secondline")
@@ -29770,6 +30275,27 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		S.Load();
 	m_Seed = RolledSeed(S.Song.Seed, m_Roll);
 	m_Picks = NextPicksOf(m_KindId, S.Song.TrackName, m_Seed);
+	// like: the reference's own picks in place of the pools' (what its study doesn't say stays the kind's)
+	if (m_Like.Found) {
+		auto Take = [](NextPick &P, const std::string &Value) {
+			if (Value.empty())
+				return false;
+			P.Value = Value;
+			P.Count = 1;
+			return true;
+		};
+		m_LikeTempo = m_Like.Bpm > 0 && Take(m_Picks.Tempo, FormatNumber(m_Like.Bpm));
+		m_LikeKey = Take(m_Picks.Key, m_Like.Key);
+		if (m_Like.Plan()) {
+			const ReferencePlan &P = m_Like.R.Plan;
+			m_LikeChords = Take(m_Picks.ChordStyle, P.ChordStyle);
+			m_LikeBass = Take(m_Picks.BassStyle, P.BassStyle);
+			// (a reference without drums: none here either)
+			m_LikeGroove = true;
+			m_Picks.Groove.Value = P.Groove;
+			m_Picks.Groove.Count = 1;
+		}
+	}
 	// The shape an empty song gets: the words' (without a kind asked), else its kind's (or the one its name asks for)
 	m_pShape = Words.pShape != 0 && (!m_KindAsked || Words.Kind == Kind().Name) ? Words.pShape : &ShapeForKind(Kind().Name,
 		S.Song.TrackName);
@@ -30162,7 +30688,9 @@ void WhatNext::Frame()
 	const NextKind &K = Kind();
 	const double Bpm = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, S.Time.RowsPerBeat);
 	const bool Even = EvenRows(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate);
-	const bool InRange = K.SlowestBpm <= 0.0 || (Bpm >= K.SlowestBpm - 0.05 && Bpm <= K.FastestBpm + 0.05);
+	// (like: the reference's tempo, within a few percent, on a new song)
+	const bool InRange = m_LikeTempo && !m_HasNotes ? std::fabs(Bpm - m_Picks.Bpm()) <= m_Picks.Bpm() * 0.04 :
+		K.SlowestBpm <= 0.0 || (Bpm >= K.SlowestBpm - 0.05 && Bpm <= K.FastestBpm + 0.05);
 	if (!Milestone("tempo", (Even && InRange) || !Wanted("tempo"), "tempo " + PaceText(S))) {
 		// The kind's own tempo on a new song or out of its range; else the even one nearest the song's (at the default tempo,
 		// a speed a step)
@@ -30183,6 +30711,11 @@ void WhatNext::Frame()
 		Want = std::floor(Want * 10 + 0.5) / 10;
 		Json A = Json::MakeObject();
 		A.Set("bpm", Json::NumberText(FormatNumber(Want)));
+		if (m_LikeTempo && !m_HasNotes)
+			Step("tempo", "set_tempo", A, Format("A song like %s moves at its tempo: %s BPM (it plays at about %s), at a speed and tempo "
+				"whose rows all last the same, so hi-hats and arpeggios stay steady.", m_Like.Name.c_str(), FormatNumber(Want).c_str(),
+				FormatNumber(std::floor(m_Like.R.Bpm + 0.5)).c_str()) + LikeNote(true));
+		else
 		Step("tempo", "set_tempo", A, (!InRange ? Format("%s is %s for a %s song (%s-%s BPM): %s BPM, at a speed and tempo whose "
 			"rows all last the same, so hi-hats and arpeggios stay steady.", PaceText(S, false).c_str(),
 			Bpm < K.SlowestBpm ? "slow" : "fast", K.Name, FormatNumber(K.SlowestBpm).c_str(), FormatNumber(K.FastestBpm).c_str(),
@@ -30201,19 +30734,20 @@ void WhatNext::Frame()
 			unsigned int Sum = 0;
 			for (size_t i = 0; i < Seed.size(); ++i)
 				Sum = Sum * 31u + static_cast<unsigned char>(Seed[i]);
-			Name = K.KeyPool != 0 ? m_Picks.Key.Value : m_Seed != 0 ? std::string(K.Keys[SeededHash("key", S.Song.TrackName, m_Seed) %
-				3]) : std::string(K.Keys[Sum % 3]);
+			Name = K.KeyPool != 0 || m_LikeKey ? m_Picks.Key.Value : m_Seed != 0 ? std::string(K.Keys[SeededHash("key", S.Song.TrackName,
+				m_Seed) % 3]) : std::string(K.Keys[Sum % 3]);
 		}
 		A.Set("key", Name);
 		Step("key", "set_key", A, m_HasNotes ? "The track's key isn't chosen, so the tools guess it from the notes: " + Name + " is what "
 			"they fit, and choosing it keeps every tool (and FamiTracker's piano roll) in it." : "A new song starts from its key: " + Name +
-			" suits a " + K.Name + " song (pick another if the mood asks for it: major bright, minor sad or tense); every tool follows it." +
+			(m_LikeKey ? " is the key of " + m_Like.Name + ", the reference this song is like; every tool follows it." : " suits a " +
+			std::string(K.Name) + " song (pick another if the mood asks for it: major bright, minor sad or tense); every tool follows it.") +
 			(m_HasNotes || K.KeyPool == 0 ? std::string() : PoolNote(m_Picks.Key, "keys")));
 	}
 	// A key that goes against the kind: a cozy (or calm) song's keys are all major, and a minor one makes a warm place sad
 	// ("Lost n Found", a cozy hut, came out in C minor and sounded depressing). Said once, at the top of the notes; the
 	// user may mean it, so nothing waits on it
-	if (KindWantsMajor(m_KindId) && Minor()) {
+	if (KindWantsMajor(m_KindId) && Minor() && !(m_LikeKey && KeyName(m_Key) == m_Like.Key)) {
 		const Key Major(m_Key.Tonic, MODE_MAJOR);
 		Json A = Json::MakeObject();
 		std::string Call;
@@ -30229,7 +30763,7 @@ void WhatNext::Frame()
 			"keep it minor if you mean it.", K.Name, KeyName(m_Key).c_str(), Call.c_str()));
 	}
 	// And a kind whose keys are minor (a mysterious cave's, dorian or minor) on a major key
-	else if (KindWantsMinor(m_KindId) && m_HasKey && !Minor()) {
+	else if (KindWantsMinor(m_KindId) && m_HasKey && !Minor() && !(m_LikeKey && KeyName(m_Key) == m_Like.Key)) {
 		const Key Wanted(m_Key.Tonic, MODE_MINOR);
 		Json A = Json::MakeObject();
 		std::string Call;
@@ -30260,9 +30794,13 @@ void WhatNext::Frame()
 		A.Set("shape", Own.Id);
 		if (!m_About.empty())
 			A.Set("about", m_About);
+		if (m_Like.Found && m_Like.Bars > 0)
+			A.Set("like", m_Like.Words);
 		ShapeRequest R;
 		R.Shape = Own.Id;
 		R.About = m_About;
+		if (m_Like.Found)
+			R.Bars = m_Like.Bars;
 		R.TrackName = S.Song.TrackName;
 		R.Seed = m_Seed;
 		R.Roll = m_Roll;
@@ -30275,7 +30813,8 @@ void WhatNext::Frame()
 			"place ask" : Own.Id != ShapeForKind(K.Name).Id ? ", as the track's name asks" : "";
 		Step("shape", "song_shape", A, Format("A new song starts from its shape: a %s of %d bars (%s)%s, each part a section named "
 			"for what it does, in frames, with the loop after the intro. The next steps fill the parts.", Lowercase(Form.Title).c_str(),
-			Form.Bars(), Form.PartsText().c_str(), Why.c_str()));
+			Form.Bars(), Form.PartsText().c_str(), Why.c_str()) + (m_Like.Found && m_Like.Bars > 0 ? Format(" About %d bars, as long as "
+			"the loop of %s.", m_Like.Bars, m_Like.Name.c_str()) : std::string()));
 	}
 }
 
@@ -31103,6 +31642,19 @@ void WhatNext::Parts()
 		Json Find = Json::MakeObject();
 		Find.Set("kind", "lead");
 		Find.Set("channel", ChannelName(Lead));
+		if (m_Like.LeadSound > 0) {
+			// like: the reference's own lead, its envelopes as they were, named as what_next's lead
+			const ReferenceSound &Sound = m_Like.R.Sounds[static_cast<size_t>(m_Like.LeadSound - 1)];
+			Json L = Json::MakeObject();
+			L.Set("reference", m_Like.R.Id);
+			L.Set("sound", m_Like.LeadSound);
+			L.Set("channel", ChannelName(Lead));
+			L.Set("name", K.LeadName);
+			Step("lead", "reference_sound", L, "The lead's sound comes first: a song like " + m_Like.Name + " takes its lead's sound, " +
+				Sound.Words + " (sound " + std::to_string(m_Like.LeadSound) + " of the reference, its " + Sound.Channel + ")." +
+				LikeNote(true) + " (design_instrument with kind " + m_Picks.Lead.Value + " makes the kind's own instead.)");
+		}
+		else
 		Step("lead", "design_instrument", A, std::string("The lead's sound comes first: ") + (Calm() ? "a calm song's lead "
 			"never presses. The night songs' best was a music box struck on a VRC6 pulse at 37.5% (50% on the 2A03), blooming "
 			"in over two frames without a duty click and ringing away to silence within about a beat, never holding a level "
@@ -31163,7 +31715,10 @@ void WhatNext::Parts()
 				A.Set("bass_instrument", "thump bass");
 		}
 		Step("chords", "add_chords_and_bass", A, Why + PoolNote(m_Picks.ChordStyle, "chord styles") + PoolNote(m_Picks.BassStyle,
-			"bass styles"));
+			"bass styles") + (m_LikeChords || m_LikeBass ? Format(" The %s%s%s as %s plays them.", m_LikeChords ? "chords' style (" : "",
+			m_LikeChords ? (m_Picks.ChordStyle.Value + (m_LikeBass ? ") and the bass's (" + m_Picks.BassStyle.Value + ")" : ")")).c_str() :
+			("bass's style (" + m_Picks.BassStyle.Value + ")").c_str(), m_LikeChords && m_LikeBass ? " are" : " is", m_Like.Name.c_str()) +
+			LikeNote(true) : std::string()));
 	}
 	if (!m_HasNotes) {
 		m_Unmet.insert("sections");
@@ -31237,6 +31792,19 @@ void WhatNext::Parts()
 		A.Set("groove", m_Picks.Groove.Value.c_str());
 		A.Set("from_bar", From);
 		A.Set("to_bar", To);
+		if (m_LikeGroove) {
+			// like: the reference's groove, as busy as its drums play (about so many hits a bar), with samples where it had them
+			const ReferencePlan &P = m_Like.R.Plan;
+			if (!P.Intensity.empty() && P.Intensity != "normal")
+				A.Set("intensity", P.Intensity);
+			if (m_Like.Samples)
+				A.Set("kit", "samples");
+			Step("drums", "add_drums", A, Format("A song like %s plays its drums: the %s groove%s%s in bars %d-%d (it plays about %s hits "
+				"a bar), with a fill where each phrase ends.", m_Like.Name.c_str(), m_Picks.Groove.Value.c_str(), P.Intensity.empty() ||
+				P.Intensity == "normal" ? "" : (", " + P.Intensity).c_str(), m_Like.Samples ? " with kit samples" : "", From, To,
+				FormatNumber(std::floor(P.DrumHits + 0.5)).c_str()) + LikeNote(true));
+			return;
+		}
 		if (m_KindId == NEXT_COZY) {
 			// Soft and optional: the gentle groove on the noise alone, light (a sampled kick thumps in a small room)
 			A.Set("intensity", "light");
@@ -31271,6 +31839,57 @@ void WhatNext::Parts()
 // form has its melody, before a harmony or an echo hears them: polish's colors touch with colors add over each lush chord
 // part none of whose chords has a color yet (a composer's own colors are theirs), when the touch's plan changes a chord.
 // No milestone: once a chord has its color the step is done, and a song whose chords can take none has nothing to do
+// like (feat-like-reference): the chord part rests where the reference's does. Of the phrases its lead plays in, the
+// reference's chord part resting in half or more of its main ones (A and its repeats) rests the song's chords in its A
+// sections (the melody carrying them, as the Ironworks the user liked); resting in half or more of the others rests them
+// in the song's other parts of the body (never the climax: the fullest), never in both. One section a step, vary_part's
+// rest; once depth is done (its repeats varied in the melody, so resting the chords in each A in turn never makes a repeat
+// its original again; the intro and the break filled with A's chords first). No milestone: once they rest, nothing is left
+void WhatNext::LikeTexture()
+{
+	if (!m_Like.Plan() || !Wanted("texture") || m_Parts.Chords.empty() || m_Met.count("form") == 0)
+		return;
+	const ReferencePlan &P = m_Like.R.Plan;
+	if (P.ChordChannel.empty())
+		return;
+	int MainLead = 0, MainRest = 0, OtherLead = 0, OtherRest = 0;
+	for (size_t k = 0; k < P.Blocks.size(); ++k) {
+		const ReferenceBlock &B = P.Blocks[k];
+		if (!B.Plays("lead") || B.Name == "intro" || B.Name.empty() || B.Name == "-")
+			continue;
+		const bool Main = B.Name[0] == P.Form[0];
+		(Main ? MainLead : OtherLead) += 1;
+		if (!B.Plays("chords"))
+			(Main ? MainRest : OtherRest) += 1;
+	}
+	const bool RestMain = MainLead > 0 && MainRest * 2 >= MainLead;
+	const bool RestOther = !RestMain && OtherLead > 0 && OtherRest * 2 >= OtherLead;
+	if (!RestMain && !RestOther)
+		return;
+	const int Chords = m_Parts.Chords[0];
+	for (size_t i = 0; i < m_Form.size(); ++i) {
+		const FormPart &F = m_Form[i];
+		if (!F.Named || F.Free || F.Empty || IsClimaxName(F.Name))
+			continue;
+		const bool Main = Lowercase(F.Base) == "a";
+		if (Main != RestMain)
+			continue;
+		const int First = S.Time.BarStart(F.FirstBar), End = std::min(S.Time.BarEnd(F.LastBar), S.Time.TotalRows());
+		if (!NoteStartsIn(S, Chords, First, End))
+			continue;
+		Json A = Json::MakeObject();
+		A.Set("channel", ChannelName(Chords));
+		A.Set("variation", "rest");
+		A.Set("from_bar", F.FirstBar);
+		A.Set("to_bar", F.LastBar);
+		Step("texture", "vary_part", A, Format("%s's chord part rests where the lead carries its %s (in %d of its %d %s phrases): "
+			"the chords rest in %s (bars %d-%d) and play elsewhere, so the song breathes as it does.", m_Like.Name.c_str(), RestMain ?
+			"main phrases" : "other phrases", RestMain ? MainRest : OtherRest, RestMain ? MainLead : OtherLead, RestMain ? "main" : "other",
+			F.Name.c_str(), F.FirstBar, F.LastBar) + LikeNote(true));
+		return;
+	}
+}
+
 void WhatNext::Colors()
 {
 	// (a lively stage's, and every kind's whose chords are written plain before the tune: the Caves' lush chords stayed plain
@@ -32703,6 +33322,12 @@ void WhatNext::Work()
 		Ask("direct", "Direct changes are off, so every change would arrive as a clip for the user to place, and the song wouldn't "
 			"move on: ask the user to allow direct changes (File > Connect Claude Code), then ask what_next again.");
 	Breakers();
+	if (m_Music && m_Like.Asked && !m_Like.Found && Wanted("like"))
+		Ask("like", LikeMissingText(m_Like, m_Client, m_Core));
+	if (m_Music && m_Like.Found) {
+		const std::vector<std::string> Lines = LikeLines(m_Like);
+		m_Notes.insert(m_Notes.begin(), Lines.begin(), Lines.end());
+	}
 	if (m_Music) {
 		Frame();
 		Parts();
@@ -32711,6 +33336,8 @@ void WhatNext::Work()
 		if (Looking())
 			PartFixes();
 		Depth();
+		if (Looking())
+			LikeTexture();
 		if (Looking())
 			Tips();
 		Echo();		// cheap: its milestone counts even when a step came before it
@@ -32767,6 +33394,8 @@ Json WhatNext::AgainArgs() const
 		Again.Set("kind", Kind().Name);
 	if (!m_About.empty())
 		Again.Set("about", m_About);
+	if (m_Like.Asked)
+		Again.Set("like", m_Like.Words);
 	if (m_Roll > 1)
 		Again.Set("seed", m_Roll);
 	if (!m_SkipWords.empty()) {
@@ -33659,6 +34288,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"or a kind of check_song's finding (click, vanishing, range...)."))
 			.Add("melody_channel", ChannelProp("The melody (default: where the lead it designed plays, else the busiest line)."))
 			.Add("about", Prop("string", "Words about the place, for an empty song's form (and without kind, the kind)."))
+			.Add("like", Prop("string", "A studied track the song should be like, as words (\"Mega Man 3 Needle Man\") or its "
+				"id: its tempo, key, chords, bass, drums, texture, lead's sound and length (never its tune)."))
 			.Add("all", Prop("boolean", "Also list every step found now, in order, a line each (default false)."))
 			.Add("format", EnumProp("text (the default): the step to read; json: the step as data (its call, why, what it does in plain "
 				"words, its stage), the milestones and the recipe's stages done, for programs (FamiTracker's What next panel reads it).",
@@ -34556,6 +35187,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Without shape, about or parts it lists the shapes. Needs direct changes; one Ctrl+Z undoes it.",
 		Schema().Add("shape", Prop("string", "stage, night, town, boss, small or jingle (or a word: calm, battle...)."))
 			.Add("about", Prop("string", "Words about the place: \"a dangerous factory, but not hectic\"."))
+			.Add("like", Prop("string", "A studied track to be like (words or its id): its loop's length (without bars)."))
 			.Add("variant", Prop("integer", "Which form, from 1 (default: the track's name picks)."))
 			.Add("seed", Prop("integer", "2 and on: another roll."))
 			.Add("add", WordListProp("Parts to put in: climax, break, bridge, outro, intro, b, a'."))
@@ -34886,15 +35518,19 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"how the channels share the parts, rhythm grids, drum grooves, tricks and sounds. Write your own melodies and chord "
 		"progressions; never copy a reference's notes. Actions: list (default), show (a reference's whole study and its "
 		"sounds), search (by words: a game, composer, technique, mood or tempo), guide (the built-in guide, or a topic of "
-		"it), tag (add or remove tags, set notes), delete.",
+		"it), tag (add or remove tags, set notes), delete, restudy (study the library again from its files, keeping tags and "
+		"notes, so older studies learn how their tracks are built: the motif, texture by phrase, peak and styles that "
+		"what_next's like follows).",
 		Schema()
-			.Add("action", EnumProp("What to do.", std::vector<std::string>{ "list", "show", "search", "guide", "tag", "delete" }))
+			.Add("action", EnumProp("What to do.", std::vector<std::string>{ "list", "show", "search", "guide", "tag", "delete", "restudy" }))
 			.Add("reference", Prop("string", "The reference's id, for show, tag and delete, like \"bucky-o-hare-08\"."))
 			.Add("query", Prop("string", "For search: words like \"konami echo\", \"gallop bass\", \"fast minor\", \"mega man\"."))
 			.Add("topic", Prop("string", "For guide: a topic, like \"konami\", \"square\", \"dark\", \"drums\" or \"soundtrack\" (default: the contents)."))
 			.Add("tags", WordListProp("For tag: tags to add."))
 			.Add("remove_tags", WordListProp("For tag: tags to take off."))
-			.Add("notes", Prop("string", "For tag: the reference's notes (replaces them).")),
+			.Add("notes", Prop("string", "For tag: the reference's notes (replaces them)."))
+			.Add("all", Prop("boolean", "For restudy: every reference, also those studied with their plan already (default: only the "
+				"older studies).")),
 		false);
 
 	AddTool("effects", "FamiTracker's effects",
@@ -35144,7 +35780,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			.Add("kind", Prop("string", "A kind (default: how to choose)."))
 			.Add("about", Prop("string", "Instead: words about the place; it picks the kind and says which."))
 			.Add("idea", Prop("string", "What the song is for, like \"a river stage by day\", for the recipe to name."))
-			.Add("bars", Prop("integer", "How long, in bars (default 40).")),
+			.Add("bars", Prop("integer", "How long, in bars (default 40)."))
+			.Add("like", Prop("string", "A studied track to be like (words or its id): its picks first.")),
 		true, false, true);
 
 	AddTool("explain", "Explain a term",
@@ -35340,7 +35977,7 @@ std::string ToolSet::UnknownArguments(const std::string &Name, const Json &Argum
 	return Text + ". Call " + Name + " again with those (its description says what each one takes).";
 }
 
-static std::string RecipeTool(const Json &Args, bool Core);
+static std::string RecipeTool(const Json &Args, bool Core, SongHost *pHost = 0);
 static std::string ExplainTool(const Json &Args);
 
 // The label of the change a call made, for undo to say what it undoes: the tool, and what its reply says it changed
@@ -35541,7 +36178,7 @@ ToolResult ToolSet::CallTool(const std::string &Name, const Json &Arguments, con
 	}
 	try {
 		if (Name == "get_recipe") {	// needs no song
-			Result.Text = RecipeTool(Args, Who.Core);
+			Result.Text = RecipeTool(Args, Who.Core, &m_Host);
 			return Result;
 		}
 		if (Name == "explain") {	// needs no song either
@@ -36615,8 +37252,24 @@ static std::string CoreRecipe(const std::string &Kind)
 
 // get_recipe: the recipe for a kind of song (calm, lively, cozy, action, or how to choose); the small set's names only its
 // tools
-static std::string RecipeTool(const Json &Args, bool Core)
+static std::string RecipeTool(const Json &Args, bool Core, SongHost *pHost)
 {
+	// like: the reference's picks first, then the recipe of the kind it suggests (unless one is given)
+	const std::string Like = Trim(StringArg(Args, "like"));
+	if (!Like.empty() && pHost != 0) {
+		const LikePicks L = FindLike(*pHost, Like, 60, 4);
+		if (!L.Found)
+			return LikeMissingText(L, false);
+		Json Rest = Args;
+		Rest.Set("like", Json());
+		if (Rest.Get("kind") == 0 && Rest.Get("about") == 0 && L.Kind >= 0)
+			Rest.Set("kind", NextKindInfo(L.Kind).Name);
+		std::string Lines;
+		const std::vector<std::string> Said = LikeLines(L);
+		for (size_t i = 0; i < Said.size(); ++i)
+			Lines += Said[i] + "\n";
+		return Lines + "what_next with like \"" + L.Words + "\" takes these picks step by step.\n\n" + RecipeTool(Rest, Core, 0);
+	}
 	const Json *pKind = Args.Get("kind");
 	std::string Kind = pKind != 0 && pKind->IsString() ? Lowercase(Trim(pKind->String())) : std::string();
 	int Parsed = NEXT_GENERAL;

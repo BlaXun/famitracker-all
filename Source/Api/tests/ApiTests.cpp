@@ -29140,6 +29140,212 @@ std::string PicksShown(const std::string &Text)
 	return Out;
 }
 
+// A reference studied with its plan (feat-like-reference), as a study of a stage might keep it: its chords rest in its
+// A phrases, its bass walks, its drums four on the floor, its lead a 2A03 pulse's sound
+Reference LikedReference()
+{
+	Reference R;
+	R.Id = "mega-man-3-10";
+	R.Title = "Needle Man";
+	R.Game = "Mega Man 3";
+	R.Composer = "Tester";
+	R.Track = 10;
+	R.Source = "C:\\Music\\mm3.nsf";
+	R.Bpm = 113;
+	R.Key = "E minor";
+	R.LoopBars = 32;
+	R.Format = ReferenceFormat();
+	R.Tags = { "capcom", "moderate", "minor", "dpcm-drums" };
+	R.Study = "Needle Man\n  Tempo: 113 BPM.";
+	ReferenceSound Lead;
+	Lead.Channel = "Pulse 1";
+	Lead.Role = "the lead";
+	Lead.Words = "50% duty after a 25% click; blooms from 10 to 15 in 2 frames and holds 12";
+	Lead.Chip = "2A03";
+	Lead.Share = 90;
+	Lead.Sequences[SEQUENCE_VOLUME].Items = std::vector<int>{ 10, 15, 13, 12 };
+	Lead.Sequences[SEQUENCE_DUTY].Items = std::vector<int>{ 1, 2 };
+	R.Sounds.push_back(Lead);
+	ReferencePlan &P = R.Plan;
+	P.Has = true;
+	P.Form = "A A B A'";
+	const char *const NAMES[] = { "A", "A", "B", "A'", "A", "A", "B", "A'" };
+	for (int k = 0; k < 8; ++k) {
+		ReferenceBlock B;
+		B.FirstBar = 4 * k;
+		B.Name = NAMES[k];
+		B.Parts = k % 4 == 2 || k == 7 ? std::vector<std::string>{ "lead", "bass", "chords", "drums" } :
+			std::vector<std::string>{ "lead", "bass", "drums" };
+		B.Top = 64 + k;
+		P.Blocks.push_back(B);
+	}
+	P.MotifNotes = 4;
+	P.MotifReturns = 7;
+	P.MotifShaped = 4;
+	P.RhythmReturn = 0.7;
+	P.ShapeReturn = 0.3;
+	P.LeadLow = 52;
+	P.LeadHigh = 71;
+	P.PeakBar = 29;
+	P.PeakNote = 71;
+	P.Fullest = 7;
+	P.ChordChannel = "Pulse 2";
+	P.ChordStyle = "stabs";
+	P.BassStyle = "walking";
+	P.Groove = "four_on_floor";
+	P.Intensity = "busy";
+	P.DrumHits = 12;
+	return R;
+}
+
+// like (feat-like-reference): a song made like a studied track takes its picks from the study; references restudy studies
+// the older studies again from their files
+void TestLikeReference()
+{
+	// The plan kept in the reference's file and read back
+	{
+		const Reference R = LikedReference();
+		Reference Back;
+		std::string Error;
+		CHECK(ReadReferenceFile(ReferenceFile(R), Back, Error));
+		CHECK(Back.Format == ReferenceFormat() && Back.Plan.Has && Back.Plan.Blocks.size() == 8 && Back.Plan.Blocks[2].Plays("chords") &&
+			!Back.Plan.Blocks[0].Plays("chords") && Back.Plan.ChordStyle == "stabs" && Back.Plan.BassStyle == "walking" &&
+			Back.Plan.Groove == "four_on_floor" && Back.Plan.Intensity == "busy" && Back.Plan.PeakNote == 71 && Back.Plan.Fullest == 7 &&
+			std::fabs(Back.Plan.RhythmReturn - 0.7) < 1e-9 && Back.Plan.Form == "A A B A'");
+		// a reference of the first format (no plan) still reads, and says how to learn it
+		Json Old = Parse(ReferenceFile(R));
+		Old.Set("reference", 1);
+		Old.Set("plan", Json());
+		CHECK(ReadReferenceFile(WriteJson(Old), Back, Error) && Back.Format == 1 && !Back.Plan.Has && Back.Sounds.size() == 1);
+		CHECK_HAS(ReferenceText(Back), "references with action restudy studies it again");
+	}
+
+	// what_next like a reference: its picks, step by step, and done
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.Seed = 7;
+		Song.Library["mega-man-3-10.json"] = ReferenceFile(LikedReference());
+		const std::string Asked = "{\"like\": \"Mega Man 3 Needle Man\"}";
+		const std::string First = Run(Song, "what_next", Asked).Text;
+		CHECK_HAS(First, "Like Needle Man (Mega Man 3) (reference \"mega-man-3-10\"): 112.5 BPM, E minor, chords stabs, bass walking, "
+			"the four_on_floor groove (busy, kit samples), its lead's sound (reference_sound 1), a form of about 32 bars; the kind "
+			"sets the rest.");
+		CHECK_HAS(First, "The tune stays this song's own");
+		CHECK_HAS(First, "lively, from the tempo and mode of Needle Man (Mega Man 3)");
+		bool Finished = false;
+		const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 70, Finished, __LINE__);
+		CHECK(Finished);
+		auto Called = [&](const std::string &Start) {
+			for (const std::string &Call : Made)
+				if (Call.compare(0, Start.size(), Start) == 0)
+					return true;
+			return false;
+		};
+		CHECK(Called("set_tempo {\"bpm\":112.5}"));
+		CHECK(Called("set_key {\"key\":\"E minor\"}"));
+		CHECK(Called("song_shape {\"shape\":\"stage\",\"like\":\"Mega Man 3 Needle Man\"}"));
+		CHECK(Called("reference_sound {\"reference\":\"mega-man-3-10\",\"sound\":1,\"channel\":"));
+		CHECK(CallIndex(Made, "design_instrument") < 0 || !Called("design_instrument {\"name\":\"Stage lead\""));
+		bool Chords = false, Drums = false, Rest = false;
+		for (const std::string &Call : Made) {
+			Chords = Chords || (Call.compare(0, 20, "add_chords_and_bass ") == 0 && Contains(Call, "\"chord_style\":\"stabs\"") &&
+				Contains(Call, "\"bass_style\":\"walking\""));
+			Drums = Drums || (Call.compare(0, 10, "add_drums ") == 0 && Contains(Call, "\"groove\":\"four_on_floor\"") &&
+				Contains(Call, "\"intensity\":\"busy\"") && Contains(Call, "\"kit\":\"samples\""));
+			Rest = Rest || (Call.compare(0, 10, "vary_part ") == 0 && Contains(Call, "\"variation\":\"rest\""));
+		}
+		CHECK(Chords && Drums && Rest);
+		CHECK(Song.Info.KeyChosen && KeyChoiceName(Song.Info.ChosenKey) == "E minor");
+		CHECK(std::fabs(BeatsPerMinute(Song.Info.Speed, Song.Info.Tempo, 60, 4) - 112.5) < 0.1);
+		CHECK(!Song.Info.Sections.empty() && Song.Info.Sections.back().Last + 1 >= 8);
+		CheckDoneReview(Song, "like Needle Man", __LINE__);
+		// and on the small set
+		FakeSong Small(1);
+		NewSong(Small);
+		Small.Info.Seed = 7;
+		Small.Library["mega-man-3-10.json"] = ReferenceFile(LikedReference());
+		const std::vector<std::string> Core = FollowWhatNext(Small, Asked, 70, Finished, __LINE__, true);
+		CHECK(Finished && CallIndex(Core, "reference_sound") >= 0);
+		CheckDoneReview(Small, "like Needle Man (core)", __LINE__);
+		ToolSet Tools(Small);
+		Caller Who;
+		Who.Core = true;
+		const std::string Missing = Tools.Call("what_next", Parse("{\"like\": \"Kazoo Kingdom Swamp\"}"), Who).Text;
+		CHECK_HAS(Missing, "with the full set of tools");
+		CHECK_LACKS(Missing, "study_nsf");
+	}
+
+	// Without a study of it, what_next's first step asks for one (a client: send_file first)
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Library["mega-man-3-10.json"] = ReferenceFile(LikedReference());
+		ToolSet Tools(Song);
+		Caller Who;
+		Who.Client = true;
+		const ToolResult Next = Tools.Call("what_next", Parse("{\"like\": \"Kazoo Kingdom Swamp\"}"), Who);
+		CHECK(!Next.IsError);
+		const WhatNextAnswer N = ReadWhatNext(Next.Text);
+		CHECK(N.Tool.empty() && !N.Done);
+		CHECK_HAS(Next.Text, "No study of \"Kazoo Kingdom Swamp\" in the reference library");
+		CHECK_HAS(Next.Text, "study_nsf with its path");
+		CHECK_HAS(Next.Text, "send_file");
+		// skip like: the kind alone
+		const ToolResult Skipped = Tools.Call("what_next", Parse("{\"like\": \"Kazoo Kingdom Swamp\", \"skip\": [\"like\"]}"), Who);
+		CHECK(!ReadWhatNext(Skipped.Text).Tool.empty());
+		// song_shape and get_recipe like it too
+		CHECK_HAS(Run(Song, "song_shape", "{\"like\": \"Kazoo Kingdom Swamp\"}").Text, "No study of");
+		const std::string Recipe = Run(Song, "get_recipe", "{\"like\": \"mega man 3 needle man\"}").Text;
+		CHECK_HAS(Recipe, "Like Needle Man (Mega Man 3)");
+		CHECK_HAS(Recipe, "what_next with like \"mega man 3 needle man\" takes these picks");
+		CHECK_HAS(Recipe, "Its texture by phrase (which parts play): A: lead bass drums;");
+		const ToolResult Shape = Tools.Call("song_shape", Parse("{\"like\": \"Needle Man\"}"), Who);
+		CHECK(!Shape.IsError);
+		CHECK(!Song.Info.Sections.empty());
+	}
+
+	// references restudy: an older study (no plan) studied again from its file, keeping its tags and notes; a file that
+	// isn't there any more named, with what to do
+	{
+		const std::string Path = "api_tests_like.nsf";
+		WriteTestNsf(Path);
+		FakeSong Song;
+		CHECK(!Run(Song, "study_nsf", "{\"path\": \"" + Path + "\", \"tags\": [\"mine\"], \"notes\": \"kept\"}").IsError);
+		CHECK(Song.Library.count("tester-song-01.json") == 1);
+		Reference Kept;
+		std::string Error;
+		CHECK(ReadReferenceFile(Song.Library["tester-song-01.json"], Kept, Error) && Kept.Plan.Has);
+		// as an older FamiTracker kept it
+		Json Old = Parse(Song.Library["tester-song-01.json"]);
+		Old.Set("reference", 1);
+		Old.Set("plan", Json());
+		Old.Set("added", "2026-01-02");
+		Song.Library["tester-song-01.json"] = WriteJson(Old);
+		Old.Set("id", "gone-01");
+		Old.Set("source", "C:\\Nowhere\\gone.nsf");
+		Song.Library["gone-01.json"] = WriteJson(Old);
+		const std::string Text = Run(Song, "references", "{\"action\": \"restudy\"}").Text;
+		CHECK_HAS(Text, "Studied again: 1 reference (tester-song-01)");
+		CHECK_HAS(Text, "Not found, so not studied again (1): gone-01 (C:\\Nowhere\\gone.nsf)");
+		CHECK_HAS(Text, "ask the user where they are now");
+		CHECK(ReadReferenceFile(Song.Library["tester-song-01.json"], Kept, Error));
+		CHECK(Kept.Plan.Has && Kept.Format == ReferenceFormat() && Kept.Notes == "kept" && Kept.Added == "2026-01-02" &&
+			std::find(Kept.Tags.begin(), Kept.Tags.end(), "mine") != Kept.Tags.end());
+		CHECK_HAS(Kept.Study, "Texture by phrase:");
+		// studied: left alone the next time (the missing one is named again); all studies every one
+		const std::string Again = Run(Song, "references", "{\"action\": \"restudy\"}").Text;
+		CHECK_HAS(Again, "Studied again: 0 references");
+		CHECK_HAS(Again, "1 reference had it already");
+		CHECK_HAS(Run(Song, "references", "{\"action\": \"restudy\", \"all\": true}").Text, "Studied again: 1 reference (tester-song-01)");
+		Song.Library.erase("gone-01.json");
+		CHECK_HAS(Run(Song, "references", "{\"action\": \"restudy\"}").Text, "Every reference in the library (1) was studied with its "
+			"plan already");
+		std::remove(Path.c_str());
+		std::remove("api_tests_like.m3u");
+	}
+}
+
 void TestKindPools()
 {
 	const char *const NAMES[] = { "Town", "Lantern Row", "Old Mill", "Brook", "Crossing", "Hollow", "Mossy Steps", "Kettle",
@@ -30345,6 +30551,7 @@ int main()
 	TestCozyKind();
 	TestLaterKinds();
 	TestKindPools();
+	TestLikeReference();
 	TestWhatNextSavesForClient();
 	TestListenLowAsAdvice();
 	TestEchoKeepsItsChipsEffects();

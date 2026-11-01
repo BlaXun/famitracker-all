@@ -2414,7 +2414,432 @@ TrackStudy StudyTrack(const Module &M, int TrackIndex, const TrackReport &Report
 		if (!Parts.empty())
 			S.Drums.push_back(Names[c] + ": " + Join(Parts, "; ") + ".");
 	}
+
+	// --- How it's built (feat-like-reference): the lead's motif, the parts in each stretch, the peak, the styles a song
+	// made like it would take, and a noise layer apart from the drums ---
+	{
+		StudyPlan &P = S.Plan;
+		const int LoopFirst = LoopRow >= 0 ? FirstLoopBar : 0;
+		const int LoopEnd = std::max(LoopFirst, std::min(Bars, LoopRow >= 0 ? FirstLoopBar + S.LoopBars : Bars));
+		// A noise voice apart from the drums: held long and soft rather than struck, at most one and a half a bar
+		std::vector<bool> Layer(Voices.size(), false);
+		int LayerVoice = -1;
+		double LayerPerBar = 0, LayerRows = 0;
+		for (size_t n = 0; n < Voices.size(); ++n) {
+			const Voice &V = Voices[n];
+			if (V.Dpcm || Kinds[V.Channel] != C_NOISE || V.DecayClass != 2 || V.Backbeat >= 0)
+				continue;
+			const Instrument *I = Instr(V.Insts.empty() ? -1 : V.Insts.begin()->first);
+			const VolumeShape v = I ? ShapeOf(I->Macros[SEQ_VOLUME]) : VolumeShape();
+			if (v.Pluck && !v.Swell)
+				continue;
+			int Hits = 0;
+			double Rows = 0;
+			for (size_t i = 0; i < Notes[V.Channel].size(); ++i)
+				if (VoiceOf[V.Channel][i] == int(n) && InLoop(Notes[V.Channel][i].Row)) {
+					++Hits;
+					Rows += std::min(Notes[V.Channel][i].Length, 4 * RowsPerBar);
+				}
+			const double PerBar = double(Hits) / LoopBarCount;
+			if (Hits < 2 || PerBar > 1.5 || Rows / Hits < RowsPerBar / 2.0)
+				continue;
+			Layer[n] = true;
+			if (LayerVoice < 0 || Hits > LayerPerBar * LoopBarCount) {
+				LayerVoice = int(n);
+				LayerPerBar = PerBar;
+				LayerRows = Rows / Hits;
+			}
+		}
+		if (LayerVoice >= 0) {
+			const Voice &V = Voices[LayerVoice];
+			const Instrument *I = Instr(V.Insts.empty() ? -1 : V.Insts.begin()->first);
+			const VolumeShape v = I ? ShapeOf(I->Macros[SEQ_VOLUME]) : VolumeShape();
+			P.AmbienceKind = v.Swell ? "waves" : (V.PitchClass == 2 ? "rain" : "wind");
+			P.Ambience = Format("%s on %s, %.2g a bar, each sounding about %s, %s under the music (like %s)", v.Swell ?
+				"slow noise swells" : "held noise", Names[V.Channel].c_str(), LayerPerBar, Count(int(LayerRows + 0.5), "row", "rows").c_str(),
+				V.PitchClass == 2 ? "high" : (V.PitchClass == 1 ? "in the middle" : "low"), P.AmbienceKind == "waves" ? "waves or wind" :
+				P.AmbienceKind == "rain" ? "rain or a stream" : "wind");
+		}
+		// The parts, by channel
+		std::vector<std::string> PartOf(Columns);
+		for (int c = 0; c < Columns; ++c) {
+			if (Notes[c].empty())
+				continue;
+			if (!Melodic(Kinds[c]))
+				PartOf[c] = "drums";
+			else if (c == Lead)
+				PartOf[c] = "lead";
+			else if (Roles[c].compare(0, 8, "an echo ") == 0)
+				PartOf[c] = "echo";
+			else if (c == Bass || Roles[c] == "a low part")
+				PartOf[c] = "bass";
+			else if (Roles[c] == "chords as arpeggios" || Roles[c] == "held notes (a pad)")
+				PartOf[c] = "chords";
+			else
+				PartOf[c] = "second";
+		}
+		// How a channel moves in the loop
+		struct Moves { int Notes = 0, Bars = 0, Pairs = 0, Repeat = 0, Step = 0, Skip = 0, Fifth = 0, Leap = 0, Octave = 0, Syncopated = 0; double Rows = 0; };
+		auto MovesOf = [&](int c) {
+			Moves m;
+			std::set<int> PlayedBars;
+			const Played *pLast = nullptr;
+			for (size_t i = 0; i < Notes[c].size(); ++i) {
+				const Played &p = Notes[c][i];
+				const int b = BarOf(p.Row);
+				if (b < LoopFirst || b >= LoopEnd)
+					continue;
+				++m.Notes;
+				m.Rows += std::min(p.Length, RowsPerBar);
+				PlayedBars.insert(b);
+				const int RowInBeat = ((p.Row - Phase) % S.RowsPerBeat + S.RowsPerBeat) % S.RowsPerBeat;
+				if (RowInBeat != 0 && RowInBeat + p.Length > S.RowsPerBeat)
+					++m.Syncopated;
+				if (pLast != nullptr && p.Row - pLast->Row <= 2 * S.RowsPerBeat) {
+					const int d = std::abs(p.Note - pLast->Note);
+					++m.Pairs;
+					if (d == 0)
+						++m.Repeat;
+					else if (d <= 2)
+						++m.Step;
+					else if (d <= 4)
+						++m.Skip;
+					else if (d % 12 == 0)
+						++m.Octave;
+					else if (d == 5 || d == 7)
+						++m.Fifth;
+					else
+						++m.Leap;
+				}
+				pLast = &p;
+			}
+			m.Bars = int(PlayedBars.size());
+			return m;
+		};
+		// The chord part: a channel of arpeggio chords or a pad, else a second part breaking chords (thirds and fifths)
+		int ChordCol = -1;
+		for (int c = 0; c < Columns && ChordCol < 0; ++c)
+			if (PartOf[c] == "chords")
+				ChordCol = c;
+		bool Broken = false;
+		for (int c = 0; c < Columns && ChordCol < 0; ++c) {
+			if (PartOf[c] != "second")
+				continue;
+			const Moves m = MovesOf(c);
+			if (m.Bars >= 4 && m.Notes >= 3 * m.Bars && m.Pairs > 0 && (m.Skip + m.Fifth) * 2 >= m.Pairs) {
+				ChordCol = c;
+				Broken = true;
+				PartOf[c] = "chords";
+			}
+		}
+		if (ChordCol >= 0) {
+			const Moves m = MovesOf(ChordCol);
+			P.ChordChannel = Names[ChordCol];
+			if (Broken)
+				P.ChordStyle = "broken";
+			else if (Tr[ChordCol].Chord * 2 >= Tr[ChordCol].Notes)
+				P.ChordStyle = "lush";
+			else if (Roles[ChordCol] == "held notes (a pad)")
+				P.ChordStyle = "guide";
+			else
+				P.ChordStyle = m.Notes > 0 && m.Rows / m.Notes >= S.RowsPerBeat * 1.5 ? "arpeggio" : "stabs";
+		}
+		// The bass: how it moves, as add_chords_and_bass's styles (the bass part playing most in the loop: a sawtooth under the
+		// triangle's thumps is it)
+		int MainBass = -1, MainNotes = -1;
+		for (int c = 0; c < Columns; ++c)
+			if (PartOf[c] == "bass" && MovesOf(c).Notes > MainNotes) {
+				MainBass = c;
+				MainNotes = MovesOf(c).Notes;
+			}
+		if (MainBass >= 0) {
+			const int Bass = MainBass;
+			const Moves m = MovesOf(Bass);
+			std::map<int, int> Classes;
+			for (size_t i = 0; i < Notes[Bass].size(); ++i)
+				if (BarOf(Notes[Bass][i].Row) >= LoopFirst && BarOf(Notes[Bass][i].Row) < LoopEnd)
+					++Classes[Notes[Bass][i].Note % 12];
+			int Top = 0;
+			for (std::map<int, int>::const_iterator it = Classes.begin(); it != Classes.end(); ++it)
+				Top = std::max(Top, it->second);
+			std::set<std::string> ChordNames;
+			for (int b = LoopFirst; b < LoopEnd && b < int(BarChords.size()); ++b)
+				if (!BarChords[b].empty())
+					ChordNames.insert(BarChords[b]);
+			const double PerBar = m.Bars > 0 ? double(m.Notes) / m.Bars : 0, Pairs = std::max(1, m.Pairs);
+			if (m.Notes == 0)
+				P.BassStyle = "";
+			else if (Top * 10 >= m.Notes * 7 && ChordNames.size() >= 3)
+				P.BassStyle = "pedal";
+			else if (m.Octave / Pairs >= 0.35)
+				P.BassStyle = "octaves";
+			else if (PerBar >= 6 && m.Repeat / Pairs >= 0.5)
+				P.BassStyle = "driving";
+			else if (m.Syncopated * 10 >= m.Notes * 3)
+				P.BassStyle = "syncopated";
+			else if (PerBar >= 3)
+				P.BassStyle = m.Step / Pairs >= 0.4 ? "walking" : (m.Skip + m.Fifth + m.Octave) / Pairs >= 0.5 ? "arpeggio" :
+					m.Repeat / Pairs >= 0.5 ? "driving" : "walking";
+			else if (PerBar >= 1.6)
+				P.BassStyle = m.Fifth / Pairs >= 0.3 ? "root_fifth" : "half";
+			else
+				P.BassStyle = "roots";
+		}
+		// The drums: hits a bar, and the groove their voices make
+		{
+			int Hits = 0, Kicks = 0, Snares = 0;
+			bool Backbeat = false;
+			for (size_t n = 0; n < Voices.size(); ++n) {
+				if (Layer[n])
+					continue;
+				const Voice &V = Voices[n];
+				int In = 0;
+				for (size_t i = 0; i < V.Rows.size(); ++i)
+					In += InLoop(V.Rows[i]);
+				Hits += In;
+				if (V.Name.find("kick") != std::string::npos)
+					Kicks += In;
+				if (V.Name.find("snare") != std::string::npos) {
+					Snares += In;
+					Backbeat = Backbeat || V.Backbeat >= 0;
+				}
+			}
+			P.DrumHits = double(Hits) / LoopBarCount;
+			if (Hits >= 2) {
+				const double KickBar = double(Kicks) / LoopBarCount, SnareBar = double(Snares) / LoopBarCount;
+				if (S.BeatsPerBar == 3)
+					P.Groove = "waltz";
+				else if (P.DrumHits < 3)
+					P.Groove = "calm";
+				else if (KickBar >= 3.5)
+					P.Groove = "four_on_floor";
+				else if (P.DrumHits >= 12 && S.Bpm >= 130)
+					P.Groove = "driving";
+				else if (!Backbeat && SnareBar >= 4)
+					P.Groove = "march";
+				else
+					P.Groove = "basic";
+				P.Intensity = P.DrumHits < 5 ? "light" : (P.DrumHits > 11 ? "busy" : "normal");
+			}
+		}
+		// The lead: its range, its motif and its bars' rhythms
+		if (Lead >= 0) {
+			std::vector<const Played *> L;
+			for (size_t i = 0; i < Notes[Lead].size(); ++i) {
+				const int b = BarOf(Notes[Lead][i].Row);
+				if (b >= LoopFirst && b < LoopEnd)
+					L.push_back(&Notes[Lead][i]);
+			}
+			for (size_t i = 0; i < L.size(); ++i) {
+				P.LeadLow = P.LeadLow < 0 ? L[i]->Note : std::min(P.LeadLow, L[i]->Note);
+				P.LeadHigh = std::max(P.LeadHigh, L[i]->Note);
+			}
+			// The opening motif: the longest opening of 3-6 notes that comes back in its rhythm (on the same place in the beat)
+			for (int k = std::min(6, int(L.size()) / 2); k >= 3 && P.MotifNotes == 0; --k) {
+				int Returns = 0, Shaped = 0;
+				for (size_t i = k; i + k <= L.size(); ++i) {
+					if ((L[i]->Row - L[0]->Row) % S.RowsPerBeat != 0)
+						continue;
+					bool Rhythm = true, Shape = true;
+					for (int j = 1; j < k && Rhythm; ++j) {
+						Rhythm = L[i + j]->Row - L[i]->Row == L[j]->Row - L[0]->Row;
+						const int Was = L[j]->Note - L[j - 1]->Note, Now = L[i + j]->Note - L[i + j - 1]->Note;
+						Shape = Shape && (Was == Now || (Was != 0 && Now != 0 && (Was > 0) == (Now > 0) && std::abs(Was - Now) <= 2));
+					}
+					if (!Rhythm)
+						continue;
+					++Returns;
+					Shaped += Shape;
+					i += k - 1;
+				}
+				if (Returns > 0) {
+					P.MotifNotes = k;
+					P.MotifReturns = Returns;
+					P.MotifShaped = Shaped;
+				}
+			}
+			// Bars whose rhythm (and shape) an earlier bar had
+			std::set<std::string> Rhythms, Shapes;
+			int Counted = 0, RhythmBack = 0, ShapeBack = 0;
+			for (int b = LoopFirst; b < LoopEnd; ++b) {
+				std::string Grid(Steps, '.'), MoveText;
+				int Last = -1, In = 0;
+				for (size_t i = 0; i < L.size(); ++i) {
+					if (BarOf(L[i]->Row) != b)
+						continue;
+					Grid[StepOf(L[i]->Row)] = 'x';
+					if (Last >= 0)
+						MoveText += Format("%+d ", L[i]->Note - Last);
+					Last = L[i]->Note;
+					++In;
+				}
+				if (In == 0)
+					continue;
+				const std::string Shape = Grid + " " + MoveText;
+				if (!Rhythms.empty()) {
+					++Counted;
+					RhythmBack += Rhythms.count(Grid) > 0;
+					ShapeBack += In >= 3 && Shapes.count(Shape) > 0;
+				}
+				Rhythms.insert(Grid);
+				Shapes.insert(Shape);
+			}
+			if (Counted > 0) {
+				P.RhythmReturn = double(RhythmBack) / Counted;
+				P.ShapeReturn = double(ShapeBack) / Counted;
+			}
+		}
+		// The stretches: the intro, then the loop's phrases as the form letters them (or four bars each)
+		std::vector<std::string> Letters;
+		{
+			std::string Word;
+			for (size_t i = 0; i <= S.Form.size(); ++i) {
+				if (i == S.Form.size() || S.Form[i] == ' ') {
+					if (!Word.empty())
+						Letters.push_back(Word);
+					Word.clear();
+				}
+				else
+					Word += S.Form[i];
+			}
+		}
+		if (LoopRow >= 0 && LoopFirst > 0) {
+			StudyBlock B;
+			B.FirstBar = 0;
+			B.Bars = LoopFirst;
+			B.Name = "intro";
+			P.Blocks.push_back(B);
+		}
+		for (int b = LoopFirst, k = 0; b < LoopEnd && P.Blocks.size() < 40; b += 4, ++k) {
+			StudyBlock B;
+			B.FirstBar = b;
+			B.Bars = std::min(4, LoopEnd - b);
+			B.Name = k < int(Letters.size()) ? Letters[k] : std::string();
+			P.Blocks.push_back(B);
+		}
+		static const char *const ORDER[] = { "lead", "bass", "chords", "second", "echo", "drums", "noise layer" };
+		for (size_t k = 0; k < P.Blocks.size(); ++k) {
+			StudyBlock &B = P.Blocks[k];
+			std::map<std::string, int> Starts;
+			for (int c = 0; c < Columns; ++c) {
+				if (PartOf[c].empty())
+					continue;
+				for (size_t i = 0; i < Notes[c].size(); ++i) {
+					const Played &p = Notes[c][i];
+					const int b = BarOf(p.Row);
+					if (b < B.FirstBar || b >= B.FirstBar + B.Bars)
+						continue;
+					const bool InLayer = !Melodic(Kinds[c]) && i < VoiceOf[c].size() && Layer[VoiceOf[c][i]];
+					const std::string &Part = InLayer ? std::string("noise layer") : PartOf[c];
+					// a note held a bar counts as two: it carries the stretch
+					Starts[Part] += p.Length >= RowsPerBar && Melodic(Kinds[c]) ? 2 : 1;
+					++B.Notes;
+					if (c == Lead)
+						B.Top = std::max(B.Top, p.Note);
+				}
+			}
+			for (size_t o = 0; o < sizeof(ORDER) / sizeof(ORDER[0]); ++o)
+				if (Starts[ORDER[o]] >= 2)
+					B.Parts.push_back(ORDER[o]);
+			if (B.Top >= 0 && Starts["lead"] < 2)
+				B.Top = -1;
+			if (P.Fullest < 0 || B.Parts.size() > P.Blocks[P.Fullest].Parts.size() || (B.Parts.size() == P.Blocks[P.Fullest].Parts.size() &&
+				double(B.Notes) / B.Bars > double(P.Blocks[P.Fullest].Notes) / P.Blocks[P.Fullest].Bars + 0.01))
+				P.Fullest = int(k);
+		}
+		// The peak: the lead's highest note in the loop, where it first plays
+		if (Lead >= 0)
+			for (size_t i = 0; i < Notes[Lead].size(); ++i) {
+				const int b = BarOf(Notes[Lead][i].Row);
+				if (b >= LoopFirst && b < LoopEnd && Notes[Lead][i].Note > P.PeakNote) {
+					P.PeakNote = Notes[Lead][i].Note;
+					P.PeakBar = b;
+				}
+			}
+		P.Has = !P.Blocks.empty() && S.Kind == "music";
+	}
 	return S;
+}
+
+std::vector<std::string> DescribePlan(const StudyPlan &P)
+{
+	std::vector<std::string> Out;
+	if (!P.Has)
+		return Out;
+	auto Bars = [](const StudyBlock &B) {
+		return B.Bars == 1 ? Format("bar %d", B.FirstBar + 1) : Format("bars %d-%d", B.FirstBar + 1, B.FirstBar + B.Bars);
+	};
+	auto BlockName = [&](const StudyBlock &B) { return (B.Name.empty() || B.Name == "-" ? std::string("") : B.Name + " ") + "(" + Bars(B) + ")"; };
+	if (P.LeadHigh >= 0) {
+		std::string Line = "The lead's motif: ";
+		if (P.MotifNotes > 0)
+			Line += Format("its opening %d notes come back %s in their rhythm (%d of them in their shape too, as written or moved)",
+				P.MotifNotes, Count(P.MotifReturns, "time", "times").c_str(), P.MotifShaped);
+		else
+			Line += "its opening notes don't come back in their rhythm";
+		Line += Format("; %s of its bars bring back an earlier bar's rhythm, %s its rhythm and shape; it plays from %s to %s",
+			Percent(int(P.RhythmReturn * 100 + 0.5), 100).c_str(), Percent(int(P.ShapeReturn * 100 + 0.5), 100).c_str(),
+			NoteName(P.LeadLow).c_str(), NoteName(P.LeadHigh).c_str());
+		Out.push_back(Line + ".");
+	}
+	if (!P.Blocks.empty()) {
+		std::string Line = "Texture by phrase:";
+		for (size_t k = 0; k < P.Blocks.size() && k < 16; ++k) {
+			const StudyBlock &B = P.Blocks[k];
+			Line += (k == 0 ? " " : "; ") + BlockName(B) + " " + (B.Parts.empty() ? std::string("silence") : Join(B.Parts, ", "));
+		}
+		Out.push_back(Line + (P.Blocks.size() > 16 ? "; ..." : "") + ".");
+	}
+	if (!P.ChordChannel.empty()) {
+		int WithLead = 0, Playing = 0;
+		std::vector<std::string> Rests, Free;
+		for (size_t k = 0; k < P.Blocks.size(); ++k) {
+			const StudyBlock &B = P.Blocks[k];
+			const bool Chords = std::find(B.Parts.begin(), B.Parts.end(), "chords") != B.Parts.end();
+			if (std::find(B.Parts.begin(), B.Parts.end(), "lead") == B.Parts.end()) {
+				if (Chords)
+					Free.push_back(B.Name.empty() || B.Name == "-" ? Bars(B) : B.Name);
+				continue;
+			}
+			++WithLead;
+			Playing += Chords;
+			if (!Chords && Rests.size() < 8)
+				Rests.push_back(B.Name.empty() ? Bars(B) : B.Name);
+		}
+		std::string Line = Format("The chord part (%s, %s): it plays in %d of the %d phrases the lead plays in", P.ChordChannel.c_str(),
+			P.ChordStyle.c_str(), Playing, WithLead);
+		if (!Rests.empty())
+			Line += " and rests in " + Join(Rests, ", ");
+		if (!Free.empty())
+			Line += "; it plays where the lead rests (" + Join(Free, ", ") + ")";
+		Out.push_back(Line + ".");
+	}
+	if (P.PeakNote >= 0 || P.Fullest >= 0) {
+		std::string Line = "The peak:";
+		if (P.PeakNote >= 0) {
+			std::string Where;
+			for (size_t k = 0; k < P.Blocks.size(); ++k)
+				if (P.PeakBar >= P.Blocks[k].FirstBar && P.PeakBar < P.Blocks[k].FirstBar + P.Blocks[k].Bars && !P.Blocks[k].Name.empty())
+					Where = " (" + P.Blocks[k].Name + ")";
+			Line += Format(" the lead's highest note, %s, first in bar %d%s", NoteName(P.PeakNote).c_str(), P.PeakBar + 1, Where.c_str());
+		}
+		if (P.Fullest >= 0 && P.Fullest < int(P.Blocks.size()))
+			Line += std::string(P.PeakNote >= 0 ? ";" : "") + " the fullest stretch is " + BlockName(P.Blocks[P.Fullest]) + ", with " +
+				Join(P.Blocks[P.Fullest].Parts, ", ");
+		Out.push_back(Line + ".");
+	}
+	std::vector<std::string> Styles;
+	if (!P.ChordStyle.empty())
+		Styles.push_back("chord_style " + P.ChordStyle);
+	if (!P.BassStyle.empty())
+		Styles.push_back("bass_style " + P.BassStyle);
+	if (!P.Groove.empty())
+		Styles.push_back(Format("groove %s, intensity %s (about %.1f drum hits a bar)", P.Groove.c_str(), P.Intensity.c_str(), P.DrumHits));
+	if (!Styles.empty())
+		Out.push_back("To arrange like it with the tools: " + Join(Styles, "; ") + ".");
+	if (!P.Ambience.empty())
+		Out.push_back("A noise layer apart from the drums, an ambience: " + P.Ambience + ".");
+	return Out;
 }
 
 std::string DescribeStudy(const TrackStudy &S, bool Macros)
@@ -2466,6 +2891,11 @@ std::string DescribeStudy(const TrackStudy &S, bool Macros)
 		s += "  " + S.Channels[i] + "\n";
 	for (size_t i = 0; i < S.Drums.size(); ++i)
 		s += "  " + S.Drums[i] + "\n";
+	{
+		const std::vector<std::string> Plan = DescribePlan(S.Plan);
+		for (size_t i = 0; i < Plan.size(); ++i)
+			s += "  " + Plan[i] + "\n";
+	}
 	if (!S.Tricks.empty()) {
 		s += "  Techniques:\n";
 		for (size_t i = 0; i < S.Tricks.size(); ++i)
