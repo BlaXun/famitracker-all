@@ -21,7 +21,7 @@
 
 // check_song and what_next on real songs: a folder (the first argument, or the
 // FAMITRACKER_SONG_CHECKS environment variable) with "keep" (songs the user
-// likes, which must get no finding of the kinds below and no what_next step
+// likes, which must get no finding of the kinds below and no what_next step (nor the review's development tips)
 // for one: a failure) and "flag" (songs the user found fault with: too busy for
 // the NES, chords that drone on or a climax that repeats A, which should get one of them: listed when
 // they don't, since not every such song can be told from the kept ones; see
@@ -145,6 +145,19 @@ int CheckSong(const std::string &Path, bool Flagged, bool Verbose)
 				++g_Failures;
 			}
 			Found += Here;
+		}
+		// How the song develops part by part (fix-r6-depth): a song the user keeps gets none of the review's development
+		// tips and no what_next step for them
+		if (!Flagged) {
+			const std::string Review = Tools.Call("review_arrangement", Parse("{}")).Text;
+			static const char *const DEVELOPMENT[] = { " did: the same parts with the same sounds", "should be the fullest part, the last "
+				"time round", "Nothing carries from the intro into", "gives it something of its own", "its melody climbs over",
+				"a line a third over its melody" };
+			for (const char *Words : DEVELOPMENT)
+				if (Review.find(Words) != std::string::npos || Next.find(Words) != std::string::npos) {
+					std::printf("FAIL %s track %d: \"%s\" (development) on a song the user keeps\n", Path.c_str(), t + 1, Words);
+					++g_Failures;
+				}
 		}
 	}
 	return Found;

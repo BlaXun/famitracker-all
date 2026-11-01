@@ -203,11 +203,12 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "kit", "noise (default) or samples: a sampled kick and snare on the DPCM channel, punchier." },
 			{ "channel", "The noise channel (default: the song's)." } } },
 		{ "add_ambience", "Adds a quiet layer of the place's sounds on the noise channel: waves, rain, wind, a stream or a "
-			"fire, in step with the bars and the loop, under the music.", {
-			{ "kind", "waves, rain, wind, stream or fire (default: from about or the track's name)." },
-			{ "about", "Words about the place, for the kind." },
-			{ "volume", "1-15 (default: about 9 dB under the melody)." },
-			{ "channel", "The noise channel (default: the song's)." } } },
+			"fire (or drips), in step with the bars and the loop, under the music.", {
+			{ "kind", "waves, rain, wind, stream, fire or drips (default: from about or the name)." },
+			{ "about", "Words about the place." },
+			{ "volume", "1-15 (default: 9 dB under the melody)." },
+			{ "channel", "The noise channel (default: the song's)." },
+			{ "around_drums", "Only where no drums play." } } },
 		{ "add_harmony", "Writes a second voice following the melody, a third under it by default, in the key and on the "
 			"chords so it doesn't rub. Best on a channel like the melody's, quieter.", {
 			{ "channel", "Channel for the harmony (default: a free one)." },

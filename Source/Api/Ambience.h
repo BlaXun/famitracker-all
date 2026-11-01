@@ -22,7 +22,7 @@
 #pragma once
 
 // A quiet layer of ambience inside a music track (add_ambience, Tools.cpp): the sea's waves, rain, wind, a stream or a
-// fire on the noise channel, under the music, in step with its bars and its loop. Made the way the user's soundtrack made
+// fire on the noise channel (or a cave's drips, from fix-r6-depth), under the music, in step with its bars and its loop. Made the way the user's soundtrack made
 // its waves (Bobber on the Bay: a noise note swelling in over a second at a middling pitch, then one a little darker
 // sinking away over two, then a rest, every few seconds, at about 8-9 dB under the lead), not from make_sound_effect's
 // loops, whose random parts run for seconds a note: here each sound is an instrument whose sequences shape it, and its
@@ -35,7 +35,7 @@
 
 namespace ftapi {
 
-enum ambience_kind { AMBIENCE_WAVES, AMBIENCE_RAIN, AMBIENCE_WIND, AMBIENCE_STREAM, AMBIENCE_FIRE, AMBIENCE_KINDS };
+enum ambience_kind { AMBIENCE_WAVES, AMBIENCE_RAIN, AMBIENCE_WIND, AMBIENCE_STREAM, AMBIENCE_FIRE, AMBIENCE_DRIPS, AMBIENCE_KINDS };
 
 struct AmbienceKind {
 	const char *Name;		// "waves"

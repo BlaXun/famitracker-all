@@ -40,6 +40,9 @@ const AmbienceKind KINDS[AMBIENCE_KINDS] = {
 		"stream streams river rivers brook brooks creek creeks waterfall waterfalls rapids fountain fountains canal" },
 	{ "fire", "a fire: a dark, low roar flickering, with crackles popping out of it",
 		"fire fires fireplace campfire campfires hearth bonfire flames torch torches crackling crackle embers forge" },
+	{ "drips", "a cave's drips: a bright plip falling away at once, a bar or so apart, now and then a smaller one after it",
+		"drips cave caves cavern caverns grotto grottos grotte cellar cellars crypt crypts mines sewer sewers "
+		"tunnel tunnels underground" },
 };
 
 std::string Lower(const std::string &Text)
@@ -196,6 +199,19 @@ Preset Fire(Dice &D)
 	return NoiseSound("ambience fire", "a fire's low roar flickering, with crackles, looping (ambience)", V, 0, A);
 }
 
+// A drop falling into a pool: a bright tick that falls away in a few frames, two steps darker as it fades, then silence
+// until the next (fix-r6-depth: the Caves on the 2A03 alone had no channel for an echo, and the noise rests where no drums
+// play)
+const int DRIP_FRAMES = 10;
+
+Preset Drip()
+{
+	static const int VOLUME[DRIP_FRAMES] = { 15, 12, 9, 6, 4, 3, 2, 1, 1, 0 };
+	static const int PITCH[DRIP_FRAMES] = { 0, 0, -1, -1, -2, -2, -2, -3, -3, -3 };
+	return NoiseSound("ambience drip", "a drop falling into a pool: a bright plip falling away (ambience: drips)",
+		std::vector<int>(VOLUME, VOLUME + DRIP_FRAMES), -1, std::vector<int>(PITCH, PITCH + DRIP_FRAMES));
+}
+
 Preset Wind(int Frames, Dice &D)
 {
 	// Two or three slow gusts over the cycle, rising from 4 to about 15 and back, a little brighter at their top; it starts
@@ -314,6 +330,10 @@ AmbiencePlan PlanAmbience(int Kind, const std::vector<std::pair<int, int> > &Str
 		Plan.SoundFrames = Frames;
 		break;
 	}
+	case AMBIENCE_DRIPS:
+		Plan.Sounds.push_back(Drip());
+		Plan.SoundFrames = DRIP_FRAMES;
+		break;
 	case AMBIENCE_STREAM:
 		Plan.Sounds.push_back(Stream(D));
 		Plan.SoundFrames = TEXTURE_FRAMES;
@@ -326,10 +346,34 @@ AmbiencePlan PlanAmbience(int Kind, const std::vector<std::pair<int, int> > &Str
 	// The waves: each in at a pitch of 7-9 (a bigger one, then a smaller one), out two steps darker once it has swelled
 	static const int WAVE_PITCHES[] = { 8, 7, 9, 8, 7, 8 };
 	const int OutAfter = std::max(1, static_cast<int>(std::floor(WAVE_IN_FRAMES / RowFrames + 0.5)));
-	static const int PITCHES[AMBIENCE_KINDS] = { 8, 12, 5, 10, 3 };
+	static const int PITCHES[AMBIENCE_KINDS] = { 8, 12, 5, 10, 3, 14 };
 	int Wave = 0;
 	for (size_t s = 0; s < Stretches.size(); ++s) {
 		const int First = Stretches[s].first, End = Stretches[s].second;
+		if (Plan.Kind == AMBIENCE_DRIPS) {
+			// A drop a bar on an eighth of it (never two bars alike in a row), a smaller one after it every other bar or so,
+			// at pitches 12-15
+			const int Eighth = std::max(1, Bar / 8);
+			int Last = -1;
+			std::vector<std::pair<int, double> > Drops;
+			for (int Row = First; Row < End; Row += Bar) {
+				int At = D.Below(8);
+				if (At == Last)
+					At = (At + 3) % 8;
+				Last = At;
+				if (Row + At * Eighth < End)
+					Drops.push_back(std::make_pair(Row + At * Eighth, 1.0));
+				const int Then = At + 2 + D.Below(3);
+				if (D.Below(2) == 0 && Then < 8 && Row + Then * Eighth < End)
+					Drops.push_back(std::make_pair(Row + Then * Eighth, 0.6));
+			}
+			for (size_t i = 0; i < Drops.size(); ++i) {
+				const int Until = i + 1 < Drops.size() ? Drops[i + 1].first : End;
+				AmbienceNote N = { Drops[i].first, std::max(1, Until - Drops[i].first), 12 + D.Below(4), 0, Drops[i].second };
+				Plan.Notes.push_back(N);
+			}
+			continue;
+		}
 		for (int Row = First; Row < End; Row += Each) {
 			if (Plan.Kind == AMBIENCE_WAVES) {
 				const int Pitch = WAVE_PITCHES[(Wave + D.Below(2)) % 6];
