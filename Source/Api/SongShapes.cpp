@@ -1556,6 +1556,12 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 				std::string Why;
 				const bool Done = Pass == 0 ? DropKind(Form, Kind, Itself, Title, Why) : AddKind(Form, Kind, Title, Why);
 				if (!Done) {
+					// A part asked for that the form has already is there: a no-op with a note, not a refusal (the airship's
+					// add ["climax"] on a stage, which has one, was refused: fix-r4-recipe)
+					if (Pass == 1 && Own && Why.size() > 9 && Why.compare(Why.size() - 9, 9, " already.") == 0) {
+						Out.Changes.push_back(Why.substr(0, Why.size() - 1) + ", so add left it as it is.");
+						continue;
+					}
 					if (Own) {
 						Error = Why;
 						return false;

@@ -138,7 +138,7 @@ struct NextKind {
 	int Grow;					// grow_melody's kind: 1 calm (few, long notes, by step), 2 lively, 3 action; 0 lively
 	const char *Title;			// "a mysterious track", as finish_song names it
 	const char *Listen;			// what to listen for once it's finished
-	const char *LeadWhy;		// the lead step's why: the sound and what it's for
+	const char *LeadWhy;		// the lead step's why: the sound (%s: the lead's words, LeadWhyOf) and what it's for
 	const char *ProgMajor[2];	// its A's and B's chords (NextProgression), in a major key and a minor one; null: the
 	const char *ProgMinor[2];	// general recipe's
 	const char *Place;			// what it's for: "caves, sewers, ruins, forgotten places"
@@ -154,6 +154,9 @@ struct NextKind {
 	const char *Grooves;		// an empty entry: no drums
 	const char *Tempos;			// BPM, each an even one (rows of whole frames)
 	const char *KeyPool;
+	// Its chords stay plain triads all through (a seventh or a ninth over the drone rubs): no colors added after the tune,
+	// and the review asks for none (fix-r4-recipe: the Caves' review led to sevenths everywhere against its recipe)
+	bool StaysPlain;
 };
 
 // What what_next takes from a kind's pools for one song: picked by the track's name and the song's seed, each pool with a
@@ -174,6 +177,10 @@ NextPicks NextPicksOf(int Kind, const std::string &TrackName, unsigned int Seed)
 std::vector<std::string> PoolEntries(const char *Pool);
 // "a, b or c"
 std::string PoolText(const char *Pool, const char *Single);
+// What a design_instrument kind of lead does, with its kind: "breathes in and holds low (kind breath)"
+std::string LeadSoundWords(const std::string &Kind);
+// A later kind's lead why (NextKind::LeadWhy) for one lead, or for its whole pool when Lead is empty
+std::string LeadWhyOf(const NextKind &K, const std::string &Lead);
 
 const NextKind &NextKindInfo(int Kind);
 // A kind as asked ("calm", "Lively", "cosy", "caves"); false when it's none of them
@@ -187,7 +194,8 @@ bool KindWantsMinor(int Kind);
 
 // The chords what_next gives a new song's A part (or its B part, on other
 // chords), eight bars as degrees of its key: "| I | V | vi | IV | ... |"
-std::string NextProgression(int Kind, bool Minor, bool B);
+// (Dorian: the key is dorian, whose later kinds' chords then sound its raised sixth: IV for a VII in each half)
+std::string NextProgression(int Kind, bool Minor, bool B, bool Dorian = false);
 
 // A note of the phrase ExampleTune offers: its bar (from 1), its beat in the
 // bar (from 1), how long it lasts in beats, and its pitch as written on a pulse
@@ -224,9 +232,13 @@ std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int Beat
 // degree it starts on and the one it ends on. Singable as ExampleTune's: chord tones on the strong beats and long notes,
 // steps mostly, a leap answered by a step the other way, nothing a semitone from another part, from a fourth under the
 // home tonic (TuneHome) to an octave over it. Other meters than 4/4 get ExampleTune's two bars. Pick 0 is ExampleTune's
-// own two bars, as a song without a seed keeps
+// own two bars, as a song without a seed keeps. Top (0 for none): the highest pitch, the home an octave down where its
+// fifth would pass it, for a kind whose recipe asks for a tune mostly in octave 3 (fix-r4-recipe: the Hut was offered F-5)
 std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int RowsPerBeat, const std::vector<std::vector<int> > &Chord,
-	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars);
+	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars, int Top = 0);
+// The highest note a kind's offered hooks reach (HookTune's Top): B-4 for the kinds whose recipes ask for a tune mostly in
+// octave 3 (general, lively, action, cozy, adventure), else 0
+int HookTop(int Kind);
 // How many hook figures each pace draws from (HookTune's pools), for the tests
 int HookFigures(int Pace);
 
