@@ -136,6 +136,11 @@ bool Contains(const std::string &Text, const char *Part)
 {
 	return Text.find(Part) != std::string::npos;
 }
+bool Contains(const std::string &Text, const std::string &Part)
+{
+	return Contains(Text, Part.c_str());
+}
+
 
 // On a failure, the text looked in is printed too (CI's job logs can't be read from sandboxed sessions;
 // the Linux test report shows this output)
@@ -18401,7 +18406,8 @@ void TestGrowTool()
 			Result = Run(Song, "grow_melody", Ask + "}");
 			Check(!Result.IsError, Result.Text.c_str(), __LINE__);
 			CHECK_HAS(Result.Text, "Three versions, each a line write_notes takes as notes");
-			CHECK_HAS(Result.Text, "pick 1, 2 or 3 with variant 1 writes one, and variant 2 gives others.");
+			CHECK_HAS(Result.Text, "they are variant 1, chosen for this song: pass variant 1 with pick 1, 2 or 3 to write one of them "
+				"(variant 2 gives others).");
 			Check(Contains(Result.Text, ("over bars 1-" + Bars + " on VRC6 Pulse 1, in " + KEYS[k] + ", lively").c_str()), Result.Text.c_str(),
 				__LINE__);
 			CHECK(Song.Writes == 1);	// only the groove: the versions are shown
@@ -23880,7 +23886,7 @@ void TestCalmLeadFirst()
 		TextOf(&Lead.Arguments, "channel") == "VRC6 Pulse 1" && TextOf(&Lead.Arguments, "duty") == "37.5%" &&
 		TextOf(&Lead.Arguments, "attack") == "bloom");
 	CHECK_HAS(Lead.Text, "The night songs' best was a music box struck on a VRC6 pulse at 37.5%");
-	CHECK_HAS(Lead.Text, "(kind breath, which swells in and sinks a little, is the other way)");
+	CHECK_HAS(Lead.Text, "(kind music box; kind breath, which swells in and sinks a little, is the other way)");
 	// ...which blooms in at 37.5% and rings away to silence, never holding a level
 	CHECK(!Run(Song, "design_instrument", WriteJson(Lead.Arguments)).IsError);
 	const PresetSequence *pVolume = MadeSequence(Song, Newest(Song), SEQUENCE_VOLUME);
@@ -28401,7 +28407,7 @@ void TestShapeVariations()
 		const char *Shape, *Add, *Drop, *Words;
 		int Bars;
 	};
-	const Refusal REFUSED[] = { { "stage", "", "a", "A is the tune", 0 }, { "stage", "climax", "", "has a climax already", 0 },
+	const Refusal REFUSED[] = { { "stage", "", "a", "A is the tune", 0 },
 		{ "night", "", "climax", "has no climax to drop", 0 }, { "jingle", "climax", "", "plays once", 0 },
 		{ "small", "", "a'", "would leave only A", 0 }, { "stage", "solo", "", "add: climax, break", 0 },
 		{ "stage", "", "", "bars: from 8 to 256", 300 }, { "jingle", "", "", "8 bars at most", 12 } };
@@ -28419,6 +28425,18 @@ void TestShapeVariations()
 		std::string Error;
 		Check(ShapeOf(Q, &Error).compare(0, 7, "error: ") == 0 && Contains(Error, F.Words), (std::string(F.Shape) + ": " + Error).c_str(),
 			__LINE__);
+	}
+	// A part asked for that the form has already: a no-op with a note (the airship's add ["climax"], fix-r4-recipe)
+	{
+		ShapeRequest Q = AskShape("stage");
+		Q.Add.push_back("climax");
+		ShapeChoice C;
+		std::string Error, Changes;
+		Check(MakeSongShape(Q, C, Error), Error.c_str(), __LINE__);
+		for (size_t i = 0; i < C.Changes.size(); ++i)
+			Changes += C.Changes[i] + " ";
+		CHECK_EQ(C.Shape.PartsText(), ShapeOf(AskShape("stage")));
+		CHECK_HAS(Changes, "has a climax already, so add left it as it is");
 	}
 	R = AskShape("stage", 9);
 	CHECK_HAS(ShapeOf(R), "variant: 1 to 5");
@@ -29140,6 +29158,93 @@ std::string PicksShown(const std::string &Text)
 	return Out;
 }
 
+// Every kind's what_next picks agree with its own recipe (fix-r4-recipe: the Caves' recipe asked for a lead that holds
+// and got a music box silent after 0.89 of a beat, no backbeat and got drums in every part, plain chords and got
+// sevenths; dorian's chords never sounded its sixth; the airship's why named another lead than its call). Each kind on
+// seeded songs of four names: the lead its walk designs is one the recipe names, the why names it, and a kind whose
+// lead "holds" gets a lead that holds; drums as the recipe says them; no colors for a kind whose chords stay plain; a
+// dorian key's chords sound IV
+void TestRecipesAgree()
+{
+	auto Section = [](const std::string &Text, const char *Head) {
+		const size_t At = Text.find(Head);
+		return At == std::string::npos ? std::string() : Text.substr(At, Text.find('\n', At) - At);
+	};
+	// The progressions themselves: dorian's IV for a VII in each half, a minor key's as they were
+	for (int k = NEXT_COZY + 1; k < NEXT_KIND_COUNT; ++k)
+		if (NextKindInfo(k).ProgMinor[0] != 0 && Contains(NextKindInfo(k).ProgMinor[0], "VII")) {
+			CHECK(Contains(NextProgression(k, true, false, true), "| IV |"));
+			CHECK_EQ(NextProgression(k, true, false, false), std::string(NextKindInfo(k).ProgMinor[0]));
+		}
+	CHECK_EQ(NextProgression(NEXT_MYSTERIOUS, true, false, true), std::string("| i | IV | III | VII | i | IV | v | VII |"));
+	const char *const NAMES[] = { "Old Mill", "Brook", "Hollow", "Lantern Row" };
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k) {
+		const NextKind &K = NextKindInfo(k);
+		const std::string Asked = k == NEXT_GENERAL ? std::string("{}") : std::string("{\"kind\": \"") + K.Name + "\"}";
+		FakeSong Probe(1);
+		const std::string Recipe = Run(Probe, "get_recipe", Asked).Text;
+		const std::string LeadLine = Section(Recipe, "4. The lead's sound first");
+		const std::string DrumLine = Section(Recipe, "8. ");
+		const bool Holds = K.Melody != 0 && Contains(K.Melody, "long notes");
+		for (const char *Name : NAMES) {
+			FakeSong Song(1);
+			NewSong(Song);
+			Song.GivesSeeds = true;
+			Song.Info.TrackName = Song.Tracks[0].Name = Name;
+			bool Finished = false;
+			std::vector<std::string> Replies;
+			const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 60, Finished, __LINE__, false, 0, &Replies);
+			const std::string What = std::string(K.Name) + " " + Name;
+			Check(Finished, What.c_str(), __LINE__);
+			int Drums = 0;
+			bool Dorian = false, ChordsWithIV = false;
+			for (size_t r = 0; r < Replies.size(); ++r) {
+				const WhatNextAnswer N = ReadWhatNext(Replies[r]);
+				if (N.Tool.empty())
+					continue;
+				const std::string Kind = TextOf(&N.Arguments, "kind");
+				if (N.Tool == "design_instrument" && TextOf(&N.Arguments, "name") == K.LeadName) {
+					// The why names the lead the call designs, and no other
+					Check(Contains(N.Text, "kind " + Kind + ")") || Contains(N.Text, "(kind " + Kind + ";"), (What + ": " + N.Text).c_str(),
+						__LINE__);
+					for (const std::string &Other : PoolEntries(K.Leads))
+						Check(Other == Kind || Other == "lead" || !Contains(N.Text, "(kind " + Other + ")"), (What + ": " + N.Text).c_str(),
+							__LINE__);
+					// The recipe names it among its leads
+					if (k != NEXT_GENERAL)
+						Check(Contains(LeadLine, "kind " + Kind) || Contains(LeadLine, ", " + Kind) || Contains(LeadLine, " or " + Kind) ||
+							Contains(LeadLine, Kind + " (kind " + Kind), (What + ": " + Kind + " in " + LeadLine).c_str(), __LINE__);
+					SoundDesign D;
+					Check(!Holds || (DesignOfKind(Kind, D) && D.Sustain > 0), (What + ": a lead that holds, not " + Kind).c_str(), __LINE__);
+				}
+				if (N.Tool == "add_drums") {
+					++Drums;
+					if (Contains(DrumLine, "No backbeat"))
+						Check(TextOf(&N.Arguments, "intensity") == "light", (What + ": " + N.Line).c_str(), __LINE__);
+				}
+				if (N.Tool == "set_key" && Contains(TextOf(&N.Arguments, "key"), "dorian"))
+					Dorian = true;
+				if (N.Tool == "add_chords_and_bass" && Contains(TextOf(&N.Arguments, "chords"), "| IV |"))
+					ChordsWithIV = true;
+				if (K.StaysPlain) {
+					const std::string Color = TextOf(&N.Arguments, "color");
+					Check(Color != "sevenths" && Color != "rich" && Color != "add", (What + ": plain chords, not " + N.Line).c_str(), __LINE__);
+				}
+			}
+			// Drums: none where the recipe has none, one section where it has a soft tick at most, a beat where it has one
+			if (Contains(DrumLine, "No drums"))
+				Check(Drums == 0, What.c_str(), __LINE__);
+			else if (Contains(DrumLine, "No backbeat"))
+				Check(Drums <= 1, What.c_str(), __LINE__);
+			else if (Contains(DrumLine, "add_drums groove") || Contains(DrumLine, "a soft beat"))
+				Check(Drums >= 1, (What + ": " + DrumLine).c_str(), __LINE__);
+			Check(!Dorian || ChordsWithIV, (What + ": dorian's chords sound IV").c_str(), __LINE__);
+			if (K.StaysPlain)
+				CHECK_HAS(Recipe, "plain all through");
+		}
+	}
+}
+
 void TestKindPools()
 {
 	const char *const NAMES[] = { "Town", "Lantern Row", "Old Mill", "Brook", "Crossing", "Hollow", "Mossy Steps", "Kettle",
@@ -29846,10 +29951,12 @@ void TestGen4Balance()
 		bool Finished = false;
 		const std::vector<std::string> Calls = FollowWhatNext(Song, W.Asked, 70, Finished, __LINE__, W.Core);
 		Check(Finished, What.c_str(), __LINE__);
-		// The mix reached calm's place, and the review (the kind kept) agrees: no balance tip
+		// The mix reached calm's place (a cozy song's own, the chords about 6 dB under the tune: fix-r4-recipe), and the review
+		// (the kind kept) agrees: no balance tip
 		const std::string Review = Run(Song, "review_arrangement", "{}").Text;
 		const double Over = MelodyOverChords(Review);
-		Check(Over >= 1.0 && Over <= 4.0, (What + ": " + Review).c_str(), __LINE__);
+		const bool Cozy = Contains(Review, "Judged as a cozy song");
+		Check(Cozy ? Over >= 4.5 && Over <= 7.5 : Over >= 1.0 && Over <= 4.0, (What + ": " + Review).c_str(), __LINE__);
 		Check(!Contains(Review, "dB over the chords as heard (a calm track") && !Contains(Review, "The chords cover the melody"),
 			(What + ": " + Review).c_str(), __LINE__);
 		// Nothing outside the key that the steps wrote
@@ -29881,6 +29988,29 @@ void TestGen4Balance()
 		const std::string Again = Run(Song, "mix", "{\"style\": \"calm\"}").Text;
 		CHECK_LACKS(Again, "so the melody came down");
 		CHECK_LACKS(Again, "(melody) loudest");
+	}
+	// A cozy song's own places (fix-r4-recipe): the chords about 6 dB under the tune (Hut in a Field (Claude) 7.1, the kept
+	// day songs 4.6), where calm's 2.5 pressed them up; the review and measure_mix with the kind agree, and a second mix
+	// moves nothing
+	{
+		FakeSong Song(4);
+		NewSong(Song);
+		CHECK(!Run(Song, "set_expansion", "{\"chip\": \"none\"}").IsError);
+		CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"from_bar\": 1, \"to_bar\": 4, "
+			"\"chord_channel\": \"2A03 Pulse 2\", \"chord_style\": \"stabs\", \"bass_style\": \"half\"}").IsError);
+		CHECK(!Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"from_bar\": 1, \"notes\": \"E4 - - - G4 - - - | C4 - - - "
+			"E4 - - - | A3 - - - C4 - - - | B3 - - - D4 - - -\", \"instrument\": \"soft lead\"}").IsError);
+		const std::string Mixed = Run(Song, "mix", "{\"style\": \"calm\", \"kind\": \"cozy\"}").Text;
+		CHECK_HAS(Mixed, "a cozy mix");
+		const std::string Review = Run(Song, "review_arrangement", "{\"kind\": \"cozy\"}").Text;
+		const double Over = MelodyOverChords(Review);
+		Check(Over >= 4.5 && Over <= 7.5, Review.c_str(), __LINE__);
+		CHECK_LACKS(Review, "dB over the chords as heard");
+		CHECK_LACKS(Review, "The chords cover the melody");
+		const std::string Calm = Run(Song, "review_arrangement", "{\"style\": \"calm\"}").Text;
+		CHECK_HAS(Calm, "dB over the chords as heard (a calm track wants 2-3");
+		const std::string Again = Run(Song, "mix", "{\"style\": \"calm\", \"kind\": \"cozy\"}").Text;
+		CHECK_LACKS(Again, "Changed the song");
 	}
 	// The walking bass keeps its passing notes in the key: G to Eb in Bb major (the hut's G F E D)
 	{
@@ -30345,6 +30475,7 @@ int main()
 	TestCozyKind();
 	TestLaterKinds();
 	TestKindPools();
+	TestRecipesAgree();
 	TestWhatNextSavesForClient();
 	TestListenLowAsAdvice();
 	TestEchoKeepsItsChipsEffects();

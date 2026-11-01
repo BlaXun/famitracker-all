@@ -339,8 +339,8 @@ bool DryRunHost::Save(const std::string &, std::string &Message)
 // and a stage's (100 BPM is speed 9 at tempo 150, 90 and 112.5 the speeds either side), a lead struck warm that falls to a
 // low hold and keeps singing (falling strike: not calm's music box, which rings away, nor a stage's bloom lead, which
 // holds high), broken chords under it, a bass on root and fifth that bounces (walking when it moves), and the lively
-// groove, the soft one (hats and a soft kick, no snare), on the noise alone. It mixes and checks in calm's style: calm's
-// places were the night songs' liked balance (the melody 2-3 dB over the chords), its drums stay as soft as written, its
+// groove, the soft one (hats and a soft kick, no snare), on the noise alone. It mixes and checks in calm's style, at places
+// of its own (the chords about 6 dB under the tune, where the night songs' are 2-3: COZY_CHORDS), its drums as soft as written, its
 // polish adds no accents and its checks find a lead that holds a high level. It exports at -20 LUFS, as most of a game's
 // music does: it plays beside the towns and the stages, where a night song's -22 is for the quiet scenes
 namespace {
@@ -348,20 +348,20 @@ namespace {
 const NextKind KINDS[] = {
 	{ NEXT_GENERAL, "general", 0.0, 0.0, 150.0, "Melody lead", "lead", "arpeggio", "arpeggio", "arpeggio", "basic", "soft", "any",
 		-20.0, { "C major", "G major", "D major" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0,
-		"lead|bloom lead|keys", "arpeggio|broken|stabs", "arpeggio|walking", "basic|four_on_floor|shuffle", "150|128.6", 0 },
+		"lead|bloom lead|keys", "arpeggio|broken|stabs", "arpeggio|walking", "basic|four_on_floor|shuffle", "150|128.6", 0, false },
 	{ NEXT_CALM, "calm", 60.0, 90.0, 75.0, "Calm lead", "music box", "lush", "roots", "half", "", "calm", "calm", -22.0,
 		{ "F major", "D major", "G major" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0,
-		"music box|breath|falling strike", "lush|broken", "roots|half", "", "75|69.2|81.8", 0 },
+		"music box|breath|falling strike", "lush|broken", "roots|half", "", "75|69.2|81.8", 0, false },
 	{ NEXT_LIVELY, "lively", 105.0, 165.0, 128.6, "Stage lead", "bloom lead", "lush", "arpeggio", "arpeggio", "basic", "lively",
 		"lively", -20.0, { "G major", "D major", "A major" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0,
-		"bloom lead|lead", "lush|broken|arpeggio", "arpeggio|octaves", "basic|four_on_floor", "128.6|150|112.5", 0 },
+		"bloom lead|lead", "lush|broken|arpeggio", "arpeggio|octaves", "basic|four_on_floor", "128.6|150|112.5", 0, false },
 	{ NEXT_ACTION, "action", 135.0, 195.0, 150.0, "Action lead", "bloom lead", "stabs", "octaves", "octaves", "driving", "soft", "any",
 		-19.0, { "A minor", "D minor", "E minor" }, 0, 0, 0, 0, false, 0, 0, 0, 0, { 0, 0 }, { 0, 0 }, 0, 0, 0, 0,
-		"bloom lead|stepped lead", "stabs|arpeggio", "octaves|driving", "driving|basic", "150|180", 0 },
+		"bloom lead|stepped lead", "stabs|arpeggio", "octaves|driving", "driving|basic", "150|180", 0, false },
 	{ NEXT_COZY, "cozy", 85.0, 112.5, 100.0, "Cozy lead", "falling strike", "broken", "root_fifth", "walking", "lively", "calm", "calm",
 		-20.0, { "F major", "Bb major", "C major" }, "cosy warm homey homely indoors shop inn house", 1, 0, 0, false, 0, 0, 0, 0,
 		{ 0, 0 }, { 0, 0 }, 0, 0, 0, 0,
-		"falling strike|keys|breath", "broken|lush|stabs", "root_fifth|walking|half", "lively|calm|", "100|90|112.5", "F major|Bb major|C major|G major|D major" },
+		"falling strike|keys|breath", "broken|lush|stabs", "root_fifth|walking|half", "lively|calm", "100|90|112.5", "F major|Bb major|C major|G major|D major", false },
 	// Caves, sewers, ruins, forgotten places: curious rather than scary. Minor or dorian (not sad: dorian's raised sixth;
 	// its chords the ones both share, i III v VII, so a dorian key's B major doesn't put a D# over the D drone),
 	// a slow walk (90 BPM, speed 10), a lead that breathes in over a drone (the pedal bass) with soft, slow chords, the
@@ -370,7 +370,7 @@ const NextKind KINDS[] = {
 		{ "D dorian", "A minor", "E dorian" }, "mystery mystic cave caves sewer sewers ruin ruins crypt hidden secret", -1, "plain",
 		"", false, 1, "a mysterious track", "the tune's long notes over the drone, the echo answering in the gaps, nothing louder "
 		"than a curious step",
-		"a mysterious place's lead breathes in and holds low (kind breath): long notes over the drone that leave gaps for "
+		"a mysterious place's lead %s: long notes over the drone that leave gaps for "
 		"the echo, curious rather than scary.", { 0, 0 },
 		{ "| i | VII | III | VII | i | VII | v | VII |", "| III | VII | i | v | III | VII | v | v |" },
 		"caves, sewers, ruins, forgotten places", "curious rather than scary: a place that hides something, minor or dorian but "
@@ -379,7 +379,7 @@ const NextKind KINDS[] = {
 		"or a tritone's lean now and then, the high note rare",
 		"the echo joining in the repeat, a second voice in long notes, a bar of the drone alone in the break; no backbeat (a "
 		"soft tick on the noise at most)",
-		"breath|falling strike|music box", "lush|broken", "pedal|roots", "|calm", "90|100", "D dorian|A minor|E dorian|G dorian|E minor" },
+		"breath|falling strike", "lush|broken", "pedal|roots", "|calm", "90|100", "D dorian|A minor|E dorian|G dorian|E minor", true },
 	// Open fields, travel, an airship flight: a wide tune that leaps upward over a rolling bass and a steady march, major,
 	// 128.6 BPM (speed 7); a lively stage's band (lively's style, mix and checks), broken chords plain under the leaps,
 	// the march groove with kit samples; -20 LUFS
@@ -387,7 +387,7 @@ const NextKind KINDS[] = {
 		"lively", "lively", -20.0, { "D major", "G major", "Bb major" }, "adventurous journey travel travelling traveling voyage "
 		"overworld airship flight flying", 1, "plain", "", true, 2, "an adventure track", "the tune leaping wide over the band, "
 		"the bass rolling under it and the march steady",
-		"an adventure's lead blooms in and settles (kind bloom lead), bold enough for a tune that leaps upward.",
+		"an adventure's lead %s, bold enough for a tune that leaps upward.",
 		{ "| I | V | IV | V | I | vi | IV | V |", "| IV | I | V | vi | IV | I | ii | V |" }, { 0, 0 },
 		"open fields, travel, an airship flight", "wide and hopeful: the road ahead, a tune that leaps upward over a rolling bass "
 		"and a steady march",
@@ -395,14 +395,14 @@ const NextKind KINDS[] = {
 		"end on a held note, a dotted rhythm that marches, mostly octave 3, reaching into 4 at each part's high point",
 		"a harmony a third or sixth under the tune in the repeat, the drums busier, the bass in octaves for the last time "
 		"round, a fill and a crash into each part",
-		"bloom lead|lead|brass", "broken|arpeggio|stabs", "arpeggio|octaves", "basic|four_on_floor", "128.6|112.5", "D major|G major|Bb major|A major|F major" },
+		"bloom lead|lead|brass", "broken|arpeggio|stabs", "arpeggio|octaves", "basic|four_on_floor", "128.6|112.5", "D major|G major|Bb major|A major|F major", false },
 	// The sky, clouds, underwater, waiting at a dock: a slow pulse (90 BPM, speed 10), major (lydian's raised fourth for
 	// color), rolling broken chords, a bass on half bars, a lead that breathes, no drums, an echo; calm's style; -21 LUFS
 	{ NEXT_FLOATING, "floating", 80.0, 95.0, 90.0, "Floating lead", "breath", "broken", "half", "roots", "", "calm", "calm", -21.0,
 		{ "F major", "D major", "G major" }, "float floaty afloat sky skies cloud clouds underwater drifting drift", 1, "plain", "",
 		false, 1, "a floating track", "the arpeggios rolling on like water, the tune drifting a little over them, the echo "
 		"wide",
-		"a floating lead breathes in and holds a soft level (kind breath), drifting over rolling chords.",
+		"a floating lead %s, drifting over rolling chords.",
 		{ "| I | iii | IV | I | vi | iii | IV | IV |", "| IV | I | vi | V | IV | I | ii | IV |" }, { 0, 0 },
 		"the sky, clouds, underwater, waiting at a dock", "weightless: a slow pulse, arpeggios rolling on like water or "
 		"wind, the tune drifting over them, plenty of echo, major (or lydian, its raised fourth floating)",
@@ -410,13 +410,13 @@ const NextKind KINDS[] = {
 		"held, as if carried",
 		"an echo a beat behind from the first repeat, a second voice in long notes, the arpeggios moved up an octave in B; "
 		"no drums (a soft shaker of hi-hats at most)",
-		"breath|music box|falling strike", "broken|lush", "half|roots|pedal", "", "90|81.8", "F major|D major|G major|C major" },
+		"breath|falling strike", "broken|lush", "half|roots|pedal", "", "90|81.8", "F major|D major|G major|C major", false },
 	// Minigames, funny characters, a toy shop: major and bouncy, short cheeky phrases, stabs on the offbeats over a
 	// root-and-fifth bass (polish's staccato makes it hop), light drums; the general recipe's style and mix, -20 LUFS
 	{ NEXT_PLAYFUL, "playful", 112.5, 150.0, 128.6, "Playful lead", "lead", "stabs", "root_fifth", "walking", "basic", "soft",
 		"any", -20.0, { "C major", "G major", "F major" }, "silly funny cheeky goofy toy toys minigame minigames", 1, "plain", "light",
 		false, 2, "a playful track", "the tune hopping and cheeky, the stabs and the bass bouncing, the drums light",
-		"a playful lead speaks at once and settles a little under its peak (kind lead), so short, cheeky notes hop "
+		"a playful lead %s, so short, cheeky notes hop "
 		"and none vanishes.",
 		{ "| I | IV | V | I | I | IV | ii | V |", "| IV | I | IV | V | vi | ii | V | V |" }, { 0, 0 },
 		"minigames, funny characters, a toy shop", "bouncy and cheeky: short phrases that hop, a staccato bass, light drums, a "
@@ -424,65 +424,65 @@ const NextKind KINDS[] = {
 		"short cheeky phrases of a bar or two, repeated notes and skips, a rest on a beat now and then, a grace note's hop, "
 		"the answer turning the question around",
 		"the repeat with a cheeky variation (vary_part), a second voice in the B part, a fill where each phrase ends",
-		"lead|bloom lead", "stabs|broken|arpeggio", "root_fifth|walking|octaves", "basic|calm|shuffle", "128.6|150|112.5", "C major|G major|F major|D major" },
+		"lead|bloom lead", "stabs|broken|arpeggio", "root_fifth|walking|octaves", "basic|calm|shuffle", "128.6|150|112.5", "C major|G major|F major|D major", false },
 	// A market, a festival, a holiday town: fast and bright, stabs, a catchy tune (busy, but not too busy for the NES:
 	// check_song's too_busy), fuller drums (the basic groove with kit samples), lively's style, -19 LUFS
 	{ NEXT_FESTIVE, "festive", 125.0, 165.0, 150.0, "Festive lead", "bloom lead", "stabs", "octaves", "walking", "basic", "lively",
 		"lively", -19.0, { "D major", "A major", "G major" }, "festival fair carnival celebration party holiday parade feast", 1,
 		"plain", "", true, 2, "a festive track", "the tune catchy over bright stabs, the drums full, the bass in octaves",
-		"a festive lead blooms in and settles (kind bloom lead), bright enough to lead a crowd.",
+		"a festive lead %s, bright enough to lead a crowd.",
 		{ "| I | IV | V | I | I | IV | V | V |", "| IV | V | iii | vi | IV | V | I | V |" }, { 0, 0 },
 		"a market day, a festival, a holiday town", "fast and bright: a catchy tune over bright stabs and full drums",
 		"catchy: a motif of 4-6 notes that comes back in every phrase, two or three rhythms repeated (never a new one each "
 		"bar: too busy for the NES), phrases of 2 or 4 bars",
 		"a harmony in thirds in the repeat, busier drums and a crash, the bass in octaves",
-		"bloom lead|brass|lead", "stabs|arpeggio|broken", "octaves|walking", "basic|four_on_floor", "150|128.6", "D major|A major|G major|C major" },
+		"bloom lead|brass|lead", "stabs|arpeggio|broken", "octaves|walking", "basic|four_on_floor", "150|128.6", "D major|A major|G major|C major", false },
 	// A farewell, a memorial, a sunset, an ending: major with borrowed minor chords (iv, bVI), slow, a singing tune. Never
 	// plainly minor and gloomy: its keys are major and a minor one gets what_next's note, as the recipe says why
 	{ NEXT_BITTERSWEET, "bittersweet", 70.0, 90.0, 75.0, "Bittersweet lead", "breath", "lush", "roots", "half", "", "calm", "calm",
 		-22.0, { "F major", "C major", "G major" }, "farewell goodbye memorial sunset nostalgic nostalgia", 1, "plain", "", false, 1,
 		"a bittersweet track", "the tune singing over chords that turn minor for a moment (iv, bVI) and come home to major",
-		"a bittersweet lead breathes in and sings (kind breath): long notes that ache a little.",
+		"a bittersweet lead %s: long notes that ache a little.",
 		{ "| I | iii | IV | iv | I | vi | bVI | V |", "| vi | IV | iv | I | bVI | IV | iv | V |" }, { 0, 0 },
 		"a farewell, a memorial, a sunset, an ending", "fond and a little sad, never gloomy: a major key whose borrowed minor "
 		"chords (iv, bVI) ache for a moment and come home (a plain minor key turns it into a lament, which isn't this)",
 		"a singing tune: long notes, a sigh (a falling second) at a phrase's end, a leap up of a sixth onto the borrowed "
 		"chord, phrases of two bars ending held",
 		"an echo a beat behind in the repeat, a second voice in long notes, the last chord a major one",
-		"breath|falling strike|music box", "lush|broken", "roots|half", "", "75|81.8", "F major|C major|G major|Bb major" },
+		"breath|falling strike", "lush|broken", "roots|half", "", "75|81.8", "F major|C major|G major|Bb major", false },
 	// Sneaking, a guarded place, slow danger: minor, 100 BPM, an ostinato bass (driving), sparse stabs, a tune without big
 	// leaps (grows as calm: by step), soft drums or ticking hats; not action, which is a fight; -20 LUFS
 	{ NEXT_TENSE, "tense", 90.0, 112.5, 100.0, "Tense lead", "stepped lead", "stabs", "driving", "syncopated", "calm", "soft", "any",
 		-20.0, { "E minor", "A minor", "D minor" }, "tension sneak sneaking stealth stealthy guarded prison", -1, "plain", "light",
 		false, 1, "a tense track", "the ostinato under everything, the stabs sparse, the tune close and quiet, the hats ticking",
-		"a tense lead holds, then steps down (kind stepped lead): close, careful notes.",
+		"a tense lead %s: close, careful notes.",
 		{ 0, 0 }, { "| i | i | VI | V | i | i | iv | V |", "| iv | iv | i | i | VI | VI | V | V |" },
 		"sneaking, a guarded place, danger that is slow", "watchful: an ostinato bass that never stops, sparse stabs, a "
 		"close tune without big leaps, ticking hats; not a fight (that's action)",
 		"close: steps and repeated notes, a semitone's lean, no leap past a fourth, rests where a guard might look up",
 		"the repeat a step higher or with the ostinato doubled, a second voice a third under in long notes",
-		"stepped lead|lead", "stabs|broken", "driving|syncopated", "calm", "100|90|112.5", "E minor|A minor|D minor|B minor" },
+		"stepped lead|lead", "stabs|broken", "driving|syncopated", "calm", "100|90|112.5", "E minor|A minor|D minor|B minor", false },
 	// Openly sad (grief, loneliness, rain, an abandoned home, a lost friend): minor (natural or dorian; it may stay minor,
 	// unlike bittersweet), slow (75 BPM, speed 12), a singing lead with long notes and sighs, sparse soft chords, no drums;
 	// calm's style, -22 LUFS. Only when sadness is asked for: its words are sadness's own, never neglect's (run-down, old)
 	{ NEXT_MELANCHOLIC, "melancholic", 60.0, 80.0, 75.0, "Melancholic lead", "breath", "lush", "roots", "half", "", "calm", "calm",
 		-22.0, { "A minor", "D dorian", "E minor" }, "melancholy sad sorrow sorrowful grief lament mournful lonely", -1, "plain", "",
 		false, 1, "a melancholic track", "the tune singing alone over the soft chords, its sighs falling, nothing hurrying it",
-		"a melancholic lead breathes in and sings (kind breath): long notes that sigh.", { 0, 0 },
+		"a melancholic lead %s: long notes that sigh.", { 0, 0 },
 		{ "| i | III | VII | v | i | III | VII | VII |", "| III | VII | v | i | III | VII | v | v |" },
 		"grief, loneliness, rain, an abandoned home, a lost friend", "openly sad: a slow, singing tune with long notes and "
 		"sighs over sparse soft chords, no drums; it may stay minor (unlike bittersweet, which borrows its sadness)",
 		"singing: long notes, sighs (a falling second, the upper note on the beat) at the phrases' ends, a slow climb to one "
 		"high note a section, 1-3 notes a bar",
 		"the tune alone for a phrase, an echo far behind in the repeat, a second voice in long notes, the chords thinning",
-		"breath|falling strike|music box", "lush|broken", "roots|half", "", "75|69.2|64.3", "A minor|D dorian|E minor|C minor" },
+		"breath|falling strike", "lush|broken", "roots|half", "", "75|69.2|64.3", "A minor|D dorian|E minor|C minor", false },
 	// Texture over tune (Metroid's ambience): drones, slow pads, sparse motifs rather than a tune to hum, an echo, no
 	// drums, minor or modal, 60-90 BPM, loose long sections (the night's shape). Its style, atmospheric, is calm's with the
 	// checks that ask for a lead (phrases, breaths, a covered melody) left out, as a cue's checks leave out a loop's
 	{ NEXT_ATMOSPHERIC, "atmospheric", 60.0, 90.0, 75.0, "Texture lead", "breath", "lush", "pedal", "roots", "", "calm",
 		"atmospheric", -22.0, { "E minor", "D dorian", "A minor" }, "atmosphere ambience texture vast void abyss", 0, "plain", "",
 		false, 1, "an atmospheric track", "the drone and the pads changing slowly, the motifs few and far apart, the echo wide",
-		"an atmospheric track's motifs breathe in and hold (kind breath): sparse, a texture's figures rather than a tune.",
+		"an atmospheric track's lead %s: sparse motifs, a texture's figures rather than a tune.",
 		{ 0, 0 }, { "| i | i | VII | VII | i | i | III | VII |", "| III | III | VII | VII | v | v | VII | VII |" },
 		"vast, empty, alien places, the deep, an abyss", "texture over tune: a drone, slow-changing pads, sparse motifs rather "
 		"than a melody to hum, an echo, quiet or no percussion, the form loose",
@@ -490,7 +490,7 @@ const NextKind KINDS[] = {
 		"fifth, no hook to hum",
 		"the pads changing chord slowly, the motif answered by its echo, a part dropping out; drums none, or a soft, "
 		"irregular tick",
-		"breath|falling strike", "lush|broken", "pedal|roots", "", "75|64.3|81.8", "E minor|D dorian|A minor|C minor" },
+		"breath|falling strike", "lush|broken", "pedal|roots", "", "75|64.3|81.8", "E minor|D dorian|A minor|C minor", true },
 };
 
 }	// namespace
@@ -528,6 +528,45 @@ std::string PoolText(const char *Pool, const char *Single)
 	std::string Out;
 	for (size_t i = 0; i < All.size(); ++i)
 		Out += (i == 0 ? "" : i + 1 == All.size() ? " or " : ", ") + (All[i].empty() ? std::string("none") : All[i]);
+	return Out;
+}
+
+// What a lead of a design_instrument kind does, in words with its kind (fix-r4-recipe: the Caves' why said the lead
+// "breathes in and holds low (kind breath)" over a call for a music box, silent after 0.89 of a beat, and the airship's
+// said "kind bloom lead" over kind lead)
+std::string LeadSoundWords(const std::string &Kind)
+{
+	static const struct { const char *Kind, *Words; } WORDS[] = {
+		{ "breath", "breathes in and holds low" },
+		{ "falling strike", "is struck and falls to a low hold that keeps singing" },
+		{ "music box", "is struck and rings away to silence within about a beat, never holding" },
+		{ "bloom lead", "blooms in and settles" },
+		{ "lead", "speaks at once and settles a little under its peak" },
+		{ "brass", "swells from a thin to a round tone and holds" },
+		{ "keys", "is struck like a piano and fades low" },
+		{ "stepped lead", "holds, then steps down" },
+		{ "pluck", "is plucked and dies away" },
+	};
+	for (size_t i = 0; i < sizeof(WORDS) / sizeof(WORDS[0]); ++i)
+		if (Kind == WORDS[i].Kind)
+			return std::string(WORDS[i].Words) + " (kind " + Kind + ")";
+	return "(kind " + Kind + ")";
+}
+
+std::string LeadWhyOf(const NextKind &K, const std::string &Lead)
+{
+	if (K.LeadWhy == 0)
+		return std::string();
+	std::vector<std::string> Leads = Lead.empty() ? PoolEntries(K.Leads) : std::vector<std::string>(1, Lead);
+	if (Leads.empty())
+		Leads.push_back(K.LeadKind);
+	std::string Words;
+	for (size_t i = 0; i < Leads.size(); ++i)
+		Words += (i == 0 ? "" : i + 1 == Leads.size() ? " or " : ", ") + LeadSoundWords(Leads[i]);
+	std::string Out = K.LeadWhy;
+	const size_t At = Out.find("%s");
+	if (At != std::string::npos)
+		Out.replace(At, 2, Words);
 	return Out;
 }
 
@@ -615,7 +654,7 @@ bool KindWantsMinor(int Kind)
 }
 
 // Eight bars each, ending open (on V, or IV for a calm song), so a repeat, a break or the loop leads back in
-std::string NextProgression(int Kind, bool Minor, bool B)
+std::string NextProgression(int Kind, bool Minor, bool B, bool Dorian)
 {
 	if (Kind == NEXT_CALM) {
 		if (Minor)
@@ -633,8 +672,37 @@ std::string NextProgression(int Kind, bool Minor, bool B)
 	// The later kinds' own, where they have them
 	const NextKind &K = NextKindInfo(Kind);
 	const char *const *pOwn = Minor ? K.ProgMinor : K.ProgMajor;
-	if (Kind > NEXT_COZY && pOwn[B ? 1 : 0] != 0)
-		return pOwn[B ? 1 : 0];
+	if (Kind > NEXT_COZY && pOwn[B ? 1 : 0] != 0) {
+		std::string Own = pOwn[B ? 1 : 0];
+		if (!Minor || !Dorian)
+			return Own;
+		// In a dorian key the chords sound its mode: IV, the major chord of its raised sixth (G B D in D dorian), in place
+		// of the first VII in each half (the Caves' Dm C F C Am never sounded dorian's B: fix-r4-recipe). A minor key keeps
+		// them, since its IV would be outside it
+		std::vector<std::string> Bars;
+		for (size_t At = Own.find('|'); At != std::string::npos; ) {
+			const size_t Next = Own.find('|', At + 1);
+			if (Next == std::string::npos)
+				break;
+			std::string Bar = Own.substr(At + 1, Next - At - 1);
+			while (!Bar.empty() && Bar[0] == ' ')
+				Bar.erase(0, 1);
+			while (!Bar.empty() && Bar.back() == ' ')
+				Bar.erase(Bar.size() - 1);
+			Bars.push_back(Bar);
+			At = Next;
+		}
+		for (size_t Half = 0; Half < 2; ++Half)
+			for (size_t i = Half * Bars.size() / 2; i < (Half + 1) * Bars.size() / 2; ++i)
+				if (Bars[i] == "VII") {
+					Bars[i] = "IV";
+					break;
+				}
+		std::string Out = "|";
+		for (size_t i = 0; i < Bars.size(); ++i)
+			Out += " " + Bars[i] + " |";
+		return Out;
+	}
 	if (Minor)
 		return B ? "| iv | VI | VII | III | iv | VI | VII | V |" : "| i | VI | III | VII | i | VI | iv | V |";
 	return B ? "| IV | V | iii | vi | IV | V | ii | V |" : "| I | V | vi | IV | I | V | IV | V |";
@@ -916,6 +984,11 @@ unsigned int Mixed(unsigned int Value, unsigned int Salt)
 
 }	// namespace
 
+int HookTop(int Kind)
+{
+	return Kind == NEXT_GENERAL || Kind == NEXT_LIVELY || Kind == NEXT_ACTION || Kind == NEXT_COZY || Kind == NEXT_ADVENTURE ? 59 : 0;
+}
+
 int HookFigures(int Pace)
 {
 	size_t Count = 0;
@@ -926,7 +999,7 @@ int HookFigures(int Pace)
 namespace {
 
 std::vector<TuneNote> HookTuneOf(const Key &K, int FirstBar, int BeatsPerBar, int RowsPerBeat, const std::vector<std::vector<int> > &Chord,
-	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars)
+	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars, int Top)
 {
 	RowsPerBeat = std::max(1, RowsPerBeat);
 	// The pools' picks: each its own hash, the variant moving every one of them
@@ -939,7 +1012,11 @@ std::vector<TuneNote> HookTuneOf(const Key &K, int FirstBar, int BeatsPerBar, in
 	static const int STARTS[] = { 0, 2, 4 }, ENDS[] = { 0, 2, 4 };	// the home tonic, its third, its fifth
 	const int StartDegree = STARTS[(Mixed(Pick, 3) + V) % 3], EndDegree = ENDS[(Mixed(Pick, 4) + V * 2) % 3];
 	Bars = Figure.Bars;
-	const int Home = TuneHome(K), Low = Home - 5, High = Home + 12;
+	// (under Top: the home an octave down where its fifth would pass it, so the hook sits in the recipe's register)
+	int Home = TuneHome(K);
+	while (Top > 0 && Home + 7 > Top && Home - 12 >= 36)
+		Home -= 12;
+	const int Low = Home - 5, High = Top > 0 ? std::min(Home + 12, Top) : Home + 12;
 	const int Start = static_cast<int>(DegreesFrom(Home, StartDegree, K) + 0.5);
 	const int Rows = Bars * BeatsPerBar * RowsPerBeat;
 	auto RowOf = [&](const Hit &H) {
@@ -1035,7 +1112,7 @@ std::vector<TuneNote> HookTuneOf(const Key &K, int FirstBar, int BeatsPerBar, in
 }	// namespace
 
 std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int RowsPerBeat, const std::vector<std::vector<int> > &Chord,
-	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars)
+	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars, int Top)
 {
 	Bars = 2;
 	if (Pick == 0 || BeatsPerBar != 4)
@@ -1047,7 +1124,7 @@ std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int 
 	for (unsigned int Try = 0; Try < 8; ++Try) {
 		int Got = 2;
 		const std::vector<TuneNote> Tune = HookTuneOf(K, FirstBar, BeatsPerBar, RowsPerBeat, Chord, Sounding, Pace,
-			Try == 0 ? Pick : std::max(1u, Mixed(Pick, 10 + Try)), Variant, Got);
+			Try == 0 ? Pick : std::max(1u, Mixed(Pick, 10 + Try)), Variant, Got, Top);
 		std::vector<ShapeNote> Notes;
 		for (size_t i = 0; i < Tune.size(); ++i) {
 			const int Start = static_cast<int>(std::floor(((Tune[i].Bar - FirstBar) * BeatsPerBar + Tune[i].Beat - 1.0) * 2 + 0.5));

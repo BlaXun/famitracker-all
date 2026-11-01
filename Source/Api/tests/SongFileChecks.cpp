@@ -169,6 +169,35 @@ int main(int argc, char *argv[])
 #endif
 	}
 	const bool Verbose = argc > 2 && std::string(argv[2]) == "-v";
+	// -balance [style]: each song's balance as the review hears it (style calm unless given), for calibrating the mix's
+	// places: the folder's songs (or one .ftm file given), then keep/ and flag/
+	if (argc > 2 && std::string(argv[2]) == "-balance") {
+		const std::string Style = argc > 3 ? argv[3] : "calm";
+		std::vector<std::string> Files;
+		if (Folder.size() > 4 && Folder.substr(Folder.size() - 4) == ".ftm")
+			Files.push_back(Folder);
+		else {
+			const char *const SUBS[] = { "", "/keep", "/flag" };
+			for (size_t s = 0; s < 3; ++s) {
+				const std::vector<std::string> More = FtmFiles(Folder + SUBS[s]);
+				Files.insert(Files.end(), More.begin(), More.end());
+			}
+		}
+		for (size_t i = 0; i < Files.size(); ++i) {
+			FileSong Song;
+			std::string Error;
+			if (!Song.Load(Files[i], 0, Error))
+				continue;
+			ToolSet Tools(Song);
+			Json Args = Json::MakeObject();
+			Args.Set("style", Style);
+			const std::string Review = Tools.Call("review_arrangement", Args).Text;
+			const size_t At = Review.find("Balance as heard: ");
+			std::printf("%s: %s\n", Files[i].c_str(), At == std::string::npos ? "(no balance)" : Review.substr(At + 18,
+				Review.find('\n', At) - At - 18).c_str());
+		}
+		return 0;
+	}
 	// -tunes: each song's melody measured (TuneShape.h), for calibrating what makes a tune catchy; the folder's songs
 	// themselves, then keep/ and flag/
 	if (argc > 2 && std::string(argv[2]) == "-tunes") {

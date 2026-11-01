@@ -2775,6 +2775,68 @@ waves, the others none) cover it. Not done: birds on a free pulse (a pitched
 part the clash and key checks would hear), and sharing the noise with drums
 (only in bars where they rest).
 
+Kinds that keep to their recipes (from `fix-r4-recipe`): of round 4's songs
+made by following `what_next`, the Caves (mysterious) got a music box where
+its recipe asks for a lead that holds, calm drums in every part where it asks
+for no backbeat, sevenths everywhere (a review tip) where it asks for plain
+chords, chords that never sounded dorian's sixth and "no channel is free for
+an echo"; the Hut (cozy) a reply naming another kind, chords rested before
+the intro and the break were copied from A, a loudness tip without a call
+taken as done, no drums and a motif in octave 5; the airship a refused
+`song_shape` `add`, a why naming another lead, a clash blamed on no note and
+a harmony on the sawtooth in a pulse's sound. Now: the leads' pools hold
+only sounds their recipes name (no music box for a kind whose lead holds),
+and the lead step's why names the lead the call designs (`LeadSoundWords`,
+`LeadWhyOf`: `NextKind::LeadWhy` has a `%s`); a kind whose groove pool
+starts empty (mysterious) gets a light groove in one part alone, the one the
+song turns in (`WhatNext::Parts`; `LaterDrums` and `LaterCoreRecipe` say
+so), and cozy's pool lost its empty entry; `NextKind::StaysPlain`
+(mysterious, atmospheric) keeps the chords plain all through (no
+`WhatNext::Colors`, no review tip for sevenths, the recipe says why); the
+review's colors tip as a step tries the other color and writes neither when
+it leaves more long melody notes rubbing a chord tone (`RubsOfChords`,
+`TryWriteHearing`); `NextProgression`'s `Dorian` puts IV for the first VII
+in each half of a later kind's chords in a dorian key (the recipe asks for
+IV too); `WhatNext::Echo` puts the echo in a part where a channel is free (a
+repeat first, `section`), else says what to do instead (the chords resting
+in a repeat with its `vary_part` call, a chip with more channels, or none).
+`grow_melody`'s reply names the kind passed ("cozy (grown as lively)") and
+says plainly that the variant shown was chosen for the song; `ThroughoutFindings`
+waits until every section has notes, and `ThroughoutRests` keeps the last
+carrying part's chords (A''); "one loudness all the way through" is a step
+before the mix (`TipStep`: the bass out of the intro, else the drums out of
+the break, `write_notes` with no notes) and a note after it; `HookTop` keeps
+the offered hooks under B-4 for the kinds whose recipes ask for octave 3;
+`MakeSongShape`'s `add` of a part the form has already is a no-op with a
+note; a climax grown on the song's own hook takes another `variant` than A's
+seeded one (else it grew A's tune note for note); a cozy intro's bass joins
+for its second half (`Depth`, as the Hut opens); `FixClashes` cuts an accompaniment's note that rang over a bar line
+into a clash where no note can move (`ClashMove::CutAt`); `add_harmony` on
+the sawtooth under a pulse melody takes a sawtooth sound. The cozy mix: Hut
+in a Field (Claude), which a subagent composed freely and the user liked
+far more than every version made step by step, kept its chords 7.1 dB under
+its melody as heard, against calm's 2.5; the kept day songs indoors and in
+town sit 4.6 over (median, 0.6-6.1), their bass about 1 over the tune. So
+`PlacesFor(Calm, Cozy)` has cozy's own places (`COZY_CHORDS` -6, the bass
+level with the tune), used by `mix` (style calm with `kind` cozy, given or
+kept by `what_next`: `CozyKindOf`; `what_next`'s `MixArgs` and
+`finish_song` pass it), the review (tips only over `COZY_MELODY_TOP` 9 or
+under `COZY_MELODY_LEAST` 3) and `measure_mix` (5-7); the other kinds that
+mix calm are slow and soft, and the other daytime kinds mix soft or lively.
+`song_file_checks <folder or .ftm> -balance [style]` prints each song's
+balance as the review hears it, for calibrating places. The recipes ask the
+plan to say how the texture changes from part to part, and the cozy one
+gives that song's planning as an example (intro chords alone, then the bass
+with the lead's pickup; A2 without the chords, a bell answering in the
+lead's rests; B its own dotted rhythm, lighter bass, broken sevenths, the
+lead quieter; the climax's hook opened up over A's top with the second voice
+on the original hook under it, chords back, busier drums, a crash; two
+channels empty). `TestRecipesAgree` walks every kind on four seeded names
+and reads its recipe against the picks (the lead named and, for a kind
+whose melody is long notes, one that holds; the why naming it; drums as the
+recipe says; no colors where plain; dorian's IV); `TestGen4Balance` holds
+the cozy walks to 4.5-7.5 dB and checks the cozy mix on its own.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

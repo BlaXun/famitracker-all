@@ -454,8 +454,9 @@ const Section SECTIONS[] = {
 		"warm.\n"
 		"- Form: a town's (intro 4, A, A', B, A'' its fullest, a short break) or, for a small room, a short loop (intro 2, A, "
 		"A', B: 14 bars). song_shape with about (\"a cozy hut\") picks it.\n"
-		"- Mix and checks in calm's style: polish style calm (no accents), mix style calm (the melody 2-3 dB over the chords, "
-		"soft drums kept as soft as written), review_arrangement and check_song style calm. export_for_game at -20 LUFS, "
+		"- Mix and checks in calm's style: polish style calm (no accents), mix style calm with kind cozy (a cozy "
+		"song's own places: the chords about 6 dB under the tune, where a night song's sit 2-3 under it, the bass about level "
+		"with it, soft drums kept as soft as written), review_arrangement and check_song style calm. export_for_game at -20 LUFS, "
 		"beside the towns and the stages (a night song's -22 is for the quiet scenes)." },
 	{ "mysterious", "Mysterious places (caves, sewers, ruins, forgotten places)",
 		"mysterious mystery cave caves cavern sewer sewers ruin ruins crypt mine hidden secret forgotten underground eerie",
