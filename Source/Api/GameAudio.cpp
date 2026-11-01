@@ -21,6 +21,8 @@
 
 #include "GameAudio.h"
 
+#include "../Transcribe/Transcribe.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -368,6 +370,163 @@ double SoundLoudness(const std::vector<float> &Left, const std::vector<float> &R
 	const double Lufs = MeanSquare > 0.0 ? -0.691 + 10.0 * std::log10(MeanSquare) : -1000.0;
 	return Lufs > Silent ? Lufs : Silent;
 }
+
+double PeakDb(const std::vector<float> &Left, const std::vector<float> &Right)
+{
+	float Peak = 0.0f;
+	for (size_t i = 0; i < Left.size(); ++i)
+		Peak = std::max(Peak, std::fabs(Left[i]));
+	for (size_t i = 0; i < Right.size(); ++i)
+		Peak = std::max(Peak, std::fabs(Right[i]));
+	return Peak > 0.0f ? 20.0 * std::log10(Peak) : -120.0;
+}
+
+double LimitPeaks(std::vector<float> &Left, std::vector<float> &Right, int SampleRate, double CeilingDb)
+{
+	const size_t Size = std::min(Left.size(), Right.size());
+	if (Size == 0 || SampleRate <= 0)
+		return 0.0;
+	const double Ceiling = std::pow(10.0, CeilingDb / 20.0);
+	const size_t Ahead = std::max<size_t>(1, static_cast<size_t>(LIMIT_ATTACK_SECONDS * SampleRate));
+	// Each sample's gain to stay under the ceiling, the least of those ahead within the attack
+	std::vector<double> Need(Size, 1.0);
+	bool Over = false;
+	for (size_t i = 0; i < Size; ++i) {
+		const double Level = std::max(std::fabs(Left[i]), std::fabs(Right[i]));
+		if (Level > Ceiling) {
+			Need[i] = Ceiling / Level;
+			Over = true;
+		}
+	}
+	if (!Over)
+		return 0.0;
+	std::vector<double> Least(Size, 1.0);
+	{
+		// The minimum over [i, i + Ahead], a window sliding back from the end
+		std::vector<size_t> Window;	// indices, their Need rising
+		size_t Head = 0;
+		for (size_t k = Size; k-- > 0; ) {
+			while (Window.size() > Head && Need[Window.back()] >= Need[k])
+				Window.pop_back();
+			Window.push_back(k);
+			while (Window[Head] > k + Ahead)
+				++Head;
+			Least[k] = Need[Window[Head]];
+		}
+	}
+	// Released slowly, then averaged over the attack so the gain ramps down into each peak rather than stepping
+	const double Back = 1.0 - std::exp(-1.0 / (LIMIT_RELEASE_SECONDS * SampleRate));
+	std::vector<double> Gain(Size, 1.0);
+	double Now = 1.0;
+	for (size_t i = 0; i < Size; ++i) {
+		Now = std::min(Least[i], Now + (1.0 - Now) * Back);
+		Gain[i] = Now;
+	}
+	double Sum = 0.0, Most = 1.0;
+	std::vector<double> Smooth(Size, 1.0);
+	for (size_t i = 0; i < Size; ++i) {
+		Sum += Gain[i] - (i >= Ahead ? Gain[i - Ahead] : 1.0);
+		Smooth[i] = std::min(1.0, Sum / static_cast<double>(Ahead) + 1.0);
+	}
+	for (size_t i = 0; i < Size; ++i) {
+		// The average runs from 1 before the start: Sum holds the gains' shortfall from 1 over the window
+		const double g = std::min(Smooth[i], 1.0);
+		Most = std::min(Most, g);
+		Left[i] = static_cast<float>(std::max(-Ceiling, std::min(Ceiling, Left[i] * g)));
+		Right[i] = static_cast<float>(std::max(-Ceiling, std::min(Ceiling, Right[i] * g)));
+	}
+	return -20.0 * std::log10(Most);
+}
+
+namespace {
+
+double WindowDb(const std::vector<float> &Left, const std::vector<float> &Right, size_t From, size_t Count)
+{
+	double Sum = 0.0;
+	size_t n = 0;
+	for (size_t i = From; i < From + Count && i < Left.size() && i < Right.size(); ++i, ++n)
+		Sum += 0.5 * (static_cast<double>(Left[i]) * Left[i] + static_cast<double>(Right[i]) * Right[i]);
+	return n > 0 && Sum > 0.0 ? 10.0 * std::log10(Sum / n) : -120.0;
+}
+
+}	// namespace
+
+SoundHearing HearSoundAudio(const std::vector<float> &Left, const std::vector<float> &Right, int Rate, double Seconds, bool Loops)
+{
+	SoundHearing H;
+	H.Loops = Loops;
+	H.Seconds = Seconds;
+	H.Rate = Rate;
+	if (Rate <= 0 || Left.empty() || Right.size() < Left.size()) {
+		H.Error = "There's nothing to hear.";
+		return H;
+	}
+	H.Rendered = true;
+	const size_t Pass = std::min(Left.size(), static_cast<size_t>(std::floor(Seconds * H.Rate + 0.5)));
+	const size_t Window = std::max<size_t>(1, static_cast<size_t>(SFX_WINDOW_SECONDS * H.Rate));
+	float Peak = 0.0f;
+	for (size_t i = 0; i < Pass; ++i)
+		Peak = std::max(Peak, std::max(std::fabs(Left[i]), std::fabs(Right[i])));
+	H.PeakDb = Peak > 0.0f ? 20.0 * std::log10(Peak) : -120.0;
+	H.Lufs = SoundLoudness(Left, Right, H.Rate, 0, Pass, H.Short);
+	// What sounds: a pitch where it's periodic, else noise by how often it crosses zero
+	transcribe::Audio Mono;
+	Mono.sampleRate = H.Rate;
+	for (size_t i = 0; i < Pass; ++i)
+		Mono.samples.push_back(0.5f * (Left[i] + Right[i]));
+	const std::vector<transcribe::PitchFrame> Pitches = transcribe::TrackPitch(Mono, transcribe::PitchOptions());
+	for (size_t From = 0; From + Window / 2 < Pass; From += Window) {
+		const size_t Count = std::min(Window, Pass - From);
+		const double Db = WindowDb(Left, Right, From, Count);
+		H.Db.push_back(Db);
+		if (Db > SFX_SILENT_DB)
+			H.SoundingSeconds = static_cast<double>(From + Count) / H.Rate;
+		std::string What;
+		if (Db > SFX_SILENT_DB) {
+			const double Mid = (From + Count / 2.0) / H.Rate;
+			const transcribe::PitchFrame *pBest = 0;
+			for (size_t p = 0; p < Pitches.size(); ++p)
+				if (pBest == 0 || std::fabs(Pitches[p].time - Mid) < std::fabs(pBest->time - Mid))
+					pBest = &Pitches[p];
+			if (pBest != 0 && pBest->frequency > 0.0 && pBest->aperiodicity < 0.25) {
+				const int Note = static_cast<int>(std::floor(45.0 + 12.0 * std::log2(pBest->frequency / 440.0) + 0.5));
+				What = PitchName(std::max(0, std::min(95, Note)));
+			}
+			else {
+				int Crossings = 0;
+				for (size_t i = From + 1; i < From + Count; ++i)
+					Crossings += (Mono.samples[i - 1] < 0.0f) != (Mono.samples[i] < 0.0f) ? 1 : 0;
+				const double CrossRate = Crossings / (2.0 * Count / H.Rate);
+				What = CrossRate > 4000.0 ? "noise, bright" : CrossRate > 1200.0 ? "noise" : "noise, dark";
+			}
+		}
+		H.What.push_back(What);
+	}
+	if (!H.Db.empty())
+		H.EndDb = H.Db.back();
+	if (H.Loops && Left.size() >= Pass + Window && Pass >= Window) {
+		H.SeamDb = std::fabs(WindowDb(Left, Right, Pass, Window) - WindowDb(Left, Right, Pass - Window, Window));
+		for (size_t w = 1; w < H.Db.size(); ++w)
+			H.InsideDb = std::max(H.InsideDb, std::fabs(std::max(H.Db[w], -80.0) - std::max(H.Db[w - 1], -80.0)));
+		for (size_t w = 0; w < H.Db.size(); ) {
+			if (H.Db[w] > SFX_GAP_DB) {
+				++w;
+				continue;
+			}
+			size_t e = w;
+			while (e < H.Db.size() && H.Db[e] <= SFX_GAP_DB)
+				++e;
+			const double Length = (e - w) * SFX_WINDOW_SECONDS;
+			if (Length > H.GapSeconds) {
+				H.GapSeconds = Length;
+				H.GapAt = w * SFX_WINDOW_SECONDS;
+			}
+			w = e;
+		}
+	}
+	return H;
+}
+
 
 double LoudnessGain(double Measured, double Target, double Peak, bool &Held)
 {

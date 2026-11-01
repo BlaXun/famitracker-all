@@ -1297,7 +1297,7 @@ before a batch of changes.
 | `name_song` | Sets the module's title, author and copyright (at most 31 characters each) and the selected track's name, which `export_for_game` names its file and GameMaker sound after (direct changes only; not undoable) |
 | `make_version` | Another version of the selected track as a new track: a night version, a tense one for battles, an area's variant. The original stays as it was. A night version's lush chords keep their own sounds, which a pad would lose |
 | `make_jingle` | A jingle as a new track: a short tune that plays once (level up, victory, item, new quest, discovery, rest, defeat, danger), in the song's key note and sounds (the music's, never a sound effect's) |
-| `make_sound_effect` | A sound effect as a new track: a jump, a coin, a menu blip, wind, rain, birds and 28 more kinds, a sound described in words (built from layers), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops, as long as asked (30 seconds of rain or wind). See [Sound effects](#sound-effects) |
+| `make_sound_effect` | A sound effect as a new track (or, with `replace`, in place of an earlier one's): a jump, a coin, a menu blip, wind, rain, birds, waves, footsteps on a surface, a creaking door, a lucky box's reward and 38 more kinds, in a style (realistic or cartoon), a sound described in words (built from layers, each on a pulse of its own and panned if asked), or a recording of your voice ("pew", "boing", "kssh"). Ambience loops, as long as asked (30 seconds of rain or wind). See [Sound effects](#sound-effects) |
 | `select_track` | Switches to another track of the module, by number or name; the tools work on the selected one |
 | `keep_version` | Keeps the selected track as it is now as a track of its own ("Town (version 1)", or named, like "Town (calm bridge)"), and stays on the selected track, so Claude can try something and you can compare or go back |
 | `compare_versions` | Plays the same bars of two versions or more for you, one after the other (by default the newest kept version, then the track as it is now), and shows the track worked on again afterwards |
@@ -3039,13 +3039,43 @@ shimmering duty), not a famous game's coin.
 | select, confirm, cancel, error, text | menus, OK, back, something that can't be done, dialogue letters |
 | message, heal | chat messages and notifications, healing |
 | wind, rain, fire | ambience: a heavy wind blowing in gusts, rain pattering, a fire crackling (these loop) |
-| thunder, birds, wings | a crack of thunder rolling away, two birds chirping, a bird flying off ("bird flying away") |
+| thunder, birds, chirp, wings | a crack of thunder rolling away, birds chirping (`count`: 1-4 birds; loop for birdsong), one bird's single chirp, a bird flying off ("bird flying away") |
 | engine, alarm, heartbeat | an engine idling, a siren, a heartbeat for low health (these loop) |
+| gust, howl | one gust of wind swelling in and falling away (plays once; wind loops), a howling wind with a low moan wandering over the rush (loops; also "wind in a cave") |
+| waves, lapping | waves on a shore drawing in, breaking and washing back, never quite silent; small waves lapping at a dock or a lake's edge (these loop) |
+| creak, chain | a door creaking open (a door knock is door), a lantern swinging on a squeaking chain (loops) |
+| owl, drip, bubbles | an owl's soft hoots, a water drop's plip with a faint cave echo (loop: dripping, `count` drops in four seconds), bubbles rising underwater (`count`; loop for underwater ambience) |
+| splash, emerge | jumping into water, coming out of it (a rush, water streaming off, a few drops) |
+| cave, outfit, reward | entering a cave (a low swell, a deep moan, a drop echoing far off), changing an outfit (a cloth swish and a sparkle), "you got something awesome" for a lucky box or an item get (a run up landing on a high note that rings, with a harmony and a low drop) |
+
+The kinds for nature and places were made in the style and at the level of
+the others, which the user preferred to more elaborate designs from the
+layers; the reward is the designed item get the user chose. `footstep`
+takes a `surface`: dirt (its own soft tap), wood (a hollow tok on the
+triangle under a click), grass (a soft, high brush), stone (a short bright
+click), snow and sand (soft crunches), water (a splashy step), metal (a
+clank on the noise's metallic mode), and a `count` of steps. `kind` takes a
+few words too: "footsteps on grass", "a squeaking chain with a lantern",
+"jumping out of water", "realistic wind" (the longest run of words naming a
+kind, then a surface and a style among the others; the reply says how it
+read them).
+
+`style` realistic (or grounded) makes a sound less cartoonish: pitch sweeps
+of more than half an octave narrowed by half, attacks of sounds four ticks
+or longer softened over two ticks; cartoon widens the sweeps half again.
 
 Every kind has variants (variant 2, 3, ... are a little higher or lower,
-shorter or longer, some with another duty), and Claude can move a sound by
-semitones, stretch it, or make it softer. A sound that plays once lasts at
-most 4.2 seconds; a loop as long as you ask (below).
+shorter or longer, those with a pulse every other one with another duty),
+and Claude can move a sound by semitones, stretch it, or make it softer. A
+sound that plays once lasts at most 12 seconds (past 4.2, an instrument's
+most, its layers play as pieces, as a loop's do); a loop as long as you ask
+(below). A jingle that rewards doesn't need that long: the reward is 1 s.
+
+**Trying again in place.** `replace` with a sound effect's track (its name
+or number) writes the new sound into that track instead of adding one, and
+removes the old sound's instruments that no other track or clip plays, so
+retries don't fill the module's 64 instruments (the reply says how many are
+used). FamiTracker can't undo the instruments' removal.
 
 **Ambience loops** instead of halting: its track ends with a jump back to
 its start (`B00`), and what reaches its end (a gust, a flutter) goes on into
@@ -3075,13 +3105,26 @@ the textures of nature: gusts, a flutter, crackle, drops. Layers that don't
 sound at once share a channel. The reply lists the layers in words, so you
 can ask for one to change ("the flaps slower", "the chirp higher"), and a
 variant of a described sound also draws its gusts, crackle and drops anew.
+A layer's `channel` can be `pulse 1` or `pulse 2` (two birds on their own
+pulses), and its `pan` (-1 left to 1 right, or left, slightly right...)
+places it between the speakers (`8xx` on its notes); layers at different
+pans don't share a channel. `steady` ends with a short fade over its last two
+ticks (to 70% and 40%), which keeps notes apart; `held` holds without it, for
+layers that run on into each other. `vibrato_hz` goes down to 0.1, for a
+slow sway or a howl's moan. Crackle's pops follow the layer's loudness (a
+fading wash pops softer) and stay at noise pitches a speaker plays: the
+2A03's brightest noise carries most of its power above 20 kHz, which the
+export filters out, so pops at pitch 13 came out no louder than the hiss
+under them. The triangle has no volume: a layer of it is described without
+one, and the reply warns when it holds longer than 0.15 s beside a quieter
+pulse, which it covers and stops abruptly under.
 
 Claude can also turn **a recording of your voice** into a sound effect: give
 it the path of a WAV file ("C:\Users\Me\Documents\pew.wav"). Where your
 voice has a pitch, a pulse follows it, sliding between notes, moved by whole
 octaves so it sits where NES sound effects do; the breathy and hissy rest
 plays on the noise channel, brighter for "sss" than for a breath. Silence
-before and after is left out, and a sound can last up to 4.2 seconds.
+before and after is left out, and a recording can last up to 4.2 seconds.
 FamiTracker can do this without Claude, too: Edit > Sound effect from your
 voice records the sound, plays it as the NES would and adds it with this
 same tool (see `RECORDER.md`). Its takes stay in the `Recordings` folder
@@ -3096,11 +3139,28 @@ music file stays clean; Claude works on whichever module is open.
 ms, which a sound shorter than that doesn't fill (a menu blip, a pickup, a
 whoosh), so `export_for_game` with `loudness` measures such a sound over its
 whole length instead, without the gating, and brings it to the loudness
-asked like any other; the reply says when it measured one that way.
-`measure_mix` on a sound effect measures it whole the same way, with each of
-its channels alone, and `review_arrangement` gives a sound effect a short
-check of its own (its layers, whether the halt cuts it while it sounds,
-notes that click) instead of a score.
+asked like any other; the reply says when it measured one that way. A sound
+effect whose sharp start would keep it under the loudness asked (a step on
+grass came out 16 dB under one on wood) has its peaks held down by a
+limiter (up to 12 dB, a 1.5 ms look-ahead and a 50 ms release) instead;
+normalized, a sound effect is raised by up to 30 dB (music 12). Every file
+is decoded after encoding, and where Vorbis's overshoot on square waves and
+noise takes its peak over -1 dBFS (the sounds came out at +0.4 to +2.2
+dBFS), it's turned down by as much and encoded again, so the file's peak is
+what the reply says.
+
+`listen`, `check_loop` and `review_arrangement` on a sound effect judge it
+as a sound, not as music (no melody, key, chords or held notes; a bird isn't
+harsh against a soundtrack): its length to its halt and to silence, its
+loudest peak and loudness as FamiTracker plays it (with the levels a game
+wants: footsteps and menu sounds about -24 LUFS, pickups and rewards -18,
+ambience -24 to -28), what sounds every 50 ms (a pitch, or noise, bright or
+dark), a sound its halt cuts while it sounds, notes that click, and for a
+loop its seam (the level's jump where its end goes back to its start, heard
+when it's 6 dB over its largest jump inside) and its gaps (silence of 0.2 s
+or more). `measure_mix` on a sound effect measures it whole the same way,
+with each of its channels alone, and `review_arrangement` gives it a short
+check of its own instead of a score.
 
 ## Music for your game: looping OGG files
 

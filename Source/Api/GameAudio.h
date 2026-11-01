@@ -109,6 +109,48 @@ double SpansLoudness(const std::vector<float> &Left, const std::vector<float> &R
 // gate), over its whole length, ungated: its K-weighted mean square, both
 // sides added, so a loudness given to the export applies to it too. Short
 // says which. -70 or less when it's (nearly) silent.
+// A peak limiter for sound effects (export_for_game, brought to a loudness its peaks would pass): the two sides turned down
+// together wherever a sample would go over CeilingDb (dBFS), the gain falling over LIMIT_ATTACK_SECONDS before the peak
+// (looking ahead) and coming back over LIMIT_RELEASE_SECONDS, so a hit's sharp start is held without a click. The most it
+// turned them down, dB (0 when nothing went over)
+const double LIMIT_ATTACK_SECONDS = 0.0015, LIMIT_RELEASE_SECONDS = 0.05;
+double LimitPeaks(std::vector<float> &Left, std::vector<float> &Right, int SampleRate, double CeilingDb);
+// The loudest sample of either side, dBFS (-120 for silence)
+double PeakDb(const std::vector<float> &Left, const std::vector<float> &Right);
+
+// A sound effect heard as a sound rather than music (listen, check_loop and review_arrangement on a sound effect's track),
+// from FamiTracker's render of its first time through (a loop twice, for its seam): its level every 50 ms with what
+// sounds (a pitch, or noise, bright or dark), its length to silence, its loudest peak and loudness, a one-shot cut while it
+// sounds, a loop's seam (the level's jump where its end goes back to its start, against its largest jump inside) and its
+// silent gaps. Measured on make_sound_effect's waves made from layers: the seam jumped 31 dB against 14 dB inside; the
+// tool's own loops jump under 6 dB there
+const double SFX_WINDOW_SECONDS = 0.05;
+const double SFX_SILENT_DB = -60.0;		// a window this quiet is silence
+const double SFX_GAP_DB = -50.0;		// a loop's window this quiet is a gap in it (ambience shouldn't drop out)
+const double SFX_SEAM_SLACK_DB = 6.0;	// a seam's jump this far over the largest jump inside, and at least this, is heard
+
+struct SoundHearing {
+	bool Rendered;
+	bool Loops;
+	int Rate;
+	double Seconds;			// the first time through
+	double SoundingSeconds;	// to the last window that sounds
+	double PeakDb, Lufs;
+	bool Short;				// shorter than a loudness block, measured whole
+	std::vector<double> Db;	// each window's level over the first time through, dBFS
+	std::vector<std::string> What;	// what sounds in each window: "A-5", "noise, bright", ""
+	double SeamDb, InsideDb;	// a loop's jump at its seam, and its largest inside
+	double GapSeconds;		// a loop's longest gap
+	double GapAt;
+	double EndDb;			// its last window
+	std::string Error;
+	SoundHearing() : Rendered(false), Loops(false), Rate(0), Seconds(0.0), SoundingSeconds(0.0), PeakDb(-120.0), Lufs(-70.0),
+		Short(false), SeamDb(0.0), InsideDb(0.0), GapSeconds(0.0), GapAt(0.0), EndDb(-120.0) {}
+};
+
+SoundHearing HearSoundAudio(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, double Seconds,
+	bool Loops);
+
 double SoundLoudness(const std::vector<float> &Left, const std::vector<float> &Right, int SampleRate, size_t First, size_t Count,
 	bool &Short);
 
