@@ -131,6 +131,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "restrike_beats", "Strike held notes again every so many beats (0: never)." },
 			{ "echo", "A soft echo after each note." },
 			{ "click", "A duty click on each note's first frame." },
+			{ "vibrato_at", "The note it mostly plays, like \"C#5\": fits the vibrato there." },
 			{ "volume", "Its loudest, 1-15." },
 			{ "duty", "Pulse width: 12.5%, 25%, 50%, 75% (VRC6: steps of 6.25% to 50%)." },
 			{ "duty_motion", "" },
