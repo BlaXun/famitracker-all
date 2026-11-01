@@ -20498,6 +20498,19 @@ void CheckMelodyContrast(const FakeSong &Song, const std::vector<std::string> &M
 		if (Part.Name == "Climax") {
 			SectionMelody(Song, Melody, Part, Opening, Top);
 			Check(Top > ATop, (What + ": the climax's top " + std::to_string(Top) + " over A's " + std::to_string(ATop)).c_str(), Line);
+			// ...and over the whole tune before it, a step to a fifth (fix-r6-judges: the Airship's grown climaxes all peaked a
+			// sixth over A, and its offered hook stayed under A's top)
+			int Over = -1;
+			for (const Section &Before : Song.Info.Sections) {
+				if (Before.First >= Part.First || Before.Name == "Intro" || Before.Name == "Break" || Before.Name == "Outro")
+					continue;
+				std::vector<std::pair<int, int> > Unused;
+				int Its = -1;
+				SectionMelody(Song, Melody, Before, Unused, Its);
+				Over = std::max(Over, Its);
+			}
+			Check(Top > Over && Top <= Over + 7, (What + ": the climax's top " + std::to_string(Top) + " a step to a fifth over the tune "
+				"before it, " + std::to_string(Over)).c_str(), Line);
 		}
 	}
 }
@@ -28989,6 +29002,43 @@ void TestMelodyVeryHigh()
 // Ends Shop (cozy) got "Flat dynamics sound typed", a walking bass and "The melody has no company" from a review called right
 // after what_next said done, though a cozy song is polished as calm (no accents) over a bass that holds, and a small shape
 // has no part for a second line. The kind given, else the one what_next was last given for the track
+// The Caves (fix-r6-judges): the lead what_next designed rests in A' while the broken chords play on there, and every check
+// without melody_channel took the chords for the melody ("The melody hardly pauses", a syncopate fix on the chord channel).
+// The lead's instrument (a kind's lead name) and the lead what_next keeps for the track come first
+void TestLeadOverActivity()
+{
+	FakeSong Song(4);
+	Song.AddInstrumentInfo(10, "Mystery lead", "2A03", true);
+	Song.AddInstrumentInfo(11, "Pluck", "2A03", false);
+	const char *const TUNE[] = { "D-3", "F-3", "A-3", "G-3", "E-3", "F-3", "D-3", "C-3" };
+	const char *const BROKEN[] = { "D-4", "F-4", "A-4", "F-4" };
+	for (int Bar = 0; Bar < 16; ++Bar) {
+		const int Row = Bar * 16;
+		Song.Put(2, Row, Bar % 2 == 0 ? "D-3" : "A-2", 1);
+		if (Bar < 8) {
+			Song.Put(0, Row, TUNE[Bar], 10, 12);
+			Song.Put(0, Row + 8, TUNE[(Bar + 3) % 8], 10, 12);
+			Song.End(0, Row + 14);
+		}
+		else
+			for (int k = 0; k < 8; ++k)
+				Song.Put(1, Row + 2 * k, BROKEN[k % 4], 11, 12);
+	}
+	Song.Info.Sections.push_back(Section("A", 0, 1));
+	Song.Info.Sections.push_back(Section("A'", 2, 3));
+	CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "Parts: melody on 2A03 Pulse 1");
+	CHECK_HAS(Run(Song, "check_song", "{\"format\": \"json\"}").Text, "\"findings\"");
+	CHECK_LACKS(Run(Song, "check_song", "{}").Text, "2A03 Pulse 2\",\"variation\"");	// no fix for the melody on the chords
+	// Without the kind's name on it, the lead what_next keeps for the track
+	for (InstrumentInfo &I : Song.Info.Instruments)
+		if (I.Index == 10)
+			I.Name = "My tune";
+	CHECK(!Run(Song, "what_next", "{\"kind\": \"mysterious\", \"melody_channel\": \"2A03 Pulse 1\"}").IsError);
+	CHECK_EQ(Song.KeptLead(Song.Info.Track), 0);
+	CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "Parts: melody on 2A03 Pulse 1");
+	CHECK_HAS(Run(Song, "check_song", "{}").Text, "Judged as a mysterious song");
+}
+
 void TestKindJudged()
 {
 	FakeSong Song;
@@ -31593,6 +31643,7 @@ int main()
 	TestFinishStepsKept();
 	TestMelodyVeryHigh();
 	TestKindJudged();
+	TestLeadOverActivity();
 	TestVibratoAcrossRegister();
 	TestReviewKeepsItsStyle();
 	TestMinorLeadingTone();

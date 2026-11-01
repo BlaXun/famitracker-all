@@ -80,9 +80,12 @@ struct ListenPart {
 	bool Melody;				// it carries the tune
 	bool Ambience;				// a layer of the place's sounds under the music (add_ambience: waves, rain): its swells start
 								// quiet and its sound holds by design, and it covers nothing, so none of that is a finding
+	int Pin;					// 2: the 2A03's second pin, which the triangle, the noise and the DPCM share; their renders
+								// alone come off it, so another's levels bleed into each (the samples' walk under the
+								// Airship's bass); 0 for none
 	std::vector<float> Samples;	// its render alone, both sides averaged
 	std::vector<ListenNote> Notes;	// in the order they play
-	ListenPart() : Channel(0), Pitched(true), Smooth(false), Rings(false), Restarts(false), Melody(false), Ambience(false) {}
+	ListenPart() : Channel(0), Pitched(true), Smooth(false), Rings(false), Restarts(false), Melody(false), Ambience(false), Pin(0) {}
 };
 
 struct ListenSong {

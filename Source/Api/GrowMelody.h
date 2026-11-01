@@ -78,8 +78,10 @@ struct GrowRequest {
 	int SpanOffset;					// 1 when the first bar is the second of a two-bar span (review_arrangement's), else 0
 	int Kind;						// grow_kind
 	int Variant;					// from 1: each gives other versions
+	int Over;						// a climax's: the highest note of the tune before it (as written), which its high points
+									// climb a step or a few over, each version to its own; -1 for bars that aren't a climax
 	GrowRequest() : Bars(8), StepsPerBar(8), StepsPerBeat(2), RowsPerStep(2), FirstBar(1), RubRows(2), Low(24), High(84),
-		SpanOffset(0), Kind(GROW_LIVELY), Variant(1) {}
+		SpanOffset(0), Kind(GROW_LIVELY), Variant(1), Over(-1) {}
 };
 
 struct GrownVersion {

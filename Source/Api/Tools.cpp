@@ -2006,8 +2006,59 @@ std::vector<int> PadVoicesIn(Session &S, int First, int End)
 	return Out;
 }
 
+// The lead what_next made (fix-r6-judges): the channel it keeps for the track (SongHost::KeepLead) where it plays in [First,
+// End), else the channel that plays most notes there on an instrument named as a kind's lead ("Mystery lead", "Sky lead": the
+// kept kind's first, design_instrument's names for what_next's leads); -1 for none. The Caves rested their lead in A' and
+// played broken chords there, which the guess then took for the melody in every check
+int DesignedLeadIn(Session &S, int First, int End)
+{
+	const int Kept = S.Host().KeptLead(S.Song.Track);
+	if (Kept >= 0 && Kept < S.ChannelCount() && IsMelodic(S.Channel(Kept)) && !IsBass(S.Channel(Kept))) {
+		std::vector<NoteInfo> Held;
+		if (!NotesIn(PitchedNotes(S, Kept, Held), First, End).empty())
+			return Kept;
+	}
+	std::vector<std::string> Names;
+	int KeptKind = -1;
+	if (ParseNextKind(S.Host().KeptKind(S.Song.Track), KeptKind))
+		Names.push_back(Lowercase(NextKindInfo(KeptKind).LeadName));
+	for (int k = 0; k < NEXT_KIND_COUNT; ++k) {
+		const std::string Name = Lowercase(NextKindInfo(k).LeadName);
+		if (std::find(Names.begin(), Names.end(), Name) == Names.end())
+			Names.push_back(Name);
+	}
+	for (size_t n = 0; n < Names.size(); ++n) {
+		// (an echo on the lead's own sound isn't the lead, and of two lines on it the higher is: a harmony sits under it)
+		int Best = -1, BestCount = 0, BestMiddle = 0;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (!IsMelodic(S.Channel(c)) || IsBass(S.Channel(c)))
+				continue;
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+			int Count = 0;
+			for (const NoteInfo &N : Notes) {
+				const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+				Count += pInfo != 0 && Lowercase(pInfo->Name) == Names[n] && N.Volume > 0 ? 1 : 0;
+			}
+			if (Count == 0 || EchoesAnother(S, c, Notes, First, End))
+				continue;
+			const int Middle = MiddleOf(Notes, 48) - Written(S.Channel(c), 0);
+			if (Count * 2 > BestCount * 3 || (Count * 3 >= BestCount * 2 && Middle > BestMiddle)) {
+				Best = c;
+				BestCount = std::max(Count, BestCount);
+				BestMiddle = Middle;
+			}
+		}
+		if (Best >= 0)
+			return Best;
+	}
+	return -1;
+}
+
 int GuessMelodyChannel(Session &S, int First, int End)
 {
+	const int Lead = DesignedLeadIn(S, First, End);
+	if (Lead >= 0)
+		return Lead;
 	const std::vector<int> Pads = PadVoicesIn(S, First, End);
 	for (int Pass = 0; Pass < 3; ++Pass) {
 		std::vector<int> Channels, Counts, Middles, Loudness;
@@ -12499,6 +12550,37 @@ std::string ListText(const std::vector<std::string> &Items)
 // monotone finding looks for in a dry run
 const char *const MONOTONE_WORD = "It doesn't catch:";
 
+std::string SectionBase(const std::string &Name);
+bool IsFreeSectionBase(const std::string &Base);
+
+// For bars from FirstBar in a section named as the song's high point (IsClimaxName): the highest note (as written) Channel
+// plays before that section, in the song's other sections (an intro, a break or an outro aside) or, without sections, in
+// the bars before it; -1 for bars that aren't a climax or a channel with nothing before. The Airship's grown climaxes all
+// peaked at B-5, a sixth over A's D-5, and write_notes then warned the climax sat high (fix-r6-judges)
+int ClimaxOver(Session &S, int Channel, int FirstBar)
+{
+	const SectionList &List = S.Song.Sections;
+	int Climax = -1;
+	for (size_t i = 0; i < List.size() && Climax < 0; ++i)
+		if (IsClimaxName(List[i].Name) && SectionFirstBar(S, List[i]) <= FirstBar && FirstBar <= SectionLastBar(S, List[i]))
+			Climax = static_cast<int>(i);
+	if (Climax < 0 || Channel < 0)
+		return -1;
+	const int Start = S.Time.BarStart(SectionFirstBar(S, List[static_cast<size_t>(Climax)]));
+	int Over = -1;
+	for (const NoteInfo &N : S.Notes(Channel)) {
+		if (N.Row >= Start || N.Volume <= 0)
+			continue;
+		bool Free = false;
+		for (size_t i = 0; i < List.size() && !Free; ++i)
+			Free = IsFreeSectionBase(SectionBase(List[i].Name)) && N.Row >= S.Time.BarStart(SectionFirstBar(S, List[i])) &&
+				N.Row < S.Time.BarEnd(SectionLastBar(S, List[i]));
+		if (!Free)
+			Over = std::max(Over, LandedPitch(N));
+	}
+	return Over;
+}
+
 std::string GrowMelodyTool(Session &S, const Json &Args)
 {
 	const int Sixteenths = StepArg(Args);
@@ -12674,6 +12756,7 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 	Q.K = K;
 	Q.Low = Low;
 	Q.High = High;
+	Q.Over = ClimaxOver(S, Channel, From);
 	for (size_t i = 0; i < S.Song.Sections.size(); ++i) {
 		const int Bar = SectionFirstBar(S, S.Song.Sections[i]);
 		if (Bar > From && Bar <= To)
@@ -24712,6 +24795,9 @@ const int GUARD_LOWEST = 4;				// E-0 as a pulse plays it, 41 Hz: a bass is hear
 // A melody whose middle sits at C-5 (as a pulse plays it) and that reaches G-5 is an octave over its own (the soundtrack's
 // leads sit in octaves 3-4 and peak at A-4 to E-5, a B part around C-5)
 const int GUARD_LEAD_MIDDLE = 60, GUARD_LEAD_TOP = 67;
+// A climax may sit a fourth higher than that: its middle at F-5 and its top at C-6 is high even there (the soundtrack's
+// climaxes climb a step to a fourth over their A, and its leads reach C#6 to F-6 at their highest; MELODY_HIGHEST)
+const int CLIMAX_LEAD_MIDDLE = GUARD_LEAD_MIDDLE + 5, CLIMAX_LEAD_TOP = GUARD_LEAD_TOP + 5;
 const double GUARD_SILENT_SHARE = 0.12;	// heard for less of its bars than this, a part leaves its channel nearly silent
 const int GUARD_LISTED = 4;				// notes a warning names
 
@@ -24854,12 +24940,24 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 		const SoundShape Shape = ShapeOf(FindInstrument(S.Song, Main));
 		const bool Holds = !Shape.Known || Shape.Hold * 10 >= Shape.Peak * 4;
 		const int Middle = MiddleOf(Part, 0) - Offset;
-		if (Chords * 3 < static_cast<int>(Part.size()) && Holds && Volumes[Volumes.size() / 2] >= 6 && Middle >= GUARD_LEAD_MIDDLE &&
-			Top - Offset >= GUARD_LEAD_TOP)
+		// A climax climbs over the tune before it (Over, as written), as the soundtrack's do (Autumn Woods: B-5 over a middle
+		// of A-4; its leads up to F-6): there only a line that sits higher still is asked about, and never with a fix that
+		// takes it under the tune before it (the Airship's climax at D-5 to B-5 was told to go an octave down, under A's D-5:
+		// fix-r6-judges)
+		const int Over = ClimaxOver(S, Channel, FromBar);
+		const bool High = Over >= 0 ? (Middle >= CLIMAX_LEAD_MIDDLE && Top - Offset >= CLIMAX_LEAD_TOP) || Top - Offset > MELODY_HIGHEST :
+			Middle >= GUARD_LEAD_MIDDLE && Top - Offset >= GUARD_LEAD_TOP;
+		if (Chords * 3 < static_cast<int>(Part.size()) && Holds && Volumes[Volumes.size() / 2] >= 6 && High && Over < 0)
 			Out.push_back(Format("%s sits high for a melody: mostly in octave %d (its notes around %s, up to %s%s), where a melody sings "
 				"in octave 3, reaching into octave 4 at its high points (C-3 is middle C, A-3 440 Hz). Bells, sparkles and a descant "
 				"sit up there; a melody, an octave lower.", Name.c_str(), Middle / 12, PitchName(Middle + Offset).c_str(),
 				PitchName(Top).c_str(), Offset > 0 ? ", which sound lower" : "") + OctaveFix(-12));
+		else if (Chords * 3 < static_cast<int>(Part.size()) && Holds && Volumes[Volumes.size() / 2] >= 6 && High)
+			Out.push_back(Format("%s sits high even for a climax: mostly in octave %d (its notes around %s, up to %s%s), where the "
+				"soundtrack's climaxes climb a step to a fourth over the tune before them (its highest here %s) and turn back. ",
+				Name.c_str(), Middle / 12, PitchName(Middle + Offset).c_str(), PitchName(Top).c_str(), Offset > 0 ? ", which sound lower" :
+				"", PitchName(Over).c_str()) + (Top - 12 > Over ? std::string("An octave lower it still climbs over it.") + OctaveFix(-12) :
+				std::string("Bring its high notes down a step or a few, keeping them over that (an octave lower would sit under it).")));
 	}
 
 	// Outside the track's key: the key chosen for it, or found from the song's notes with the part in them (a song's first
@@ -27381,6 +27479,8 @@ ListenReport ListenToTrack(Session &S, const Json &Args)
 		Part.Restarts = (S.Channel(c).Chip == "2A03" || S.Channel(c).Chip == "MMC5") && S.Channel(c).Kind == KIND_PULSE;
 		Part.Melody = c == R.Melody;
 		Part.Ambience = PlaysAmbience(S, c, First, End);
+		Part.Pin = S.Channel(c).Chip == "2A03" && (S.Channel(c).Kind == KIND_TRIANGLE || S.Channel(c).Kind == KIND_NOISE ||
+			S.Channel(c).Kind == KIND_DPCM) ? 2 : 0;
 		Part.Samples.resize(Left.size());
 		for (size_t n = 0; n < Left.size(); ++n)
 			Part.Samples[n] = 0.5f * (Left[n] + (n < Right.size() ? Right[n] : Left[n]));
@@ -31206,6 +31306,9 @@ public:
 	// The kind for the host to keep for this track (SongHost::KeepKind): one asked for, or one the words or the track's name
 	// chose; -1 for the general recipe taken by default (a kind kept before stays)
 	int KindToKeep() const { return m_KindAsked || m_KindId != NEXT_GENERAL ? m_KindId : -1; }
+	// The lead's channel for the host to keep with the kind (SongHost::KeepLead): the one given, the one the lead what_next
+	// designed plays on or was made for; -1 when the melody was only guessed
+	int LeadToKeep() const { return m_LeadKnown ? m_Melody : -1; }
 
 private:
 	Session &S;
@@ -31230,6 +31333,7 @@ private:
 
 	// The song, read once
 	int m_Melody;				// the melody's channel: where it plays, or where it goes (-1 when the song has no channel for one)
+	bool m_LeadKnown;			// it was given, or it's the designed lead's (not a guess)
 	bool m_HasMelody;			// it has notes
 	bool m_HasNotes;			// any channel has
 	NextParts m_Parts;			// what plays beside the melody, over the whole song
@@ -31352,7 +31456,7 @@ private:
 
 WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(Song), m_Core(Core),
 	m_All(BoolArg(Args, "all", false)), m_Client(Client),
-	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
+	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_LeadKnown(false), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
 	m_Finishing(false), m_Music(true), m_Use(TRACK_MUSIC), m_LikeTempo(false), m_LikeKey(false), m_LikeChords(false),
 	m_LikeBass(false), m_LikeGroove(false)
 {
@@ -31469,6 +31573,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		m_Melody = ChannelArg(S, Args, "melody_channel");
 		if (!IsMelodic(S.Channel(m_Melody)))
 			throw Problem("melody_channel: the melody plays on a melodic channel, not the drums or samples.");
+		m_LeadKnown = true;
 	}
 	else {
 		for (int c = 0; c < S.ChannelCount() && m_Melody < 0; ++c) {
@@ -31482,6 +31587,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		// guess took the top voice of the pads for the melody, and the lead's channel stayed empty: Night Harbor)
 		if (m_Melody < 0)
 			m_Melody = DesignedLeadChannel();
+		m_LeadKnown = m_Melody >= 0;
 		if (m_Melody < 0) {
 			m_Melody = GuessMelodyChannel(S, 0, Total);
 			if (m_Melody >= 0) {
@@ -32355,7 +32461,10 @@ std::vector<std::string> WhatNext::ClimbingHooks(int FirstBar, int Variant, int 
 	const ChannelInfo &Info = S.Channel(m_Melody);
 	int Low = 0, High = PITCHES - 1;
 	MelodyRange(S, m_Melody, Low, High);
-	High = std::min(High, Written(Info, GUARD_LEAD_TOP));
+	// (up to a fourth over the tune before it, where the soundtrack's climaxes peak, though that passes where a melody
+	// usually peaks: the Airship's A and B reached E-5, a whole step over that left only F#5 and G-5, which no hook's move
+	// landed on, and the climax was offered a hook under A's top: fix-r6-judges)
+	High = std::min(High, std::max(Written(Info, GUARD_LEAD_TOP), Over + 5));
 	const int Eighth = EighthRows();
 	std::vector<std::vector<int> > Chord, Sounding;
 	Surroundings(S.Time.BarStart(FirstBar), S.Time.BarEnd(FirstBar + 1), Chord, Sounding);
@@ -35253,6 +35362,9 @@ std::string WhatNextTool(Session &S, const Json &Args, bool Core, bool Client)
 	// and the Odds and Ends Shop, cozy, got tips against the kind's choices from a review called after what_next said done)
 	if (Plan.KindToKeep() >= 0)
 		S.Host().KeepKind(S.Song.Track, NextKindInfo(Plan.KindToKeep()).Name);
+	// ...and take the tune where what_next has it (fix-r6-judges)
+	if (Plan.LeadToKeep() >= 0)
+		S.Host().KeepLead(S.Song.Track, Plan.LeadToKeep());
 	return Form == "json" ? Plan.JsonReply() : Plan.Reply();
 }
 

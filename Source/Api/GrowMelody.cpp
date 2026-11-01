@@ -340,7 +340,8 @@ const double SHAPE_KEPT = 2.5;
 
 class Grower {
 public:
-	Grower(const GrowRequest &Q, int Form, uint32_t Seed) : m_Q(Q), m_Form(Form), m_Seed(Seed), m_R(Seed), m_Ladder(Q.K),
+	Grower(const GrowRequest &Q, int Form, uint32_t Seed, int Version = 0) : m_Q(Q), m_Form(Form), m_Version(Version), m_Seed(Seed),
+		m_R(Seed), m_Ladder(Q.K),
 		m_SPB(Q.StepsPerBar), m_SPBeat(Q.StepsPerBeat), m_Beats(Q.StepsPerBar / std::max(1, Q.StepsPerBeat)), m_Calm(Q.Kind == GROW_CALM)
 	{
 		m_MotifMin = 1000;
@@ -387,6 +388,7 @@ public:
 private:
 	const GrowRequest &m_Q;
 	int m_Form;
+	int m_Version;		// which of the versions (from 0): a climax's each climbs to its own high point
 	uint32_t m_Seed;
 	GrowRandom m_R;
 	ScaleLadder m_Ladder;
@@ -754,6 +756,22 @@ private:
 			const std::vector<const Chord *> Chords = StrongChords(At, Length);
 			int Best = -1;
 			double BestCost = NEVER;
+			// A climax's high point: a step or a few over the tune before it (Over), each version its own (the soundtrack's
+			// climaxes reach a step to a fourth over their A), never under it nor more than a fifth over
+			if (m_Q.Over >= 0) {
+				static const int OVER[3] = { 2, 4, 5 };
+				const int Aim = m_Q.Over + OVER[static_cast<size_t>(m_Version) % 3];
+				for (int Pass = 0; Pass < 2 && Best < 0; ++Pass)
+					for (int p = std::max(m_MotifMax, m_Q.Over) + 1; p <= std::min(m_Q.High, m_Q.Over + 7); ++p) {
+						if (!Allowed(p, At, Length) || (Pass == 0 && !FitsChords(p, Chords)) || Rubs(p, At, Length))
+							continue;
+						const double Cost = std::abs(p - Aim) + 0.3 * (Mix(m_Seed, static_cast<uint32_t>(p)) % 1000) / 1000.0;
+						if (Cost < BestCost) {
+							BestCost = Cost;
+							Best = p;
+						}
+					}
+			}
 			for (int Pass = 0; Pass < 2 && Best < 0; ++Pass)
 				for (int p = m_MotifMax + 1; p <= std::min(m_Q.High, m_MotifMax + 12); ++p) {
 					if (!Allowed(p, At, Length) || (Pass == 0 && !FitsChords(p, Chords)) || Rubs(p, At, Length))
@@ -1631,7 +1649,7 @@ bool GrowMelody(const GrowRequest &Q, std::vector<GrownVersion> &Out, std::strin
 		bool Have = false;
 		for (int Try = 0; Try < 6; ++Try) {
 			const uint32_t Seed = Mix(Mix(Hash, static_cast<uint32_t>(Variant) * 7919u + static_cast<uint32_t>(v)), static_cast<uint32_t>(Try));
-			Grower G(Q, Form, Seed);
+			Grower G(Q, Form, Seed, v);
 			GrownVersion V;
 			G.Grow(V);
 			bool Same = false;
