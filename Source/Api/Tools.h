@@ -152,6 +152,9 @@ public:
 	// For calibrating what makes a tune catchy (song_file_checks -tunes): the selected track's melody measured as TuneShape.h
 	// measures it, its opening 8 bars and the whole of it, a line each
 	std::string TuneShapes();
+	// For calibrating planned returns against pasted phrases (song_file_checks -repeats): the selected track's melody bars
+	// that play the bar four or two before them again, in every part, their runs, and those pasted (PastedBars in Tools.cpp)
+	std::string RepeatShapes();
 	// For FamiTracker's sound browser (Instrument > Sound browser): every sound the song can get, as find_sound
 	// lists them (SoundIndex.h), Cursor the channel the user is on (-1 for none); false with the reason. Without
 	// Library, the ready-made sounds and the song's own only, quickly (the main window's Listen)

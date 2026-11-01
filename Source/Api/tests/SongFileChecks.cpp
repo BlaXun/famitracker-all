@@ -198,6 +198,44 @@ int main(int argc, char *argv[])
 		}
 		return 0;
 	}
+	// -repeats: each song's repeats as the review and what_next hear them (the review's lines and tips that name a repeat,
+	// what_next's step when it varies one, and RepeatShapes' counts), for calibrating what a planned return is
+	if (argc > 2 && std::string(argv[2]) == "-repeats") {
+		const char *const SUBS[] = { "", "/keep", "/flag" };
+		for (size_t s = 0; s < 3; ++s) {
+			const std::vector<std::string> Files = FtmFiles(Folder + SUBS[s]);
+			for (size_t i = 0; i < Files.size(); ++i) {
+				FileSong Probe;
+				std::string Error;
+				if (!Probe.Load(Files[i], 0, Error))
+					continue;
+				for (int t = 0; t < Probe.Info.Tracks; ++t) {
+					FileSong Song;
+					if (!Song.Load(Files[i], t, Error))
+						continue;
+					ToolSet Tools(Song);
+					std::printf("%s track %d: %s\n", Files[i].c_str(), t + 1, Tools.RepeatShapes().c_str());
+					const std::string Review = Tools.Call("review_arrangement", Parse("{}")).Text;
+					size_t At = 0;
+					while (At < Review.size()) {
+						size_t Stop = Review.find('\n', At);
+						if (Stop == std::string::npos)
+							Stop = Review.size();
+						const std::string Line = Review.substr(At, Stop - At);
+						if (Line.find("four before") != std::string::npos || Line.find("unchanged") != std::string::npos ||
+							Line.find("nothing new") != std::string::npos)
+							std::printf("  review: %s\n", Line.c_str());
+						At = Stop + 1;
+					}
+					const std::string Next = Tools.Call("what_next", Parse("{}")).Text;
+					if (Next.find("four before") != std::string::npos || Next.find("note for note") != std::string::npos ||
+						Next.find("vary_part") != std::string::npos)
+						std::printf("  what_next: %s\n", Next.substr(0, 400).c_str());
+				}
+			}
+		}
+		return 0;
+	}
 	if (Folder.empty()) {
 		std::printf("No songs to check (give a folder with keep/ and flag/, or set FAMITRACKER_SONG_CHECKS): skipped.\n");
 		return 0;
