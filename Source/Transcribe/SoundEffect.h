@@ -47,6 +47,9 @@ struct SfxLayer {
 									// pulse; the triangle sounds an octave lower), with fractions between
 									// notes. Noise: 0-15, 15 the brightest.
 	std::vector<int> duty;			// pulse: 0-3 (12.5%, 25%, 50%, 75%); noise: 1 for its metallic mode
+	int voice = -1;					// a pulse layer's own pulse (0: Pulse 1, 1: Pulse 2); -1 any free one
+	int pan = -1;					// where it plays between the speakers, as 8xx (0 left, 128 the middle, 255 right);
+									// -1 the middle, as FamiTracker starts every channel
 
 	int length() const { return static_cast<int>(volume.size()); }
 	double pitchAt(int tick) const;	// the last one past the end

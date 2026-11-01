@@ -7055,7 +7055,7 @@ void TestSoundEffects()
 				Changes.LengthPercent = Far == 0 ? 100 : (Far == 1 ? 400 : 25);
 				Changes.VolumePercent = Far == 0 ? 100 : (Far == 1 ? 200 : 10);
 				const transcribe::SoundEffect Effect = ChangeSoundEffect(Kinds[k].Make(), Changes);
-				bool Ok = !Effect.layers.empty() && Effect.length() > 0 && Effect.length() <= 300;
+				bool Ok = !Effect.layers.empty() && Effect.length() > 0 && Effect.length() <= 1000;	// pieces past 252
 				for (size_t l = 0; l < Effect.layers.size(); ++l)
 					Ok = Ok && Holdable(Effect.layers[l]);
 				Check(Ok, Kinds[k].Name.c_str(), __LINE__);
@@ -7283,7 +7283,7 @@ void TestDesignedSounds()
 	CHECK(FindSoundEffect("fire")->Name == "fire" && FindSoundEffect("pew")->Name == "laser" && FindSoundEffect("shoot")->Name == "laser");
 	CHECK(FindSoundEffect("heavy wind")->Name == "wind" && FindSoundEffect("siren")->Name == "alarm" &&
 		FindSoundEffect("low health")->Name == "heartbeat" && FindSoundEffect("thunderstorm")->Name == "thunder" &&
-		FindSoundEffect("chirp")->Name == "birds" && FindSoundEffect("motor")->Name == "engine" &&
+		FindSoundEffect("chirp")->Name == "chirp" && FindSoundEffect("motor")->Name == "engine" &&
 		FindSoundEffect("drizzle")->Name == "rain");
 	const char *const LOOPING[] = { "wind", "rain", "fire", "engine", "alarm", "heartbeat" };
 	for (size_t i = 0; i < 6; ++i) {
@@ -7391,7 +7391,8 @@ void TestDesignedSounds()
 	// Ambience loops: B00 on its last row, no halt
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"heavy wind\"}"));
-	CHECK_HAS(Result.Text, "Made track 3 \"SFX Wind\": the wind sound (a heavy wind blowing in gusts (loops, for ambience)), 4.00 s long");
+	CHECK_HAS(Result.Text, "Made track 3 \"SFX Wind\": the wind sound (a heavy wind blowing in gusts (loops, for ambience; one gust: "
+		"gust; a howl: howl)), 4.00 s long");
 	CHECK_HAS(Result.Text, "and loops: B00 on its last row takes it back to its start");
 	CHECK_HAS(Result.Text, "with the GameMaker code that plays snd_sfx_wind (audio_stop_sound ends it)");
 	CHECK(EffectAt(Song.Rows[3][239], EFF_JUMP) == 0 && Song.Rows[3][0].HasNote());
@@ -7413,7 +7414,7 @@ void TestDesignedSounds()
 	CHECK_HAS(Result.Text, "with 2 instruments in turn (");
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"thunder\", \"length_percent\": 400}")).Text,
-		"A sound can last at most 4.2 s, so it was made shorter to fit.");
+		"A sound that plays once can last at most 12.0 s, so it was made shorter to fit.");
 	// A designed sound that loops, as long as asked
 	Tools.Call("select_track", Parse("{\"track\": 1}"));
 	Result = Tools.Call("make_sound_effect", Parse("{\"name\": \"Clock\", \"loop\": true, \"seconds\": 1, \"layers\": ["
@@ -7427,7 +7428,7 @@ void TestDesignedSounds()
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"wind\", \"layers\": [{\"channel\": \"noise\"}]}")).Text,
 		"Give one of kind, recording and layers.");
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"flute\"}]}")).Text,
-		"Layer 1: channel should be pulse, triangle or noise.");
+		"Layer 1: channel should be pulse (the first free one), pulse 1, pulse 2, triangle or noise.");
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"pulse\"}, {\"channel\": \"pulse\", \"pitch\": \"H-9\"}]}")).Text,
 		"Layer 2: pitch: a note like \"C-6\"");
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"pitch\": 20}]}")).Text,
@@ -7441,8 +7442,8 @@ void TestDesignedSounds()
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": []}")).Text, "layers should be a list of layers");
 	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"loop\": true, \"layers\": [{\"channel\": \"noise\", \"seconds\": 600}]}")).Text,
 		"A layer can last at most 136.53 s in a sound that loops; layer 1 lasts 600 s.");
-	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"seconds\": 5}]}")).Text,
-		"A layer can last at most 4.2 s; layer 1 lasts 5 s.");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"seconds\": 13}]}")).Text,
+		"A layer can last at most 12 s; layer 1 lasts 13 s.");
 }
 
 ChannelInfo MakeChannel(const char *Name, const char *Chip, int Kind)
@@ -30434,6 +30435,344 @@ void TestGen4Done()
 // Ambience inside a music track (feat-ambience): add_ambience's kinds on the noise channel, under the music, in step
 // with its bars and its loop, and check_song, the review, listen and measure_mix taking it as ambience; what_next offers it
 // for a harbor at night (and TestGen4Done checks that its other walks add none)
+// The kinds for nature and places, their words and options, the style, crackle that's heard, layers on a pulse of their own
+// and panned, a sound replaced in place, and sound effects heard, checked and exported as sounds (feat-sfx-kinds)
+void TestSfxKinds()
+{
+	using transcribe::SfxChannel;
+	// Every word names one kind only, and no kind's name is another's word
+	{
+		std::map<std::string, std::string> Owner;
+		const std::vector<SoundEffectKind> &Kinds = SoundEffectKinds();
+		bool Unique = true;
+		for (size_t k = 0; k < Kinds.size(); ++k) {
+			std::vector<std::string> Names = Kinds[k].Words;
+			Names.push_back(Kinds[k].Name);
+			for (size_t w = 0; w < Names.size(); ++w) {
+				std::string Key;
+				for (size_t i = 0; i < Names[w].size(); ++i)
+					if (std::isalnum(static_cast<unsigned char>(Names[w][i])))
+						Key += static_cast<char>(std::tolower(static_cast<unsigned char>(Names[w][i])));
+				if (Owner.count(Key) != 0 && Owner[Key] != Kinds[k].Name) {
+					Unique = false;
+					std::printf("  \"%s\": %s and %s\n", Names[w].c_str(), Owner[Key].c_str(), Kinds[k].Name.c_str());
+				}
+				Owner[Key] = Kinds[k].Name;
+			}
+		}
+		CHECK(Unique);
+	}
+	// Found by the words people use, in a few words too
+	const char *const ASKED[][2] = { { "chirp", "chirp" }, { "bird chirp", "chirp" }, { "tweet", "chirp" }, { "birds", "birds" },
+		{ "birds chirping", "birds" }, { "sea", "waves" }, { "ocean waves", "waves" }, { "water lapping", "lapping" },
+		{ "door creak", "creak" }, { "knock", "door" }, { "gust of wind", "gust" }, { "wind blowing", "wind" },
+		{ "howling wind", "howl" }, { "wind howling inside a cave", "howl" }, { "owl", "owl" }, { "water drop", "drip" },
+		{ "jumping into water", "splash" }, { "jumping out of water", "emerge" }, { "bubbles underwater", "bubbles" },
+		{ "a squeaking chain with a lantern", "chain" }, { "entering a cave", "cave" }, { "changing an outfit", "outfit" },
+		{ "opening a lucky box", "reward" }, { "item get", "reward" }, { "footsteps on grass", "footstep" } };
+	for (size_t i = 0; i < sizeof(ASKED) / sizeof(ASKED[0]); ++i) {
+		std::string Surface;
+		int Style = -1;
+		const SoundEffectKind *K = FindSoundEffectIn(ASKED[i][0], Surface, Style);
+		Check(K != 0 && K->Name == ASKED[i][1], ASKED[i][0], __LINE__);
+	}
+	{
+		std::string Surface;
+		int Style = -1;
+		CHECK(FindSoundEffectIn("footsteps on wooden planks", Surface, Style)->Name == "footstep" && Surface == "wood" && Style < 0);
+		CHECK(FindSoundEffectIn("realistic wind", Surface, Style)->Name == "wind" && Style == SFX_STYLE_REALISTIC);
+		CHECK(FindSoundEffectIn("moo cow", Surface, Style) == 0);
+	}
+	// Each new kind makes a sound its instruments can hold, the loops as loops
+	const char *const NEW[] = { "chirp", "waves", "lapping", "creak", "gust", "howl", "owl", "drip", "emerge", "bubbles", "chain",
+		"cave", "outfit", "reward" };
+	for (size_t i = 0; i < sizeof(NEW) / sizeof(NEW[0]); ++i) {
+		const SoundEffectKind *K = FindSoundEffect(NEW[i]);
+		const transcribe::SoundEffect E = K != 0 ? K->Make() : transcribe::SoundEffect();
+		bool Ok = !E.layers.empty() && E.length() > 0;
+		for (size_t l = 0; l < E.layers.size(); ++l)
+			for (const transcribe::SfxLayer &P : SoundPieces(E.layers[l]))
+				Ok = Ok && Holdable(P);
+		Check(Ok, NEW[i], __LINE__);
+	}
+	// The loops drawn for as long as asked come out whole at every length
+	for (size_t k = 0; k < SoundEffectKinds().size(); ++k) {
+		const SoundEffectKind &K = SoundEffectKinds()[k];
+		if (K.MakeLong == 0)
+			continue;
+		const double LENGTHS[] = { 0.7, 1.0, 2.5, 4.0, 6.4, 8.0, 13.3, 30.0, 61.7 };
+		for (size_t s = 0; s < sizeof(LENGTHS) / sizeof(LENGTHS[0]); ++s)
+			for (int Seed = 1; Seed <= 3; ++Seed) {
+				SoundKindOptions O;
+				O.Seed = Seed;
+				const transcribe::SoundEffect E = K.MakeLong(LENGTHS[s], O);
+				Check(!E.layers.empty() && std::abs(E.length() - static_cast<int>(std::floor(LENGTHS[s] * 60.0 + 0.5))) <= 2, K.Name.c_str(), __LINE__);
+			}
+	}
+	CHECK(FindSoundEffect("waves")->Loops && FindSoundEffect("howl")->Loops && FindSoundEffect("chain")->Loops &&
+		FindSoundEffect("lapping")->Loops && !FindSoundEffect("gust")->Loops && !FindSoundEffect("chirp")->Loops &&
+		!FindSoundEffect("reward")->Loops);
+	// A single chirp is one short call; birds take a count
+	const transcribe::SoundEffect One = FindSoundEffect("chirp")->Make();
+	CHECK(One.length() < 18 && One.layers.size() == 1 && Bursts(One.layers[0]) <= 2);
+	SoundKindOptions Count;
+	Count.Count = 1;
+	const transcribe::SoundEffect Lone = MakeSoundKind(*FindSoundEffect("birds"), Count);
+	Count.Count = 4;
+	const transcribe::SoundEffect Flock = MakeSoundKind(*FindSoundEffect("birds"), Count);
+	int LoneBursts = 0, FlockBursts = 0;
+	for (size_t l = 0; l < Lone.layers.size(); ++l)
+		LoneBursts += Bursts(Lone.layers[l]);
+	for (size_t l = 0; l < Flock.layers.size(); ++l)
+		FlockBursts += Bursts(Flock.layers[l]);
+	CHECK(Lone.layers.size() == 1 && FlockBursts > LoneBursts + 3 && Flock.length() > Lone.length());
+	// The kinds' own stay as they were (the user preferred them): two birds, the soft tap on dirt
+	CHECK(MakeSoundKind(*FindSoundEffect("birds"), SoundKindOptions()).length() == FindSoundEffect("birds")->Make().length());
+	// Footsteps by surface: a hollow tok on wood (a triangle), a brush on grass (bright noise, no thump), all unlike
+	SoundKindOptions On;
+	On.Surface = "wood";
+	const transcribe::SoundEffect Wood = MakeSoundKind(*FindSoundEffect("footstep"), On);
+	CHECK(LayerOn(Wood, SfxChannel::Triangle) != 0 && LayerOn(Wood, SfxChannel::Noise) != 0);
+	On.Surface = "grass";
+	const transcribe::SoundEffect Grass = MakeSoundKind(*FindSoundEffect("footstep"), On);
+	CHECK(LayerOn(Grass, SfxChannel::Triangle) == 0 && LayerOn(Grass, SfxChannel::Noise)->pitch[0] >= 11);
+	On.Surface = "dirt";
+	On.Count = 3;
+	const transcribe::SoundEffect Walk = MakeSoundKind(*FindSoundEffect("footstep"), On);
+	CHECK(Walk.layers.size() == 1 && Bursts(Walk.layers[0]) == 3);
+	// One gust swells and falls away; a howl moans over the noise; waves never fall silent and loop on
+	const transcribe::Audio GustSound = transcribe::RenderEffect(FindSoundEffect("gust")->Make(), 44100, false);
+	const std::vector<double> GustLevel = Loudness(GustSound, 0.0, 0.1, 16);
+	CHECK(GustLevel[6] > 3.0 * GustLevel[0] && GustLevel[6] > 2.0 * GustLevel[15]);
+	const transcribe::SoundEffect Howl = FindSoundEffect("howl")->Make();
+	const transcribe::SfxLayer *Moan = LayerOn(Howl, SfxChannel::Pulse);
+	CHECK(Moan != 0 && LayerOn(Howl, SfxChannel::Noise) != 0);
+	CHECK(*std::max_element(Moan->pitch.begin(), Moan->pitch.end()) - *std::min_element(Moan->pitch.begin(), Moan->pitch.end()) > 4.0);
+	const transcribe::SoundEffect Waves = FindSoundEffect("waves")->Make();
+	CHECK(Waves.layers.size() == 1 && Waves.length() == 384);
+	CHECK(*std::min_element(Waves.layers[0].volume.begin(), Waves.layers[0].volume.end()) >= 2);
+	CHECK(std::abs(Waves.layers[0].volume.front() - Waves.layers[0].volume.back()) <= 1);
+	// The reward is the designed item get: a run up C major landing on a ringing C-6, a harmony under it and a drop
+	const transcribe::SoundEffect Reward = FindSoundEffect("reward")->Make();
+	const transcribe::SfxLayer *Lead = LayerOn(Reward, SfxChannel::Pulse);
+	CHECK(Lead != 0 && LayerOn(Reward, SfxChannel::Triangle) != 0 && Reward.layers.size() == 3);
+	// (as the designed call packed them: the G-5 on the other pulse, the run's E-5 still fading there)
+	CHECK(Lead->pitchAt(0) == 55 && Lead->pitchAt(5) == 60 && Lead->pitchAt(10) == 64 && std::fabs(Lead->pitchAt(30) - 72) < 0.5);
+	CHECK(Reward.layers[1].channel == SfxChannel::Pulse && Reward.layers[1].pitchAt(0) == 67 && Lead->length() >= 55);
+
+	// The style: realistic narrows a sweep and softens the attack, cartoon widens it
+	{
+		const transcribe::SoundEffect Jump = FindSoundEffect("jump")->Make();
+		transcribe::SoundEffect Real = Jump, Toon = Jump;
+		StyleSoundEffect(Real, SFX_STYLE_REALISTIC);
+		StyleSoundEffect(Toon, SFX_STYLE_CARTOON);
+		auto Range = [](const transcribe::SoundEffect &E) {
+			return *std::max_element(E.layers[0].pitch.begin(), E.layers[0].pitch.end()) -
+				*std::min_element(E.layers[0].pitch.begin(), E.layers[0].pitch.end());
+		};
+		CHECK(Range(Real) < Range(Jump) * 0.6 && Range(Toon) > Range(Jump) * 1.3);
+		CHECK(Real.layers[0].volume[0] < Jump.layers[0].volume[0] && Toon.layers[0].volume[0] == Jump.layers[0].volume[0]);
+		CHECK(FindSoundStyle("grounded") == SFX_STYLE_REALISTIC && FindSoundStyle("cartoonish") == SFX_STYLE_CARTOON &&
+			FindSoundStyle("loud") < 0);
+	}
+
+	// Crackle: pops stay at noise pitches a speaker plays, and follow the layer's fade
+	{
+		std::vector<SfxLayerDesign> Layers(1);
+		Layers[0].Channel = SfxChannel::Noise;
+		Layers[0].Seconds = 4.0;
+		Layers[0].Pitch = 13;
+		Layers[0].Volume = 3;
+		Layers[0].Crackle = 1.0;
+		transcribe::SoundEffect E;
+		std::string Problem;
+		CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, true, 2, E, Problem));
+		int Pops = 0, Heard = 0;
+		for (size_t t = 0; t < E.layers[0].volume.size(); ++t)
+			if (E.layers[0].volume[t] > 3) {
+				++Pops;
+				Heard += E.layers[0].pitch[t] <= 11.0 ? 1 : 0;
+			}
+		CHECK(Pops > 20 && Heard == Pops);
+		Layers[0].Pitch = 8;
+		Layers[0].Volume = 10;
+		Layers[0].VolumeTo = 2;
+		CHECK(DesignSoundEffect(Layers, 0.0, 60, 1, false, 2, E, Problem));
+		double Early = 0.0, Late = 0.0;
+		int EarlyPops = 0, LatePops = 0;
+		const std::vector<int> &V = E.layers[0].volume;
+		for (size_t t = 0; t < 60; ++t)
+			if (V[t] > 11) {
+				Early += V[t];
+				++EarlyPops;
+			}
+		for (size_t t = V.size() - 60; t < V.size(); ++t)
+			if (V[t] > 3) {
+				Late += V[t];
+				++LatePops;
+			}
+		CHECK(EarlyPops > 3 && LatePops > 3 && Late / LatePops < 0.6 * Early / EarlyPops);
+	}
+
+	// The tool: footsteps on grass in words, a style word, a count, and a surface the kind doesn't take
+	FakeSong Song;
+	ToolSet Tools(Song);
+	ToolResult Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"footsteps on grass\"}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "Made track 2 \"SFX Footstep grass\": the footstep sound");
+	CHECK_HAS(Result.Text, "Read \"footsteps on grass\" as the footstep sound on grass.");
+	CHECK_HAS(Result.Text, "of FamiTracker's 64 instruments now.");
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"birds\", \"count\": 3, \"style\": \"realistic\"}"));
+	CHECK_HAS(Result.Text, " 3 birds.");
+	CHECK_HAS(Result.Text, "Style realistic: sweeps of more than half an octave narrowed by half, attacks softened.");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"coin\", \"surface\": \"wood\"}")).Text, "surface is for footsteps");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"jump\", \"count\": 2}")).Text, "count is for the kinds");
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"footstep\", \"surface\": \"lava\"}")).Text,
+		"surface should be one of dirt, wood, grass");
+	// A noise-only sound's variant keeps its duty, and says so
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"footstep\", \"variant\": 2}"));
+	CHECK_HAS(Result.Text, "Variant 2: 3 semitones higher, 15% shorter.");
+	CHECK_EQ(VariantText(2, false), std::string("3 semitones higher, 15% shorter"));
+
+	// Layers on a pulse of their own, and panned: two birds apart
+	const int Before = static_cast<int>(Song.Tracks.size());
+	Result = Tools.Call("make_sound_effect", Parse("{\"name\": \"Two birds\", \"layers\": ["
+		"{\"channel\": \"pulse 2\", \"start\": 0, \"seconds\": 0.2, \"pitch\": \"D-6\", \"pitch_to\": \"A-6\", \"envelope\": \"hit\", \"pan\": \"left\"},"
+		"{\"channel\": \"pulse 1\", \"start\": 0.3, \"seconds\": 0.2, \"pitch\": \"A-5\", \"pitch_to\": \"E-6\", \"envelope\": \"hit\", \"pan\": 0.5},"
+		"{\"channel\": \"triangle\", \"start\": 0, \"seconds\": 0.5, \"pitch\": \"C-4\"}]}"));
+	CHECK(!Result.IsError && static_cast<int>(Song.Tracks.size()) == Before + 1);
+	CHECK_HAS(Result.Text, "1. pulse 2 from 0 s for 0.2 s: a hit, D-6 to A-6, volume 12, 50% duty, panned all the way left");
+	CHECK_HAS(Result.Text, "3. triangle from 0 s for 0.5 s: steady, C-4, at the triangle's one level");
+	CHECK_HAS(Result.Text, "Warning: layer 3 holds the triangle 0.5 s beside a quieter pulse (layer 1).");
+	CHECK(Song.Rows[1][0].HasNote() && EffectAt(Song.Rows[1][0], EFF_PAN) == 0);		// Pulse 2, left
+	CHECK(Song.Rows[0][18].HasNote() && EffectAt(Song.Rows[0][18], EFF_PAN) == 192);	// Pulse 1, half right
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"pulse 1\", \"seconds\": 0.5}, "
+		"{\"channel\": \"pulse 1\", \"start\": 0.2, \"seconds\": 0.5}]}")).Text, "asks for Pulse 1, which another layer plays then");
+	CHECK(!Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"pulse\", \"seconds\": 2, \"pitch\": \"E-4\", "
+		"\"vibrato\": 2, \"vibrato_hz\": 0.2, \"envelope\": \"held\"}], \"loop\": true}")).IsError);	// a slow sway
+
+	// Replaced in place: the old sound's instruments go, the track stays, and retries don't fill the instruments
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"creak\", \"name\": \"Door\"}"));
+	CHECK(!Result.IsError);
+	const size_t Tracks = Song.Tracks.size(), Instruments = Song.Info.Instruments.size();
+	for (int Try = 0; Try < 3; ++Try) {
+		Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"creak\", \"variant\": 3, \"replace\": \"Door\"}"));
+		CHECK(!Result.IsError);
+	}
+	CHECK_HAS(Result.Text, "Wrote track ");
+	CHECK_HAS(Result.Text, "\"Door\": the creak sound");
+	CHECK_HAS(Result.Text, "It replaced track ");
+	CHECK(Song.Tracks.size() == Tracks && Song.Info.Instruments.size() == Instruments && Song.Info.TrackName == "Door");
+	Tools.Call("select_track", Parse("{\"track\": 1}"));
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"creak\", \"replace\": 1}")).Text, "isn't a sound effect");
+
+	// Longer than an instrument holds, a one-shot plays as pieces (12 s at most)
+	Result = Tools.Call("make_sound_effect", Parse("{\"name\": \"Long rumble\", \"layers\": [{\"channel\": \"noise\", \"seconds\": 6, "
+		"\"pitch\": 3, \"volume\": 9, \"volume_to\": 1}]}"));
+	CHECK(!Result.IsError);
+	CHECK_HAS(Result.Text, "with 2 instruments in turn");
+	CHECK_HAS(Tools.Call("review_arrangement", Parse("{}")).Text, "Sound effect review:");
+	CHECK(Tools.Call("make_sound_effect", Parse("{\"layers\": [{\"channel\": \"noise\", \"seconds\": 13}]}")).IsError);
+
+	// Heard as sounds: listen, check_loop and the review judge the length, level and seam, not a melody or a key
+	Result = Tools.Call("make_sound_effect", Parse("{\"kind\": \"waves\", \"seconds\": 8}"));
+	CHECK_HAS(Result.Text, "Made track");
+	std::string Text = Tools.Call("listen", Parse("{}")).Text;
+	CHECK_HAS(Text, "a sound effect (speed 1, a row a tick)");
+	CHECK_HAS(Text, "Heard as a sound: a loop of 8");
+	CHECK_HAS(Text, "The seam:");
+	CHECK_LACKS(Text, "The melody:");
+	CHECK_LACKS(Text, "harsh");
+	Text = Tools.Call("check_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "is a sound effect that loops as a whole");
+	CHECK_HAS(Text, "The seam is smooth");
+	CHECK_LACKS(Text, " major");
+	CHECK_LACKS(Text, "bar");
+	Text = Tools.Call("listen", Parse("{\"format\": \"json\"}")).Text;
+	CHECK_HAS(Text, "\"sound\":{");
+	// Heard from the 2A03's audio: the waves loop on without a gap or a jump; three swells falling silent between them, as the
+	// obvious call for waves made, have gaps
+	{
+		const transcribe::SoundEffect W = FindSoundEffect("waves")->Make();
+		const transcribe::Audio A = transcribe::RenderEffect(W, 44100, false);
+		std::vector<float> Twice = A.samples;
+		Twice.insert(Twice.end(), A.samples.begin(), A.samples.end());
+		SoundHearing H = HearSoundAudio(Twice, Twice, 44100, W.length() / 60.0, true);
+		CHECK(H.Rendered && H.GapSeconds < 0.2 && H.SeamDb < 6.0 && H.Db.size() == 128 && H.What[40].compare(0, 5, "noise") == 0);
+		std::vector<SfxLayerDesign> Swells(1);
+		Swells[0].Channel = SfxChannel::Noise;
+		Swells[0].Seconds = 6.0;
+		Swells[0].Envelope = SFX_SWELL_FADE;
+		Swells[0].Repeats = 3;
+		Swells[0].Pitch = 7;
+		transcribe::SoundEffect G;
+		std::string Problem;
+		CHECK(DesignSoundEffect(Swells, 0.0, 60, 1, true, 2, G, Problem, 1 << 20));
+		const transcribe::Audio GA = transcribe::RenderEffect(G, 44100, false);
+		Twice = GA.samples;
+		Twice.insert(Twice.end(), GA.samples.begin(), GA.samples.end());
+		H = HearSoundAudio(Twice, Twice, 44100, 6.0, true);
+		CHECK(H.GapSeconds >= 0.3);
+		const transcribe::SoundEffect J = FindSoundEffect("jump")->Make();
+		const transcribe::Audio JA = transcribe::RenderEffect(J, 44100, false);
+		H = HearSoundAudio(JA.samples, JA.samples, 44100, J.length() / 60.0, false);
+		CHECK(H.PeakDb > -30.0 && H.SoundingSeconds > 0.2 && !H.What[1].empty() && H.What[1].compare(0, 5, "noise") != 0);
+	}
+	Tools.Call("make_sound_effect", Parse("{\"kind\": \"jump\"}"));
+	Text = Tools.Call("check_loop", Parse("{}")).Text;
+	CHECK_HAS(Text, "is a sound effect that plays once");
+	CHECK_HAS(Text, "It rings out to silence before it halts.");
+
+	// Exported: the decoded file's peak stays under -1 dBFS, and a quiet step reaches the loudness a loud one does
+	FakeSong Steps;
+	ToolSet StepTools(Steps);
+	StepTools.Call("make_sound_effect", Parse("{\"kind\": \"footstep\", \"surface\": \"wood\", \"name\": \"Wood\"}"));
+	StepTools.Call("make_sound_effect", Parse("{\"kind\": \"footstep\", \"surface\": \"grass\", \"name\": \"Grass\"}"));
+	StepTools.Call("make_sound_effect", Parse("{\"kind\": \"coin\", \"name\": \"Coin\"}"));
+	Text = StepTools.Call("export_for_game", Parse("{\"tracks\": [\"Wood\", \"Grass\", \"Coin\"], \"loudness\": -18}")).Text;
+	const char *const FILES[] = { "Wood.ogg", "Grass.ogg", "Coin.ogg" };
+	double Lufs[3];
+	for (int f = 0; f < 3; ++f) {
+		std::vector<float> Left, Right;
+		int Rate = 0, Channels = 0;
+		OggComments Comments;
+		std::string Error;
+		bool Short = false;
+		CHECK(DecodeOgg(Steps.Files[FILES[f]], Left, Rate, Channels, Comments, Error, &Right));
+		Lufs[f] = SoundLoudness(Left, Right, Rate, 0, Left.size(), Short);
+		Check(PeakDb(Left, Right) <= -0.95, FILES[f], __LINE__);
+	}
+	CHECK(Near(Lufs[0], -18.0, 1.0) && Near(Lufs[1], -18.0, 1.0) && Near(Lufs[2], -18.0, 1.0));
+	Text = StepTools.Call("export_for_game", Parse("{\"tracks\": [\"Wood\", \"Grass\", \"Coin\"]}")).Text;
+	for (int f = 0; f < 3; ++f) {
+		std::vector<float> Left, Right;
+		int Rate = 0, Channels = 0;
+		OggComments Comments;
+		std::string Error;
+		CHECK(DecodeOgg(Steps.Files[FILES[f]], Left, Rate, Channels, Comments, Error, &Right));
+		Check(PeakDb(Left, Right) <= -0.95 && PeakDb(Left, Right) > -3.0, FILES[f], __LINE__);
+	}
+	// The limiter holds every sample under its ceiling, ramping into a peak
+	{
+		std::vector<float> L(4410, 0.1f), R(4410, 0.1f);
+		L[2000] = 0.9f;
+		R[2000] = -0.9f;
+		const double Most = LimitPeaks(L, R, 44100, -6.0);
+		CHECK(Near(Most, 20.0 * std::log10(0.9 / std::pow(10.0, -6.0 / 20.0)), 0.05));
+		CHECK(PeakDb(L, R) <= -6.0 + 1e-6 && L[1990] < 0.1f && L[1990] > 0.05f && Near(L[100], 0.1, 1e-6));
+	}
+
+	// A jingle's review says the length it plays, not its bars'
+	FakeSong Jingle;
+	ToolSet JingleTools(Jingle);
+	JingleTools.Call("make_jingle", Parse("{\"kind\": \"item\"}"));
+	Text = JingleTools.Call("review_arrangement", Parse("{}")).Text;
+	CHECK_HAS(Text, "Length: ");
+	CHECK_HAS(Text, ", halting in bar ");
+	CHECK_LACKS(Text, "Length: 4 bars");
+}
+
 void TestAmbience()
 {
 	// The words
@@ -30852,6 +31191,7 @@ int main()
 	TestLeadVibratoFits();
 	TestGen4Balance();
 	TestAmbience();
+	TestSfxKinds();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

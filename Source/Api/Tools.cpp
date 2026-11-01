@@ -14741,8 +14741,11 @@ TrackUse UseOfTrack(Session &S)
 		S.Song.FrameRate, 1, EndTick);
 	Out.Halts = F.Halts();
 	Out.Seconds = (Out.Halts && !Rows.empty() ? Rows.back().Tick : EndTick) / static_cast<double>(std::max(1, S.Song.FrameRate));
+	// A sound as long as an instrument holds at any tempo; at make_sound_effect's tempo (a row a tick), one that plays once
+	// as long as its pieces make it (SFX_ONE_SHOT_TICKS) or a loop of ambience as long as it makes one
+	const bool SfxTempo = S.Song.Tempo == DefaultTempo(S.Song.FrameRate);
 	if (S.Song.Speed == 1 && Chip2A03 && (EndTick <= transcribe::SFX_MAX_TICKS + SFX_SILENT_TICKS + 1 ||
-		(!Out.Halts && S.Song.Tempo == DefaultTempo(S.Song.FrameRate))))	// or a loop of ambience, as long as make_sound_effect makes
+		(SfxTempo && (!Out.Halts || EndTick <= SFX_ONE_SHOT_TICKS + SFX_SILENT_TICKS + 1))))
 		Out.Use = TRACK_SOUND;
 	else if (Out.Halts && Out.Seconds <= CUE_SECONDS)
 		Out.Use = TRACK_CUE;
@@ -14782,18 +14785,82 @@ std::string CueText(const TrackUse &Use)
 		"clashes and clicks.", Use.Seconds);
 }
 
+// A sound effect as it plays (listen, check_loop and review_arrangement on one): FamiTracker's render of its first time
+// through (a loop twice, for its seam), heard as a sound (HearSoundAudio)
+SoundHearing HearSound(Session &S, const TrackUse &Use)
+{
+	std::vector<float> Left, Right;
+	std::vector<std::pair<int, long long> > Marks;
+	int Rate = 0;
+	std::string Error;
+	const bool Loops = !Use.Halts;
+	if (!S.Host().RenderTrack(S.Song.Track, Use.Seconds * (Loops ? 2.0 : 1.0) + 0.3, RenderOptions(), Left, Right, Rate, Marks,
+		Error) || Rate <= 0 || Left.empty()) {
+		SoundHearing H;
+		H.Loops = Loops;
+		H.Seconds = Use.Seconds;
+		H.Error = Error.empty() ? "FamiTracker rendered nothing." : Error;
+		return H;
+	}
+	Right.resize(Left.size());
+	return HearSoundAudio(Left, Right, Rate, Use.Seconds, Loops);
+}
+
+// What a hearing finds wrong with a sound, each a line with what helps
+std::vector<std::string> SoundHearingFindings(const SoundHearing &H)
+{
+	std::vector<std::string> Out;
+	if (!H.Rendered)
+		return Out;
+	if (H.Loops && H.SeamDb > std::max(SFX_SEAM_SLACK_DB, H.InsideDb + SFX_SEAM_SLACK_DB))
+		Out.push_back(Format("Its seam jumps %.0f dB where the loop goes back to its start (%.0f dB at most inside it), so the game "
+			"hears the loop restart: let its end come back to the level it starts at (a layer's volume_to, or the last layer "
+			"reaching the end).", H.SeamDb, H.InsideDb));
+	if (H.Loops && H.GapSeconds >= 0.2)
+		Out.push_back(Format("It falls silent for %s at %s: ambience that drops out sounds broken in a game; keep a layer under it "
+			"(waves never quite quiet, wind at volume 2 or 3 between gusts).", SecondsText(H.GapSeconds).c_str(),
+			SecondsText(H.GapAt).c_str()));
+	if (H.PeakDb < -30.0 && H.SoundingSeconds > 0.0)
+		Out.push_back(Format("It's very quiet as FamiTracker plays it (loudest peak %.0f dBFS): turn its layers up (volume, "
+			"volume_percent), or export_for_game with a loudness brings its file up.", H.PeakDb));
+	return Out;
+}
+
+// The hearing in words: length, level, a timeline of what sounds, and a loop's seam
+std::string SoundHearingText(const SoundHearing &H)
+{
+	if (!H.Rendered)
+		return "It couldn't be rendered to listen to (" + H.Error + ").";
+	std::string Text = Format("Heard as a sound: %s, sounding for %s; loudest peak %.1f dBFS, %.1f LUFS%s as FamiTracker plays it "
+		"(export_for_game's loudness sets its level in the game: footsteps and menu sounds about -24, pickups and rewards -18, "
+		"ambience -24 to -28).", H.Loops ? Format("a loop of %s", SecondsText(H.Seconds).c_str()).c_str() :
+		Format("%s to its halt", SecondsText(H.Seconds).c_str()).c_str(), SecondsText(H.SoundingSeconds).c_str(), H.PeakDb, H.Lufs,
+		H.Short ? " (measured over all of it, being shorter than a loudness block)" : "");
+	// The timeline: every window in a short sound, else every 0.25 s
+	const size_t Step = H.Db.size() <= 24 ? 1 : static_cast<size_t>(std::max(1.0, std::ceil(H.Db.size() / 24.0)));
+	std::string Line;
+	for (size_t w = 0; w < H.Db.size(); w += Step)
+		Line += Format("%s%.2f s %s%s", Line.empty() ? "" : "; ", w * SFX_WINDOW_SECONDS, H.Db[w] <= SFX_SILENT_DB ? "silent" :
+			Format("%.0f dB", H.Db[w]).c_str(), H.What[w].empty() ? "" : (" " + H.What[w]).c_str());
+	Text += "\nEvery " + SecondsText(Step * SFX_WINDOW_SECONDS) + ": " + Line + ".";
+	if (H.Loops)
+		Text += Format("\nThe seam: %.1f dB from its end into its start (%.1f dB at most inside it)%s.", H.SeamDb, H.InsideDb,
+			H.GapSeconds >= 0.2 ? "" : ", no gaps");
+	return Text;
+}
+
 // review_arrangement on a sound effect: what it is and its layers, then what still matters as its file will play it: a
 // sound the halt cuts while it sounds, and notes that click on the 2A03's pulses. It has no arrangement to weigh, so no
 // score
-std::string SoundEffectReview(Session &S, const TrackUse &Use)
+// A sound effect's layers as its notes play them, and a note its halt cuts while it's still loud ("" for none), from the
+// instruments' volume sequences as FamiTracker plays them. Last: the frame after the last that sounds
+std::string SoundCut(Session &S, const TrackUse &Use, std::string &Layers, int &Last)
 {
 	const double Rate = std::max(1, S.Song.FrameRate), RowFrames = FramesPerRow(S);
-	const int Total = S.Time.TotalRows();
 	const int Stop = static_cast<int>(std::floor(Use.Seconds * Rate + 0.5));	// the frame it halts at, or loops back from
-	std::string Layers;
-	std::vector<std::string> Tips;
-	int Last = 0;		// the frame after the last that sounds, as the instruments' volume sequences play
-	std::string Cut;	// a note the halt cuts while it's still loud
+	Layers.clear();
+	Last = 0;
+	std::string Cut;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
 		for (size_t i = 0; i < Notes.size(); ++i) {
@@ -14818,6 +14885,27 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 				Cut = Format("%s stops at volume %d as it halts at %.2f s", S.Channel(c).FullName().c_str(), Ending, Stop / Rate);
 		}
 	}
+	return Cut;
+}
+
+// A one-shot cut while it sounds, as a finding for listen and check_loop
+std::string SoundCutFinding(Session &S, const TrackUse &Use)
+{
+	std::string Layers;
+	int Last = 0;
+	const std::string Cut = SoundCut(S, Use, Layers, Last);
+	return Cut.empty() ? Cut : "It's cut while it still sounds: " + Cut + ". make_sound_effect rings its sounds out to silence; make "
+		"it again (replace its track), or let its volume sequence fade sooner.";
+}
+
+std::string SoundEffectReview(Session &S, const TrackUse &Use)
+{
+	const double Rate = std::max(1, S.Song.FrameRate);
+	const int Total = S.Time.TotalRows();
+	std::string Layers;
+	std::vector<std::string> Tips;
+	int Last = 0;		// the frame after the last that sounds, as the instruments' volume sequences play
+	const std::string Cut = SoundCut(S, Use, Layers, Last);	// a note the halt cuts while it's still loud
 	std::string Text = Format("Sound effect review: \"%s\" is a sound effect (speed 1, a row a tick, as make_sound_effect writes one), "
 		"%.2f s, %s. There's no arrangement to weigh (no melody, chords, bass or drums), so no score: play it for the user and judge "
 		"it by ear.\n", S.Song.TrackName.c_str(), Use.Seconds, Use.Halts ? "playing once (it halts)" : "looping, as ambience does");
@@ -14835,8 +14923,12 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 		Tips.push_back(Format("%s on the 2A03's pulses %s (a pitch that takes the period across a multiple of 256 restarts the wave): "
 			"polish with touches [\"clicks\"] nudges them; check_song lists them.", Plural(Clicking, "note", "notes").c_str(),
 			Clicking == 1 ? "clicks" : "click"));
-	Text += "make_sound_effect with variant, semitones, length_percent or volume_percent makes other takes, and export_for_game with "
-		"a loudness (like -18) sets its level in the game.";
+	const SoundHearing Heard = HearSound(S, Use);
+	Text += SoundHearingText(Heard) + "\n";
+	const std::vector<std::string> Found = SoundHearingFindings(Heard);
+	Tips.insert(Tips.end(), Found.begin(), Found.end());
+	Text += "make_sound_effect with variant, semitones, length_percent, volume_percent or style makes other takes (replace, the "
+		"track's name, writes one in its place), and export_for_game with a loudness (like -18) sets its level in the game.";
 	if (!Tips.empty()) {
 		Text += "\nWhat would help:";
 		for (size_t i = 0; i < Tips.size(); ++i)
@@ -18055,10 +18147,21 @@ std::string ReviewTool(Session &S, const Json &Asked)
 
 	// Length
 	const double Bpm = BeatsPerMinute(S.Song.Speed, S.Song.Tempo, S.Song.FrameRate, R);
-	const double Seconds = Bpm > 0 ? BarCount * (S.Time.RowsPerBar / static_cast<double>(R)) * 60.0 / Bpm : 0.0;
-	Lines.push_back(Format("Length: %d bars, %s at %s.", BarCount, SecondsText(Seconds).c_str(), PaceText(S, false).c_str()));
-	Numbers.insert(Numbers.begin(), Format("%d bars, %s at %s", BarCount, SecondsText(Seconds).c_str(),
-		PaceText(S, false).c_str()));
+	double Seconds = Bpm > 0 ? BarCount * (S.Time.RowsPerBar / static_cast<double>(R)) * 60.0 / Bpm : 0.0;
+	if (Use.Use == TRACK_CUE) {
+		// A cue is as long as it plays before its halt, not its bars' length (a jingle halting after 1.7 s was "4 bars, 6.9 s"
+		// beside "halts after 1.7 s")
+		Seconds = Use.Seconds;
+		const int Halt = HaltBar(S);
+		Lines.push_back(Format("Length: %s, halting in bar %d, at %s.", SecondsText(Seconds).c_str(), Halt, PaceText(S, false).c_str()));
+		Numbers.insert(Numbers.begin(), Format("%s to its halt in bar %d, at %s", SecondsText(Seconds).c_str(), Halt,
+			PaceText(S, false).c_str()));
+	}
+	else {
+		Lines.push_back(Format("Length: %d bars, %s at %s.", BarCount, SecondsText(Seconds).c_str(), PaceText(S, false).c_str()));
+		Numbers.insert(Numbers.begin(), Format("%d bars, %s at %s", BarCount, SecondsText(Seconds).c_str(),
+			PaceText(S, false).c_str()));
+	}
 	// A song laid out as a small loop (song_shape's small shape: a shop, a menu, a house) is short by design: what_next
 	// chose its 14 bars, and the tip asked for 16 to 32 right after (the Odds and Ends Shop)
 	const SongShape *pLaidShape = LaidOutShape(S.Song.Sections, S.Song.TrackName, Bpm);
@@ -20490,11 +20593,11 @@ bool SameSfxInstrument(const transcribe::SfxInstrument &a, const transcribe::Sfx
 // long sharing an instrument), each with its note where it starts. Its number
 // from 0; Parts says which channels play what.
 int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const std::string &Name, std::string &Parts, bool Loop = false,
-	int Period = 0)
+	int Period = 0, int Replace = -1)
 {
 	if (Effect.layers.empty() || Effect.length() <= 0)
 		throw Problem("The sound effect is empty.");
-	if (S.Song.Tracks >= 64)
+	if (Replace < 0 && S.Song.Tracks >= 64)
 		throw Problem("The module already has 64 tracks, FamiTracker's most; the user can remove one in Module > Module properties.");
 	std::string Why;
 	if (!S.Host().CanChange(Why))
@@ -20516,12 +20619,24 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 			Noise = c;
 	}
 	std::vector<int> Used(Effect.layers.size(), -1);
-	size_t NextPulse = 0;
+	// A layer asking for a pulse of its own (Pulse 1 or 2) gets it; the others the pulses left, in order
+	std::vector<bool> PulseTaken(Pulses.size(), false);
+	for (size_t l = 0; l < Effect.layers.size(); ++l) {
+		const int Voice = Effect.layers[l].voice;
+		if (Effect.layers[l].channel == transcribe::SfxChannel::Pulse && Voice >= 0 && static_cast<size_t>(Voice) < Pulses.size() &&
+			!PulseTaken[static_cast<size_t>(Voice)]) {
+			Used[l] = Pulses[static_cast<size_t>(Voice)];
+			PulseTaken[static_cast<size_t>(Voice)] = true;
+		}
+	}
 	for (size_t l = 0; l < Effect.layers.size(); ++l) {
 		switch (Effect.layers[l].channel) {
 		case transcribe::SfxChannel::Pulse:
-			if (NextPulse < Pulses.size())
-				Used[l] = Pulses[NextPulse++];
+			for (size_t k = 0; k < Pulses.size() && Used[l] < 0; ++k)
+				if (!PulseTaken[k]) {
+					Used[l] = Pulses[k];
+					PulseTaken[k] = true;
+				}
 			break;
 		case transcribe::SfxChannel::Triangle:
 			Used[l] = Triangle;
@@ -20613,6 +20728,8 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 		const transcribe::SfxInstrument &Shape = Shapes[Piece.Shape];
 		Cells[Start].SetPitch(Shape.note);
 		Cells[Start].Instrument = static_cast<unsigned char>(Instruments[Piece.Shape]);
+		if (Effect.layers[Piece.Layer].pan >= 0)	// where it plays between the speakers, on each piece (8xx lasts until the next)
+			AddEffect(Cells[Start], EFF_PAN, Effect.layers[Piece.Layer].pan, S.Channel(Used[Piece.Layer]).EffectColumns);
 		const size_t End = Start + Shape.volume.size() - 1;	// where its volume reaches 0; a piece's next one starts there
 		if (End < Cells.size() && (p + 1 == Pieces.size() || Pieces[p + 1].Layer != Piece.Layer))
 			Cells[End].Note = NOTE_HALT;
@@ -20642,6 +20759,40 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 	// A row a tick: speed 1 at the tempo that makes a row of the speed's ticks
 	const int Tempo = std::max(std::max(32, S.Song.SplitPoint), std::min(255, DefaultTempo(S.Song.FrameRate)));
 	std::string Error;
+	if (Replace >= 0) {
+		// In place of the track's old sound (selected by the caller): every channel's rows, the frames the sound needs and no
+		// more, at speed 1, named Name
+		const int PL = std::max(1, S.Time.PatternLength), OldRows = S.Time.TotalRows();
+		const int OldFrames = (OldRows + PL - 1) / PL, NewFrames = std::max(1, (Rows + PL - 1) / PL);
+		SongWrite Write;
+		if (NewFrames < OldFrames) {
+			Write.MoveFrame = NewFrames;
+			Write.MoveBy = NewFrames - OldFrames;
+		}
+		std::vector<ChannelCells> Write2;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			ChannelCells Part;
+			Part.Channel = c;
+			Part.Exact = true;
+			Part.Cells = Channels[static_cast<size_t>(c)];
+			Part.Cells.resize(static_cast<size_t>(NewFrames * PL));
+			Write2.push_back(Part);
+		}
+		if (!S.Host().WriteSong(Write2, Write, Error))
+			throw Problem("The sound couldn't be written in place of the old one: " + (Error.empty() ? std::string("FamiTracker refused.") :
+				Error));
+		if ((S.Song.Speed != 1 || S.Song.Tempo != Tempo) && !S.Host().SetSpeedTempo(1, Tempo, Error))
+			throw Problem(Error);
+		if (S.Song.TrackName != Name) {
+			SongNames Names;
+			Names.HasTrack = true;
+			Names.Track = Name;
+			if (!S.Host().SetNames(Names, Error))
+				throw Problem(Error);
+		}
+		S.Refresh();
+		return Replace;
+	}
 	const int Track = S.Host().AddTrack(Name, Channels, 1, Tempo, Error);
 	if (Track < 0)
 		throw Problem("The sound effect couldn't be added: " + (Error.empty() ? std::string("FamiTracker refused.") : Error));
@@ -20674,7 +20825,8 @@ std::string ShortenedText(const Session &S, bool Loop)
 	if (Loop)
 		return Format(" A loop can last at most %.1f s in this song (%d frames of %d rows, a row a tick), so it was made shorter to "
 			"fit.", MaxLoopTicks(S.Song.MaxFrames, S.Song.PatternLength) / Rate, S.Song.MaxFrames, S.Song.PatternLength);
-	return Format(" A sound can last at most %.1f s, so it was made shorter to fit.", MaxSoundTicks(false) / Rate);
+	return Format(" A sound that plays once can last at most %.1f s, so it was made shorter to fit.", MaxOneShotTicks(S.Song.MaxFrames,
+		S.Song.PatternLength) / Rate);
 }
 
 // A sound effect from a recording of the user's voice ("pew", "boing", "kssh")
@@ -20701,9 +20853,10 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 	Changes.Semitones = IntArg(Args, "semitones", 0, -24, 24);
 	Changes.LengthPercent = IntArg(Args, "length_percent", 100, 25, 400);
 	Changes.VolumePercent = IntArg(Args, "volume_percent", 100, 10, 200);
-	const bool Shortened = FitSoundEffect(Effect, MaxSoundTicks(false), Changes);
-	Effect = ChangeSoundEffect(Effect, Changes);
-	RingOut(Effect);
+	const int Most = MaxOneShotTicks(S.Song.MaxFrames, S.Song.PatternLength);
+	const bool Shortened = FitSoundEffect(Effect, Most, Changes);
+	Effect = ChangeSoundEffect(Effect, Changes, Most);
+	RingOut(Effect, Most);
 
 	// Named after the file: pew.wav makes "SFX Pew", and a take FamiTracker
 	// kept ("Voice 2026-10-21 18-30-00.wav") "SFX Voice"
@@ -20747,6 +20900,112 @@ std::string VoiceSoundEffect(Session &S, const Json &Args, const std::string &Pa
 		ShortenedText(S, false) : std::string())).c_str(),
 		GameMakerName(Name + ".ogg").c_str()));
 }
+
+int TrackArg(Session &S, const Json &Args, const char *Name);
+
+// make_sound_effect's replace: the sound effect's track (from 0) the new sound takes the place of, selected, with its
+// instruments that no other track or clip plays removed, so their names are free for the new sound's and retries don't fill
+// FamiTracker's 64 instruments; -1 without replace. Removed: how many went
+int ReplaceSoundTrack(Session &S, const Json &Args, int &Removed)
+{
+	Removed = 0;
+	if (Arg(Args, "replace") == 0)
+		return -1;
+	const int Track = TrackArg(S, Args, "replace");
+	std::string Error;
+	if (!S.Host().CanChange(Error))
+		throw Problem(Error);
+	if (Track != S.Song.Track && !S.Host().SelectTrack(Track, Error))
+		throw Problem(Error.empty() ? std::string("FamiTracker didn't switch tracks.") : Error);
+	S.Refresh();
+	if (UseOfTrack(S).Use != TRACK_SOUND)
+		throw Problem(Format("Track %d \"%s\" isn't a sound effect (a track at speed 1 on the 2A03, as make_sound_effect writes "
+			"one), so replace leaves it alone: leave replace out to add the sound as a track of its own.", Track + 1,
+			S.Song.TrackName.c_str()));
+	std::vector<int> InTracks, InClips;
+	S.Host().CountInstrumentUses(InTracks, InClips);
+	std::map<int, int> Here;	// the cells naming each instrument in this track
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const std::vector<Cell> &Cells = S.Cells(c);
+		for (size_t r = 0; r < Cells.size(); ++r)
+			if (Cells[r].Instrument < NO_INSTRUMENT)
+				++Here[Cells[r].Instrument];
+	}
+	std::vector<int> Gone;
+	for (std::map<int, int>::const_iterator it = Here.begin(); it != Here.end(); ++it) {
+		const size_t i = static_cast<size_t>(it->first);
+		if (i < InTracks.size() && InTracks[i] <= it->second && (i >= InClips.size() || InClips[i] == 0))
+			Gone.push_back(it->first);
+	}
+	if (!Gone.empty() && !S.Host().RemoveInstruments(Gone, Error))
+		throw Problem(Error.empty() ? std::string("FamiTracker didn't remove the old sound's instruments.") : Error);
+	S.Refresh();
+	Removed = static_cast<int>(Gone.size());
+	return Track;
+}
+
+// The name a sound takes, given or made from Base, checked; a sound replacing a track's may keep that track's name
+std::string SoundEffectName(Session &S, const Json &Args, const std::string &Base, int Replace)
+{
+	SongInfo Others = S.Song;
+	if (Replace >= 0 && static_cast<size_t>(Replace) < Others.TrackNames.size())
+		Others.TrackNames[static_cast<size_t>(Replace)].clear();
+	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : Replace >= 0 ? S.Song.TrackName :
+		FreeSoundName(Others, Base);
+	const std::string Taken = SoundNameProblem(Others, Name);
+	if (!Taken.empty())
+		throw Problem(Taken);
+	return Name;
+}
+
+// The reply's word on a sound written in place of another, and on the room left for instruments
+std::string SoundRoomText(Session &S, int Replace, int Removed)
+{
+	S.Refresh();
+	std::string Text;
+	if (Replace >= 0)
+		Text = Format(" It replaced track %d's old sound in place%s.", Replace + 1, Removed > 0 ? Format(", and the %s only that sound "
+			"played were removed (FamiTracker can't undo that)", Plural(Removed, "instrument", "instruments").c_str()).c_str() : "");
+	const int Used = static_cast<int>(S.Song.Instruments.size());
+	Text += Format(" The module has %d of FamiTracker's 64 instruments now%s.", Used, Used >= 48 ? "; to try a sound again, make it "
+		"with replace (the track's name) so the old one's instruments go" : "");
+	return Text;
+}
+
+// A held triangle covers quieter pulses and stops abruptly (it has no volume): a warning for a layer longer than
+// TRIANGLE_HELD_SECONDS beside a pulse layer at volume 12 or under that sounds with it
+const double TRIANGLE_HELD_SECONDS = 0.15;
+std::string TriangleWarning(const std::vector<SfxLayerDesign> &Layers)
+{
+	for (size_t i = 0; i < Layers.size(); ++i) {
+		const SfxLayerDesign &T = Layers[i];
+		if (T.Channel != transcribe::SfxChannel::Triangle || T.Seconds <= TRIANGLE_HELD_SECONDS + 1e-9)
+			continue;
+		for (size_t k = 0; k < Layers.size(); ++k) {
+			const SfxLayerDesign &P = Layers[k];
+			if (P.Channel == transcribe::SfxChannel::Pulse && P.Volume <= 12 && P.Start < T.Start + T.Seconds && T.Start < P.Start + P.Seconds)
+				return Format(" Warning: layer %d holds the triangle %s beside a quieter pulse (layer %d). The triangle has no volume: "
+					"it plays at its one level, covering pulses at 12 and under, and stops at once where it ends. A short drop (0.1 s, "
+					"pitch falling an octave: a \"bom\") sits under a pulse without covering it.", static_cast<int>(i) + 1,
+					SecondsText(T.Seconds).c_str(), static_cast<int>(k) + 1);
+		}
+	}
+	return std::string();
+}
+
+// make_sound_effect's style: game (as made), realistic or cartoon; -1 when not given
+int SoundStyleArg(const Json &Args)
+{
+	if (Arg(Args, "style") == 0)
+		return -1;
+	const int Style = FindSoundStyle(StringArg(Args, "style"));
+	if (Style < 0)
+		throw Problem("style should be game (as the kinds are made), realistic (grounded: narrower pitch sweeps, softer attacks) or "
+			"cartoon (wider sweeps).");
+	return Style;
+}
+
+const char *const SOUND_STYLE_WORDS[] = { "game", "realistic", "cartoon" };
 
 // How a sound effect's track plays, for the reply
 std::string SoundPlayText(const std::string &Name, bool Loop)
@@ -20834,12 +21093,16 @@ SfxLayerDesign SoundLayerArg(const Json &Item)
 	const std::string Channel = Squeezed(StringArg(Item, "channel"));
 	if (Channel == "pulse" || Channel == "square")
 		D.Channel = transcribe::SfxChannel::Pulse;
+	else if (Channel == "pulse1" || Channel == "square1" || Channel == "pulse2" || Channel == "square2") {
+		D.Channel = transcribe::SfxChannel::Pulse;
+		D.Voice = Channel[Channel.size() - 1] == '1' ? 0 : 1;
+	}
 	else if (Channel == "triangle" || Channel == "tri")
 		D.Channel = transcribe::SfxChannel::Triangle;
 	else if (Channel == "noise")
 		D.Channel = transcribe::SfxChannel::Noise;
 	else
-		throw Problem("channel should be pulse, triangle or noise.");
+		throw Problem("channel should be pulse (the first free one), pulse 1, pulse 2, triangle or noise.");
 	const bool Noise = D.Channel == transcribe::SfxChannel::Noise;
 	D.Start = NumberArg(Item, "start", 0.0, 0.0, 600.0);
 	D.Seconds = NumberArg(Item, "seconds", 0.5, 0.02, 600.0);	// a loop's layers as long as the song holds (DesignSoundEffect)
@@ -20862,15 +21125,15 @@ SfxLayerDesign SoundLayerArg(const Json &Item)
 		0.5)) : -1;
 	static const char *const ENVELOPES[][4] = { { "steady", "hold", "flat", "constant" }, { "hit", "pluck", "pop", "strike" },
 		{ "fade", "decay", "fadeout", "die" }, { "swell", "rise", "fadein", "grow" }, { "swellfade", "swellandfade", "riseandfall",
-		"bloom" }, { "drops", "drip", "drips", "plinks" } };
+		"bloom" }, { "drops", "drip", "drips", "plinks" }, { "held", "join", "joined", "sustain" } };
 	const std::string Envelope = Squeezed(StringArg(Item, "envelope", "steady"));
 	D.Envelope = -1;
-	for (int e = 0; e < 6 && D.Envelope < 0; ++e)
+	for (int e = 0; e < 7 && D.Envelope < 0; ++e)
 		for (int w = 0; w < 4; ++w)
 			if (Envelope == ENVELOPES[e][w])
 				D.Envelope = e;
 	if (D.Envelope < 0)
-		throw Problem("envelope should be steady, hit, fade, swell, swell_fade or drops.");
+		throw Problem("envelope should be steady, held, hit, fade, swell, swell_fade or drops.");
 	D.Repeats = IntArg(Item, "repeats", 1, 1, 256);
 	D.Gap = Arg(Item, "gap") != 0 ? NumberArg(Item, "gap", 0.25, 0.0, 0.9) : -1.0;
 	D.Step = NumberArg(Item, "step", 0.0, -24.0, 24.0);
@@ -20878,10 +21141,12 @@ SfxLayerDesign SoundLayerArg(const Json &Item)
 	D.Flutter = WordNumberArg(Item, "flutter", 0.0, 0.0, 30.0, { { "none", 0 }, { "slow", 4 }, { "medium", 8 }, { "fast", 14 } });
 	D.Vibrato = WordNumberArg(Item, "vibrato", 0.0, 0.0, 12.0, { { "none", 0 }, { "faint", 0.06 }, { "gentle", 0.3 }, { "medium", 0.8 }, { "strong", 2 },
 		{ "wild", 5 } });
-	D.VibratoHz = NumberArg(Item, "vibrato_hz", 6.0, 0.5, 20.0);
+	D.VibratoHz = NumberArg(Item, "vibrato_hz", 6.0, 0.1, 20.0);	// 0.1-0.3: a slow sway, a howl's moan
 	D.Crackle = WordNumberArg(Item, "crackle", 0.0, 0.0, 1.0, { { "none", 0 }, { "few", 0.25 }, { "some", 0.5 }, { "many", 1 } });
 	D.Rough = BoolArg(Item, "rough", false);
 	D.Echo = BoolArg(Item, "echo", false);
+	D.Pan = WordNumberArg(Item, "pan", 0.0, -1.0, 1.0, { { "left", -1 }, { "right", 1 }, { "center", 0 }, { "centre", 0 },
+		{ "middle", 0 }, { "slightly left", -0.3 }, { "slightly right", 0.3 }, { "a little left", -0.3 }, { "a little right", 0.3 } });
 	if (D.Echo && D.Channel != transcribe::SfxChannel::Pulse)
 		throw Problem("echo is for a pulse (it plays on the other pulse).");
 	if (Arg(Item, "duty") != 0) {
@@ -20932,9 +21197,11 @@ std::string DesignedSoundEffect(Session &S, const Json &Args)
 	Changes.LengthPercent = IntArg(Args, "length_percent", 100, 25, 400);
 	Changes.VolumePercent = IntArg(Args, "volume_percent", 100, 10, 200);
 	const double Seconds = NumberArg(Args, "seconds", 0.0, 0.0, 600.0);
-	// A loop as long as the song's frames hold (its layers then play as pieces, an instrument each); a sound that plays once
-	// as long as an instrument holds
-	const int Most = Loop ? MaxLoopTicks(S.Song.MaxFrames, S.Song.PatternLength) : MaxSoundTicks(false);
+	const int Style = SoundStyleArg(Args);
+	// A loop as long as the song's frames hold, a sound that plays once up to 12 s (their layers play as pieces past an
+	// instrument's 4.2 s, an instrument each)
+	const int Most = Loop ? MaxLoopTicks(S.Song.MaxFrames, S.Song.PatternLength) : MaxOneShotTicks(S.Song.MaxFrames,
+		S.Song.PatternLength);
 	transcribe::SoundEffect Designed;
 	std::string Error;
 	if (!DesignSoundEffect(Layers, Seconds, std::max(1, S.Song.FrameRate), Changes.Variant, Loop, SoundPulses(S), Designed, Error,
@@ -20942,31 +21209,41 @@ std::string DesignedSoundEffect(Session &S, const Json &Args)
 		throw Problem(Error);
 	const bool Shortened = FitSoundEffect(Designed, Most, Changes);
 	transcribe::SoundEffect Effect = ChangeSoundEffect(Designed, Changes, Most);
+	StyleSoundEffect(Effect, Style);
 	if (!Loop)
-		RingOut(Effect);
+		RingOut(Effect, Most);
 
-	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX Sound");
-	const std::string Taken = SoundNameProblem(S.Song, Name);
-	if (!Taken.empty())
-		throw Problem(Taken);
+	int Removed = 0;
+	const int Replace = ReplaceSoundTrack(S, Args, Removed);
+	const std::string Name = SoundEffectName(S, Args, "SFX Sound", Replace);
 	std::string Parts;
-	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop);
+	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop, 0, Replace);
 	std::string Described;
 	for (size_t i = 0; i < Layers.size(); ++i)
 		Described += Format("\n%d. %s", static_cast<int>(i) + 1, DescribeLayerDesign(Layers[i]).c_str());
 	std::string Changed;
 	if (Changes.Variant > 1)
-		Changed += Format(" Variant %d: %s, and another draw of its random parts.", Changes.Variant, VariantText(Changes.Variant).c_str());
+		Changed += Format(" Variant %d: %s, and another draw of its random parts.", Changes.Variant, VariantText(Changes.Variant,
+			HasPulse(Effect)).c_str());
 	Changed += SoundChanges(Changes);
+	if (Style > 0)
+		Changed += Format(" Style %s: %s.", SOUND_STYLE_WORDS[Style], Style == SFX_STYLE_REALISTIC ? "sweeps of more than half an octave "
+			"narrowed by half, attacks softened" : "sweeps widened half again");
 	if (Shortened)
 		Changed += ShortenedText(S, Loop);
-	return WithRemarks(S, Format("Made track %d \"%s\": a sound in %s, %.2f s long, on %s.%s The layers:%s\n%s Its instruments' "
-		"sequences shape it, so the user can change it in FamiTracker's instrument editor. FamiTracker shows the new track now: play it "
+	bool Steady = false;
+	for (size_t i = 0; i < Layers.size(); ++i)
+		Steady = Steady || (Layers[i].Envelope == SFX_STEADY && Layers[i].Seconds * std::max(1, S.Song.FrameRate) >= 4);
+	return WithRemarks(S, Format("%s track %d \"%s\": a sound in %s, %.2f s long, on %s.%s The layers:%s\n%s%s%s%s Its instruments' "
+		"sequences shape it, so the user can change it in FamiTracker's instrument editor. FamiTracker shows the track now: play it "
 		"for the user and change what's off (a layer's pitch, loudness, length or repeats), or try variant 2, 3... for other takes "
-		"(other draws of gusts, crackle and drops). FamiTracker can't undo adding a track: the user removes one in Module > Module "
-		"properties.", Track + 1, Name.c_str(), Plural(static_cast<int>(Layers.size()), "layer", "layers").c_str(),
+		"(other draws of gusts, crackle and drops); give replace the track's name to try again in its place. %s",
+		Replace >= 0 ? "Wrote" : "Made", Track + 1, Name.c_str(), Plural(static_cast<int>(Layers.size()), "layer", "layers").c_str(),
 		Effect.length() / static_cast<double>(std::max(1, S.Song.FrameRate)), Parts.c_str(), Changed.c_str(), Described.c_str(),
-		SoundPlayText(Name, Loop).c_str()));
+		SoundPlayText(Name, Loop).c_str(), Steady ? " A steady layer ends with a short fade over its last two ticks (to 70% and "
+		"40%), which keeps notes apart; held layers run on into the next without it." : "", TriangleWarning(Layers).c_str(),
+		SoundRoomText(S, Replace, Removed).c_str(), Replace >= 0 ? "" : "FamiTracker can't undo adding a track: the user removes one "
+		"in Module > Module properties."));
 }
 
 std::string MakeSoundEffectTool(Session &S, const Json &Args)
@@ -20990,7 +21267,10 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	if (Kind.empty())
 		throw Problem("Say which sound with kind (" + SoundEffectNames() + "), describe one with layers, or give a recording of the "
 			"user's voice.");
-	const SoundEffectKind *pKind = FindSoundEffect(Kind);
+	// The kind by its name or in a few words ("footsteps on grass", "realistic wind", "a squeaking chain with a lantern")
+	std::string SaidSurface;
+	int SaidStyle = -1;
+	const SoundEffectKind *pKind = FindSoundEffectIn(Kind, SaidSurface, SaidStyle);
 	if (pKind == 0)
 		throw Problem(Format("There's no \"%s\" sound. The kinds: %s. For something else, describe it with layers, or start from "
 			"the nearest kind and change it with semitones, length_percent or a variant.", Kind.c_str(), SoundEffectNames().c_str()));
@@ -20999,10 +21279,32 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	Changes.Semitones = IntArg(Args, "semitones", 0, -24, 24);
 	Changes.LengthPercent = IntArg(Args, "length_percent", 100, 25, 400);
 	Changes.VolumePercent = IntArg(Args, "volume_percent", 100, 10, 200);
+	SoundKindOptions Options;
+	Options.Seed = Changes.Variant;
+	if (Arg(Args, "surface") != 0) {
+		if (pKind->Surfaces.empty())
+			throw Problem(Format("surface is for footsteps; the %s sound has none.", pKind->Name.c_str()));
+		SaidSurface = FindSurface(*pKind, StringArg(Args, "surface"));
+		if (SaidSurface.empty()) {
+			std::string Known;
+			for (size_t i = 0; i < pKind->Surfaces.size(); ++i)
+				Known += (i == 0 ? "" : ", ") + pKind->Surfaces[i];
+			throw Problem("surface should be one of " + Known + ".");
+		}
+	}
+	Options.Surface = SaidSurface;
+	if (Arg(Args, "count") != 0) {
+		if (pKind->Counts.empty())
+			throw Problem(Format("count is for the kinds that count something (birds, footstep, bubbles, drip); the %s sound has none.",
+				pKind->Name.c_str()));
+		Options.Count = IntArg(Args, "count", 1, 1, 24);
+	}
+	const int Style = Arg(Args, "style") != 0 ? SoundStyleArg(Args) : SaidStyle;
 	const bool Loop = BoolArg(Args, "loop", pKind->Loops);
 	const double Rate = std::max(1, S.Song.FrameRate);
-	const int Most = Loop ? MaxLoopTicks(S.Song.MaxFrames, S.Song.PatternLength) : MaxSoundTicks(false);
-	const transcribe::SoundEffect Original = pKind->Make();
+	const int Most = Loop ? MaxLoopTicks(S.Song.MaxFrames, S.Song.PatternLength) : MaxOneShotTicks(S.Song.MaxFrames,
+		S.Song.PatternLength);
+	const transcribe::SoundEffect Original = MakeSoundKind(*pKind, Options);
 	// seconds: a loop as long as asked (ambience wants 30 s or more, so it doesn't show), its random parts drawn for the whole
 	// of it or its own loop played over and over; a sound that plays once stretched to it
 	const double Seconds = Arg(Args, "seconds") != 0 ? NumberArg(Args, "seconds", 4.0, 0.05, 600.0) : 0.0;
@@ -21012,7 +21314,7 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	if (Seconds > 0.0 && Loop) {
 		Shortened = Seconds * Rate > Most + 0.5;
 		Changes.LengthPercent = 100;
-		Effect = LoopOfLength(*pKind, std::min(Seconds * Rate, static_cast<double>(Most)) / 60.0, Changes, Most, Period);
+		Effect = LoopOfLength(*pKind, std::min(Seconds * Rate, static_cast<double>(Most)) / 60.0, Changes, Most, Period, Options);
 	}
 	else {
 		if (Seconds > 0.0)
@@ -21021,29 +21323,44 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 		Shortened = FitSoundEffect(Original, Most, Changes);
 		Effect = ChangeSoundEffect(Original, Changes, Most);
 	}
+	StyleSoundEffect(Effect, Style);
 	if (!Loop)
-		RingOut(Effect);
+		RingOut(Effect, Most);
 	std::string Title = pKind->Name;
 	Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
-	const std::string Name = Arg(Args, "name") != 0 ? Trim(StringArg(Args, "name")) : FreeSoundName(S.Song, "SFX " + Title);
-	const std::string Taken = SoundNameProblem(S.Song, Name);
-	if (!Taken.empty())
-		throw Problem(Taken);
+	if (!Options.Surface.empty() && Options.Surface != pKind->Surfaces[0])
+		Title += " " + Options.Surface;
+	int Removed = 0;
+	const int Replace = ReplaceSoundTrack(S, Args, Removed);
+	const std::string Name = SoundEffectName(S, Args, "SFX " + Title, Replace);
 
 	std::string Parts;
-	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop, Period);
+	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop, Period, Replace);
 	std::string Changed;
+	if (Lowercase(Trim(Kind)) != pKind->Name && Squeezed(Kind) != Squeezed(pKind->Name))
+		Changed += Format(" Read \"%s\" as the %s sound%s%s.", Kind.c_str(), pKind->Name.c_str(), Options.Surface.empty() ? "" :
+			(" on " + Options.Surface).c_str(), Style > 0 && Arg(Args, "style") == 0 ? Format(", style %s", SOUND_STYLE_WORDS[Style]).c_str() : "");
+	if (!Options.Surface.empty() && Changed.empty())
+		Changed += " On " + Options.Surface + ".";
+	if (Options.Count > 0)
+		Changed += Format(" %d %s.", Options.Count, pKind->Counts.c_str());
 	if (Changes.Variant > 1)
-		Changed += Format(" Variant %d: %s.", Changes.Variant, VariantText(Changes.Variant).c_str());
+		Changed += Format(" Variant %d: %s.", Changes.Variant, VariantText(Changes.Variant, HasPulse(Effect)).c_str());
 	Changed += SoundChanges(Changes);
+	if (Style > 0)
+		Changed += Format(" Style %s: %s.", SOUND_STYLE_WORDS[Style], Style == SFX_STYLE_REALISTIC ? "sweeps of more than half an octave "
+			"narrowed by half, attacks softened" : "sweeps widened half again");
 	if (Shortened)
 		Changed += ShortenedText(S, Loop);
-	return WithRemarks(S, Format("Made track %d \"%s\": the %s sound (%s), %s long, on %s.%s %s Its "
-		"instruments' sequences shape it, so the user can change it in FamiTracker's instrument editor. FamiTracker shows the new "
-		"track now: play it for the user. For other takes, make another with variant 2, 3..., semitones, length_percent or "
-		"volume_percent. FamiTracker can't undo adding a track: the user removes one in Module > Module properties.",
+	return WithRemarks(S, Format("%s track %d \"%s\": the %s sound (%s), %s long, on %s.%s %s Its "
+		"instruments' sequences shape it, so the user can change it in FamiTracker's instrument editor. FamiTracker shows the "
+		"track now: play it for the user. For other takes, make another with variant 2, 3..., semitones, length_percent, "
+		"volume_percent or style (realistic: grounded, cartoon: bouncier), with replace (the track's name) to try it again in its "
+		"place.%s%s", Replace >= 0 ? "Wrote" : "Made",
 		Track + 1, Name.c_str(), pKind->Name.c_str(), pKind->Use.c_str(), Format("%.2f s", Effect.length() / static_cast<double>(
-		std::max(1, S.Song.FrameRate))).c_str(), Parts.c_str(), Changed.c_str(), SoundPlayText(Name, Loop).c_str()));
+		std::max(1, S.Song.FrameRate))).c_str(), Parts.c_str(), Changed.c_str(), SoundPlayText(Name, Loop).c_str(),
+		SoundRoomText(S, Replace, Removed).c_str(), Replace >= 0 ? "" : " FamiTracker can't undo adding a track: the user removes one "
+		"in Module > Module properties."));
 }
 
 // Tracks by number (from 1) or name
@@ -21893,6 +22210,27 @@ std::string CheckLoopTool(Session &S, const Json &Args)
 		throw Problem("The song has no rows.");
 	const double Rate = std::max(1, S.Song.FrameRate);
 	const int LastRow = F.EndRow(PL) - 1;
+
+	// A sound effect's loop is judged as a sound's: its seam by the level and what sounds across it, not by key and bars
+	const TrackUse Use = UseOfTrack(S);
+	if (Use.Use == TRACK_SOUND) {
+		const SoundHearing H = HearSound(S, Use);
+		std::string Text = Use.Halts ? Format("\"%s\" is a sound effect that plays once: it halts after %s, which suits a sound "
+			"(a loop of ambience doesn't halt).\n", S.Song.TrackName.c_str(), SecondsText(Use.Seconds).c_str()) : Format("\"%s\" is a "
+			"sound effect that loops as a whole, %s, as ambience does (export_for_game saves it with its loop points).\n",
+			S.Song.TrackName.c_str(), SecondsText(Use.Seconds).c_str());
+		Text += SoundHearingText(H);
+		std::vector<std::string> Found = SoundHearingFindings(H);
+		const std::string Cut = SoundCutFinding(S, Use);
+		if (!Cut.empty())
+			Found.insert(Found.begin(), Cut);
+		if (Found.empty())
+			Text += Use.Halts ? "\nIt rings out to silence before it halts." : "\nThe seam is smooth: its end goes on into its start "
+				"at the level it plays at, and it never drops out.";
+		for (size_t i = 0; i < Found.size(); ++i)
+			Text += Format("\n%d. ", static_cast<int>(i) + 1) + Found[i];
+		return Text;
+	}
 
 	if (F.Halts())
 		return Format("The song plays once and stops after %s (a halt, Cxx): %s. That suits a jingle or an ending; music that "
@@ -23518,6 +23856,11 @@ std::string FileSizeText(size_t Bytes)
 	return Format("%.1f MB", static_cast<double>(Bytes) / (1024.0 * 1024.0));
 }
 
+// A sound effect brought to a loudness: its peaks limited to SFX_LIMIT_CEILING_DB (under the file's -1 dBFS, which the
+// encoding's overshoot needs) by at most SFX_LIMIT_MOST_DB; normalized, it's raised by up to SFX_NORMALIZE_MOST_DB (music 12).
+// OGG_PEAK_DB: the decoded file's loudest peak
+const double SFX_LIMIT_CEILING_DB = -1.5, SFX_LIMIT_MOST_DB = 12.0, SFX_NORMALIZE_MOST_DB = 30.0, OGG_PEAK_DB = -1.0;
+
 // One track rendered, cut where it loops, brought up so its loudest peak is at
 // -1 dBFS (when Normalize; never more than 12 dB), encoded and saved next to the song
 // Loudness: the loop's loudness to bring it to, in LUFS (0 to bring its loudest peak to -1 dBFS when Normalize)
@@ -23612,23 +23955,56 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	double Measured = -70.0;	// the loop's loudness as rendered, LUFS, the two sides together
 	bool HeldByPeak = false;
 	bool Short = false;		// shorter than a 400 ms block: measured over its whole length
+	const bool Sound = UseOfTrack(S).Use == TRACK_SOUND;
+	double Limited = 0.0;	// dB a sound effect's peaks were held down by, to reach the loudness asked
 	if (Loudness < 0.0) {
 		// The loop (all of a song that plays once) to the loudness asked, its loudest peak no higher than -1 dBFS
 		const size_t From = Cut.Loops ? static_cast<size_t>(std::max(0LL, Cut.LoopStart)) : 0;
 		Measured = SoundLoudness(Kept, KeptRight, SampleRate, From, Kept.size() - From, Short);
 		if (Measured > -70.0 && Peak > 0.0001f) {
-			const double Gain = LoudnessGain(Measured, Loudness, Peak, HeldByPeak);
-			const double Factor = std::pow(10.0, Gain / 20.0);
-			for (int s = 0; s < 2; ++s)
-				for (size_t i = 0; i < Kept.size(); ++i)
-					(*pSides[s])[i] = static_cast<float>((*pSides[s])[i] * Factor);
+			double Gain = LoudnessGain(Measured, Loudness, Peak, HeldByPeak);
+			if (Sound && HeldByPeak) {
+				// A sound effect's sharp start (a step's click, a coin's attack) would keep it far under the others (a step on
+				// grass came out 16 dB under one on wood): its peaks are held down by a limiter instead, by up to
+				// SFX_LIMIT_MOST_DB, and its loudness measured again after it
+				const std::vector<float> Left0 = Kept, Right0 = KeptRight;
+				double Want = Loudness - Measured;
+				for (int Pass = 0; Pass < 4; ++Pass) {
+					Kept = Left0;
+					KeptRight = Right0;
+					const double Factor = std::pow(10.0, Want / 20.0);
+					for (int s = 0; s < 2; ++s)
+						for (size_t i = 0; i < Kept.size(); ++i)
+							(*pSides[s])[i] = static_cast<float>((*pSides[s])[i] * Factor);
+					Limited = LimitPeaks(Kept, KeptRight, SampleRate, SFX_LIMIT_CEILING_DB);
+					bool Again = false;
+					const double Now = SoundLoudness(Kept, KeptRight, SampleRate, From, Kept.size() - From, Again);
+					if (Limited > SFX_LIMIT_MOST_DB) {
+						Want -= Limited - SFX_LIMIT_MOST_DB;
+						continue;
+					}
+					if (std::fabs(Now - Loudness) < 0.2 || Pass == 3)
+						break;
+					Want += Loudness - Now;
+				}
+				Gain = Want;
+				bool Again = false;
+				HeldByPeak = SoundLoudness(Kept, KeptRight, SampleRate, From, Kept.size() - From, Again) < Loudness - 0.5;
+			}
+			else {
+				const double Factor = std::pow(10.0, Gain / 20.0);
+				for (int s = 0; s < 2; ++s)
+					for (size_t i = 0; i < Kept.size(); ++i)
+						(*pSides[s])[i] = static_cast<float>((*pSides[s])[i] * Factor);
+			}
 			Raised = Gain;
 		}
 	}
 	else if (Normalize) {
-		// FamiTracker renders at the NES's level, well under full scale: the loudest peak to -1 dBFS
+		// FamiTracker renders at the NES's level, well under full scale: the loudest peak to -1 dBFS (a sound effect, as
+		// quiet as a step can be, up to SFX_NORMALIZE_MOST_DB)
 		if (Peak > 0.0001f) {
-			const double Gain = std::min(std::pow(10.0, 12.0 / 20.0), std::pow(10.0, -1.0 / 20.0) / Peak);
+			const double Gain = std::min(std::pow(10.0, (Sound ? SFX_NORMALIZE_MOST_DB : 12.0) / 20.0), std::pow(10.0, -1.0 / 20.0) / Peak);
 			if (Gain > 1.0) {
 				for (int s = 0; s < 2; ++s)
 					for (size_t i = 0; i < Kept.size(); ++i)
@@ -23644,10 +24020,32 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 			for (size_t i = 0; i < Fade; ++i)
 				(*pSides[s])[Kept.size() - 1 - i] *= static_cast<float>(i) / static_cast<float>(Fade);
 	}
-	// In stereo, where the song pans; a song that doesn't is the same on both sides
+	// In stereo, where the song pans; a song that doesn't is the same on both sides. Vorbis overshoots on square waves and
+	// noise (sound effects brought to -1 dBFS decoded at +0.4 to +2.2 dBFS): the file is decoded, and where its peak passes
+	// -1 dBFS, turned down by as much and encoded again
 	std::string Bytes;
-	if (!EncodeOgg(Kept, KeptRight, SampleRate, Quality, Comments, Bytes, Error))
-		throw Problem(Error);
+	double Trimmed = 0.0;	// dB taken off after encoding
+	for (int Pass = 0; ; ++Pass) {
+		if (!EncodeOgg(Kept, KeptRight, SampleRate, Quality, Comments, Bytes, Error))
+			throw Problem(Error);
+		if (Pass == 3 || (Raised <= 0.0 && Loudness >= 0.0 && !Normalize))
+			break;
+		std::vector<float> DecodedLeft, DecodedRight;
+		int DecodedRate = 0, DecodedChannels = 0;
+		OggComments Read;
+		std::string DecodeError;
+		if (!DecodeOgg(Bytes, DecodedLeft, DecodedRate, DecodedChannels, Read, DecodeError, &DecodedRight))
+			break;
+		const double Over = PeakDb(DecodedLeft, DecodedRight) - OGG_PEAK_DB;
+		if (Over <= 0.0)
+			break;
+		const float Factor = static_cast<float>(std::pow(10.0, -(Over + 0.1) / 20.0));
+		for (int s = 0; s < 2; ++s)
+			for (size_t i = 0; i < Kept.size(); ++i)
+				(*pSides[s])[i] *= Factor;
+		Trimmed += Over + 0.1;
+		Raised -= Over + 0.1;
+	}
 	std::string Path;
 	if (!S.Host().SaveFile(File, Bytes, Path, Error))
 		throw Problem(Error);
@@ -23665,7 +24063,11 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	if (Loudness < 0.0 && Measured > -70.0) {
 		// Said plainly, and the change only where there is one worth saying: the file is turned up or down from the level the
 		// song plays at in FamiTracker to reach the loudness asked
-		Text += Format(", %s at %.1f LUFS", Cut.Loops ? "its loop" : "it", Measured + Raised);
+		bool Again = false;
+		const size_t From = Cut.Loops ? static_cast<size_t>(std::max(0LL, Cut.LoopStart)) : 0;
+		const double Final = Limited > 0.0 || Trimmed > 0.0 ? SoundLoudness(Kept, KeptRight, SampleRate, From, Kept.size() - From, Again) :
+			Measured + Raised;
+		Text += Format(", %s at %.1f LUFS", Cut.Loops ? "its loop" : "it", Final);
 		if (std::fabs(Raised) >= 0.5)
 			Text += Format(" (the file turned %s %.1f dB from how loud the song plays in FamiTracker, to reach that loudness)",
 				Raised >= 0.0 ? "up" : "down", std::fabs(Raised));
@@ -23673,7 +24075,7 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 			Text += Format(", measured over its whole %.2f s (shorter than the 400 ms blocks loudness is gated in, so ungated)",
 				static_cast<double>(Kept.size()) / SampleRate);
 		if (HeldByPeak) {
-			Text += Format(": %.1f LU short of %g LUFS, held back so its loudest peak stays at -1 dBFS", Loudness - Measured - Raised, Loudness);
+			Text += Format(": %.1f LU short of %g LUFS, held back so its loudest peak stays at -1 dBFS", Loudness - Final, Loudness);
 			++HeldBack;
 		}
 	}
@@ -23681,6 +24083,12 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 		Text += ", silent, so its level stayed";
 	else if (Raised >= 0.1)
 		Text += Format(", turned up %.1f dB from how loud the song plays in FamiTracker (its loudest peak at -1 dBFS)", Raised);
+	if (Limited >= 0.1)
+		Text += Format(", its sharpest peaks held down up to %.1f dB by a limiter to reach that loudness (a sound effect's attack)",
+			Limited);
+	if (Trimmed >= 0.05)
+		Text += Format(", %.1f dB trimmed after encoding so the decoded file's loudest peak stays under -1 dBFS (OGG overshoots on "
+			"square waves and noise)", Trimmed);
 	if (FadeIn > 0)
 		Text += Format(", fading in over its first %d ms (the drum samples' level, Zxx, set as it starts would click)",
 			static_cast<int>(FadeIn * 1000 / static_cast<size_t>(std::max(1, SampleRate))));
@@ -26931,12 +27339,78 @@ Json ListenJson(Session &S, const ListenReport &R, const ListenFinding &F, const
 const char *const LISTEN_EAR = "That was the song's real audio, heard for what an ear would notice; the user's own ear has the final "
 	"word: tell them what you heard, play it for them and ask how it sounds.";
 
+// listen on a sound effect (UseOfTrack): heard as a sound, not as music (no melody, held notes, chords or a bird's
+// harshness against a soundtrack's): its length, level, what sounds when, a one-shot cut while it sounds, a loop's seam and
+// gaps, and notes that click. The JSON as listen's, its findings for music empty, with the sound's own
+std::string SoundListen(Session &S, const TrackUse &Use, const std::string &Form, std::string *pJson)
+{
+	const SoundHearing H = HearSound(S, Use);
+	std::vector<std::string> Found = SoundHearingFindings(H);
+	const std::string Cut = SoundCutFinding(S, Use);
+	if (!Cut.empty())
+		Found.insert(Found.begin(), Cut);
+	const int Clicking = static_cast<int>(SongClicks(S, 0, S.Time.TotalRows()).size());
+	if (Clicking > 0)
+		Found.push_back(Format("%s on the 2A03's pulses %s (a pitch that takes the period across a multiple of 256 restarts the "
+			"wave): polish with touches [\"clicks\"] nudges them.", Plural(Clicking, "note", "notes").c_str(), Clicking == 1 ? "clicks" :
+			"click"));
+	Json Out = Json::MakeObject();
+	Out.Set("check", "listen");
+	Out.Set("track", S.Song.Track + 1);
+	Out.Set("track_name", S.Song.TrackName);
+	Out.Set("from_bar", 1);
+	Out.Set("to_bar", S.Time.BarCount());
+	Out.Set("pattern_length", S.Time.PatternLength);
+	Out.Set("rows_per_beat", S.Time.RowsPerBeat);
+	Out.Set("rows_per_bar", S.Time.RowsPerBar);
+	Out.Set("seconds", Json::NumberText(FormatNumber(std::floor(H.Seconds * 100.0 + 0.5) / 100.0)));
+	Out.Set("melody_channel", Json());
+	Out.Set("parts", Json::MakeArray());
+	Json CountList = Json::MakeObject();
+	for (int k = 0; k < LISTEN_KINDS; ++k)
+		CountList.Set(ListenKindId(k), 0);
+	Out.Set("counts", CountList);
+	Out.Set("findings", Json::MakeArray());
+	Json Sound = Json::MakeObject();
+	Sound.Set("loops", H.Loops);
+	Sound.Set("sounding_seconds", Json::NumberText(FormatNumber(std::floor(H.SoundingSeconds * 100.0 + 0.5) / 100.0)));
+	Sound.Set("peak_dbfs", Json::NumberText(FormatNumber(std::floor(H.PeakDb * 10.0 + 0.5) / 10.0)));
+	Sound.Set("lufs", Json::NumberText(FormatNumber(std::floor(H.Lufs * 10.0 + 0.5) / 10.0)));
+	if (H.Loops)
+		Sound.Set("seam_db", Json::NumberText(FormatNumber(std::floor(H.SeamDb * 10.0 + 0.5) / 10.0)));
+	Json Notes = Json::MakeArray();
+	for (size_t i = 0; i < Found.size(); ++i)
+		Notes.Push(Found[i]);
+	Sound.Set("findings", Notes);
+	Out.Set("sound", Sound);
+	Out.Set("print", SoundPrint(S));
+	if (pJson != 0)
+		*pJson = WriteJson(Out);
+	if (Form == "json")
+		return WriteJson(Out);
+	std::string Text = Format("Listened to \"%s\", a sound effect (speed 1, a row a tick): rendered its real audio as FamiTracker "
+		"plays it and heard it as a sound, not as music (no melody, chords or held notes to judge).\n", S.Song.TrackName.c_str()) +
+		SoundHearingText(H);
+	if (Found.empty())
+		Text += Format("\nNothing sounds wrong: %s, nothing clicks.", H.Loops ? "its seam is smooth and it never drops out" :
+			"it rings out to silence before it halts");
+	else {
+		Text += "\nHeard:";
+		for (size_t i = 0; i < Found.size(); ++i)
+			Text += Format("\n%d. ", static_cast<int>(i) + 1) + Found[i];
+	}
+	return Text + "\n" + LISTEN_EAR;
+}
+
 std::string ListenTool(Session &S, const Json &Args, std::string *pJson)
 {
 	const std::string Form = Squeezed(StringArg(Args, "format", "text"));
 	if (Form != "text" && Form != "short" && Form != "json")
 		throw Problem("format: text (the default: every finding with what's heard and its fix), short (the counts and the three "
 			"findings heard worst, with their calls) or json.");
+	const TrackUse Use = UseOfTrack(S);
+	if (Use.Use == TRACK_SOUND)
+		return SoundListen(S, Use, Form, pJson);
 	ListenReport R = ListenToTrack(S, Args);
 	// style atmospheric: a texture's motifs aren't a tune to keep clear, so the melody covered isn't a finding
 	if (TextureArg(Args))
@@ -35505,20 +35979,24 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				"mid, bright).");
 			Json PitchTo = ChannelProp("The pitch it slides to over its length, or over each repeat (a chirp). Default: it stays.");
 			Schema L;
-			L.Add("channel", EnumProp("The 2A03 channel that plays it: a pulse (tones, beeps, chirps), the triangle (low booms, "
-				"thumps, pure whistles; no volume of its own) or the noise (wind, rain, fire, hits, flaps).",
-				std::vector<std::string>{ "pulse", "triangle", "noise" }), true);
+			L.Add("channel", EnumProp("The 2A03 channel that plays it: a pulse (tones, beeps, chirps; pulse 1 or pulse 2 for that "
+				"one, say two birds apart, else the first free one), the triangle (low booms, thumps, pure whistles and drops; no "
+				"volume of its own: it plays at one level, covering quieter pulses, and stops at once) or the noise (wind, rain, "
+				"fire, hits, flaps).", std::vector<std::string>{ "pulse", "pulse 1", "pulse 2", "triangle", "noise" }), true);
 			L.Add("start", Prop("number", "When it starts, in seconds (default 0)."));
-			L.Add("seconds", Prop("number", "How long it lasts (default 0.5; at most 4.2 in a sound that plays once, longer in a loop)."));
+			L.Add("seconds", Prop("number", "How long it lasts (default 0.5; at most 12 in a sound that plays once, longer in a loop; "
+				"past 4.2 it plays as pieces, an instrument each)."));
 			L.Add("pitch", Pitch);
 			L.Add("pitch_to", PitchTo);
 			L.Add("glide", EnumProp("How it slides there: even (default), fast (most of the way at once, like a chirp or a zap), "
 				"slow (late, like a siren winding up).", std::vector<std::string>{ "even", "fast", "slow" }));
-			L.Add("volume", LevelProp("Its loudest, 1-15, or soft, medium, loud (default 12)."));
+			L.Add("volume", LevelProp("Its loudest, 1-15, or soft, medium, loud (default 12). The triangle has none."));
 			L.Add("volume_to", LevelProp("Its loudness at its end, 0-15: fading away (or growing) over its length."));
-			L.Add("envelope", EnumProp("Each time it sounds: steady (default), hit (loud at once, dying quickly), fade (dying "
-				"evenly), swell (growing), swell_fade (growing, then fading), drops (silent but for short random blips: rain, "
-				"drips).", std::vector<std::string>{ "steady", "hit", "fade", "swell", "swell_fade", "drops" }));
+			L.Add("envelope", EnumProp("Each time it sounds: steady (default; it ends with a short fade over its last two ticks, "
+				"which keeps notes apart), held (steady without that fade, for layers that run on into each other), hit (loud at "
+				"once, dying quickly), fade (dying evenly), swell (growing), swell_fade (growing, then fading), drops (silent but for "
+				"short random blips: rain, drips).", std::vector<std::string>{ "steady", "held", "hit", "fade", "swell", "swell_fade",
+				"drops" }));
 			L.Add("repeats", Prop("integer", "It sounds this many times in its length, each with the envelope and the slide: chirps, "
 				"flaps, footfalls, beeps (1-256)."));
 			L.Add("gap", Prop("number", "With repeats: the share of each that's silent, 0-0.9 (default 0.25)."));
@@ -35528,13 +36006,16 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			L.Add("flutter", LevelProp("Its loudness wobbling, times a second: wings 8-12, a motor 15; or slow, medium, fast."));
 			L.Add("vibrato", LevelProp("Its pitch wavering, in semitones (0.06 faint, 0.3 gentle to 5 wild), or faint, gentle, medium, "
 				"strong, wild."));
-			L.Add("vibrato_hz", Prop("number", "How fast the vibrato wavers, times a second (default 6)."));
+			L.Add("vibrato_hz", Prop("number", "How fast the vibrato wavers, times a second, 0.1-20 (default 6; 0.1-0.5 a slow sway "
+				"or a howl's moan)."));
 			L.Add("crackle", LevelProp("Random pops on top of it, like fire or rain on a roof: 0-1, or few, some, many. With envelope "
 				"drops, how many drops."));
 			L.Add("rough", Prop("boolean", "A harsh, gritty edge: the pitch jitters (thunder, a hurt buzz)."));
 			L.Add("duty", LevelProp("A pulse's tone: 12.5% (thin, nasal), 25% (bright), 50% (round; the default), 75%. The noise's: "
 				"metallic (buzzy) or plain."));
 			L.Add("echo", Prop("boolean", "A pulse's softer echo a tenth of a second later, on the other pulse."));
+			L.Add("pan", LevelProp("Where it plays between the speakers: -1 left to 1 right (default 0, the middle), or left, "
+				"slightly left, center, slightly right, right. Layers at different pans don't share a channel."));
 			SoundLayer = L.Get();
 		}
 		Json SoundLayers = Prop("array", "Instead of a kind or a recording: a sound described in words, as layers on the 2A03's "
@@ -35559,21 +36040,32 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("layers", SoundLayers)
 				.Add("seconds", Prop("number", "How long it lasts. With layers: the whole sound (default: until its last layer ends); "
 					"a loop starts over after it. With a kind that loops: the loop, its random parts drawn for all of it (ambience "
-					"wants 30 s or more, so its repeat doesn't show); a kind that plays once is stretched to it (at most 4.2 s)."))
+					"wants 30 s or more, so its repeat doesn't show); a kind that plays once is stretched to it (at most 12 s)."))
 				.Add("loop", Prop("boolean", "The track loops instead of halting, for ambience a game plays over and over (the kinds "
 					"marked \"loops\" do by default). A loop can last as long as the song's frames hold, a row a tick (128 frames of "
-					"64 rows: 136 s); a layer longer than 4.2 s plays as pieces, an instrument each."))
+					"64 rows: 136 s); a layer longer than 4.2 s plays as pieces, an instrument each, in a loop or a sound that plays "
+					"once."))
 				.Add("recording", Prop("string", "Instead of a kind: a WAV file of the user's voice (\"pew\", \"boing\", \"kssh\") "
 					"on their computer, like C:\\Users\\Name\\Documents\\pew.wav, or \"latest\" for the newest take recorded in "
 					"FamiTracker (Record from microphone, Sound effect from your voice: they're kept in the Recordings folder next "
 					"to FamiTracker.exe). Its pitch and loudness play on a pulse, its breathy and hissy part on the noise channel."))
+				.Add("surface", Prop("string", "With footstep: what the step falls on: dirt (default), wood, grass, stone, snow, "
+					"sand, water, metal. kind takes it in words too: \"footsteps on grass\"."))
+				.Add("count", Prop("integer", "With a kind that counts: birds (1-4; with loop, how many call), footstep (steps), "
+					"bubbles (how many), drip (with loop: drops in four seconds)."))
+				.Add("style", EnumProp("game (default: as the kinds are made), realistic (grounded: pitch sweeps of more than half "
+					"an octave narrowed, softer attacks; for nature, which a cartoon's sweeps make silly) or cartoon (sweeps widened). "
+					"kind takes it in words too: \"realistic wind\".", std::vector<std::string>{ "game", "realistic", "cartoon" }))
+				.Add("replace", Prop("string", "A sound effect's track (its name or number) to write the new sound into, in place of "
+					"its old one, whose instruments no other track plays are removed: for trying a sound again without filling "
+					"FamiTracker's 64 instruments and the track list. It keeps the track's name unless name is given."))
 				.Add("octaves", Prop("integer", "With a recording: whole octaves to move its pitch, -4 to 4. Default: so its "
 					"middle lands near E-4."))
 				.Add("noise", Prop("boolean", "With a recording: its unpitched part on the noise channel (default true)."))
 				.Add("name", Prop("string", "The new track's name, which the exported file and the GameMaker sound are named "
 					"after. Default: \"SFX\" and the kind or the recording's file name, like \"SFX Jump\"."))
 				.Add("variant", Prop("integer", "1 as designed; 2-9 other takes: higher or lower, shorter or longer, every other "
-					"one with another pulse duty."))
+					"one with another pulse duty, another draw of the random parts."))
 				.Add("semitones", Prop("integer", "Higher (positive) or lower, -24 to 24 (noise moves a step for 3)."))
 				.Add("length_percent", Prop("integer", "Its length, 25-400 (100 as designed)."))
 				.Add("volume_percent", Prop("integer", "Its volume, 10-200 (100 as designed; the loudest is 15).")),

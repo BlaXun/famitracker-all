@@ -63,6 +63,31 @@ std::string Squeezed(const std::string &Text)
 	return Out;
 }
 
+// A steady random draw, so a sound comes out the same each time it's made
+class Random {
+public:
+	explicit Random(unsigned int Seed) : m_State(Seed * 2654435761u + 0x9E3779B9u)
+	{
+		if (m_State == 0)
+			m_State = 1;
+		Next();
+	}
+	unsigned int Next()
+	{
+		m_State ^= m_State << 13;
+		m_State ^= m_State >> 17;
+		m_State ^= m_State << 5;
+		return m_State;
+	}
+	double Unit()    // 0 to just under 1
+	{
+		return (Next() >> 8) / 16777216.0;
+	}
+
+private:
+	unsigned int m_State;
+};
+
 // Builds a layer a stretch at a time
 class Maker {
 public:
@@ -271,11 +296,6 @@ SoundEffect Splash()	// a bright burst of noise falling away, with a rising "blo
 		Maker(PULSE, 1).Duty(2).Go(6, 9, 2, 45, 57, 0.6));
 }
 
-SoundEffect Footstep()	// a tiny soft tap
-{
-	return Effect(Maker(NOISE).Go(4, 7, 1, 9, 8));
-}
-
 SoundEffect Warp()		// rising and wobbling, the duty flickering
 {
 	return Effect(Maker(PULSE).Go(36, 11, 11, 40, 76, 1.3).Go(8, 11, 1, 76, 77).Vibrato(0, 44, 0.6, 12.0, 0.6).DutyCycle({ 1, 2 }, 2));
@@ -339,24 +359,24 @@ SfxLayerDesign Layer(SfxChannel Channel, double Start, double Seconds, double Pi
 	return D;
 }
 
-SoundEffect Designed(const std::vector<SfxLayerDesign> &Layers, bool Loop, double Seconds = 0.0)
+SoundEffect Designed(const std::vector<SfxLayerDesign> &Layers, bool Loop, double Seconds = 0.0, int Seed = 1)
 {
 	SoundEffect Out;
 	std::string Problem;
-	DesignSoundEffect(Layers, Seconds, 60, 1, Loop, 2, Out, Problem, Loop ? 1 << 20 : 0);	// a loop as long as it's made
+	DesignSoundEffect(Layers, Seconds, 60, Seed, Loop, 2, Out, Problem, Loop ? 1 << 20 : SFX_ONE_SHOT_TICKS);	// as long as it's made
 	return Out;
 }
 
 // The loops of ambience, Seconds long: their random parts drawn for the whole of it
 
-SoundEffect WindFor(double Seconds)	// a heavy wind: dark noise in uneven gusts, louder and brighter as each one blows
+SoundEffect WindFor(double Seconds, const SoundKindOptions &)	// a heavy wind: dark noise in uneven gusts, louder and brighter as each one blows
 {
 	SfxLayerDesign Air = Layer(NOISE, 0.0, Seconds, 6, -1, 10, SFX_STEADY);
 	Air.Gusts = std::max(1, Round(0.75 * Seconds));	// three in four seconds
 	return Designed({ Air }, true);
 }
 
-SoundEffect RainFor(double Seconds)	// a soft, bright hiss with drops pattering on it, and now and then a drop plinking
+SoundEffect RainFor(double Seconds, const SoundKindOptions &)	// a soft, bright hiss with drops pattering on it, and now and then a drop plinking
 {
 	SfxLayerDesign Hiss = Layer(NOISE, 0.0, Seconds, 13, -1, 3, SFX_STEADY);
 	Hiss.Crackle = 0.4;
@@ -366,7 +386,7 @@ SoundEffect RainFor(double Seconds)	// a soft, bright hiss with drops pattering 
 	return Designed({ Hiss, Plinks }, true);
 }
 
-SoundEffect FireFor(double Seconds)	// a dark, flickering roar with crackles popping out of it
+SoundEffect FireFor(double Seconds, const SoundKindOptions &)	// a dark, flickering roar with crackles popping out of it
 {
 	SfxLayerDesign Roar = Layer(NOISE, 0.0, Seconds, 3, -1, 5, SFX_STEADY);
 	Roar.Gusts = std::max(1, Round(1.5 * Seconds));	// six in four seconds
@@ -376,17 +396,17 @@ SoundEffect FireFor(double Seconds)	// a dark, flickering roar with crackles pop
 
 SoundEffect Wind()
 {
-	return WindFor(4.0);
+	return WindFor(4.0, SoundKindOptions());
 }
 
 SoundEffect Rain()
 {
-	return RainFor(4.0);
+	return RainFor(4.0, SoundKindOptions());
 }
 
 SoundEffect Fire()
 {
-	return FireFor(4.0);
+	return FireFor(4.0, SoundKindOptions());
 }
 
 SoundEffect Thunder()	// a bright crack, then a rough rumble rolling away in waves, over a low boom
@@ -400,21 +420,6 @@ SoundEffect Thunder()	// a bright crack, then a rough rumble rolling away in wav
 	SfxLayerDesign Boom = Layer(TRIANGLE, 0.05, 0.45, 31, 19, 15, SFX_HIT);
 	Boom.Glide = SFX_GLIDE_FAST;
 	return Designed({ Crack, Rumble, Boom }, false);
-}
-
-SoundEffect Birds()		// one bird tweets twice and trills, another answers lower and softer
-{
-	SfxLayerDesign Tweet = Layer(PULSE, 0.0, 0.25, 74, 81, 9, SFX_HIT);
-	Tweet.Repeats = 2;
-	Tweet.Glide = SFX_GLIDE_FAST;
-	SfxLayerDesign Trill = Layer(PULSE, 0.35, 0.35, 83, 78, 8, SFX_HIT);
-	Trill.Repeats = 5;
-	SfxLayerDesign Again = Layer(PULSE, 1.1, 0.12, 74, 81, 7, SFX_HIT);
-	Again.Glide = SFX_GLIDE_FAST;
-	SfxLayerDesign Answer = Layer(PULSE, 0.55, 0.4, 71, 76, 6, SFX_SWELL_FADE);
-	Answer.Repeats = 2;
-	Answer.Duty = 1;
-	return Designed({ Tweet, Trill, Again, Answer }, false);
 }
 
 SoundEffect Wings()		// wings flapping away, fading, with a chirp as the bird takes off and a faint one far off
@@ -461,6 +466,488 @@ SoundEffect Heartbeat()	// lub-dub: two low thumps on the triangle with a dull k
 	return Designed({ Lub, Dub, Knock, Knock2 }, true, 1.0);
 }
 
+// The kinds added for nature and places (feat-sfx-kinds), made in the style and at the level of the kinds above (the user
+// preferred them to designs from the layers that were more elaborate), except the reward, which is the designed item get the
+// user preferred
+
+SoundEffect Chirp()		// one bird's "chir-rup": a quick slide up, then a little fall
+{
+	SfxLayerDesign Up = Layer(PULSE, 0.0, 0.12, 74, 81, 9, SFX_HIT);
+	Up.Glide = SFX_GLIDE_FAST;
+	SfxLayerDesign Down = Layer(PULSE, 0.13, 0.08, 80, 76, 6, SFX_HIT);
+	Down.Glide = SFX_GLIDE_FAST;
+	return Designed({ Up, Down }, false);
+}
+
+// Birds as a scene: one bird (Count 1), two answering each other (the kind's own), and more calling farther off
+SoundEffect BirdsWith(const SoundKindOptions &Options)
+{
+	const int Count = Options.Count <= 0 ? 2 : std::max(1, std::min(4, Options.Count));
+	SfxLayerDesign Tweet = Layer(PULSE, 0.0, 0.25, 74, 81, 9, SFX_HIT);
+	Tweet.Repeats = 2;
+	Tweet.Glide = SFX_GLIDE_FAST;
+	SfxLayerDesign Trill = Layer(PULSE, 0.35, 0.35, 83, 78, 8, SFX_HIT);
+	Trill.Repeats = 5;
+	SfxLayerDesign Again = Layer(PULSE, 1.1, 0.12, 74, 81, 7, SFX_HIT);
+	Again.Glide = SFX_GLIDE_FAST;
+	std::vector<SfxLayerDesign> Layers = { Tweet, Trill, Again };
+	if (Count >= 2) {
+		SfxLayerDesign Answer = Layer(PULSE, 0.55, 0.4, 71, 76, 6, SFX_SWELL_FADE);
+		Answer.Repeats = 2;
+		Answer.Duty = 1;
+		Layers.push_back(Answer);
+	}
+	if (Count >= 3) {	// a third farther off, higher and fainter, after the others
+		SfxLayerDesign Far = Layer(PULSE, 1.3, 0.3, 79, 84, 4, SFX_HIT);
+		Far.Repeats = 3;
+		Far.Glide = SFX_GLIDE_FAST;
+		Far.Duty = 1;
+		Layers.push_back(Far);
+	}
+	if (Count >= 4) {	// and a fourth answering it, a little lower
+		SfxLayerDesign Last = Layer(PULSE, 1.7, 0.24, 76, 72, 4, SFX_HIT);
+		Last.Repeats = 2;
+		Last.Glide = SFX_GLIDE_FAST;
+		Layers.push_back(Last);
+	}
+	return Designed(Layers, false, 0.0, Options.Seed);
+}
+
+SoundEffect Birds()
+{
+	return BirdsWith(SoundKindOptions());
+}
+
+// Birdsong as ambience, Seconds long: calls here and there, Count birds (the kind's two), on the two pulses in turn
+SoundEffect BirdsFor(double Seconds, const SoundKindOptions &Options)
+{
+	const int Count = Options.Count <= 0 ? 2 : std::max(1, std::min(6, Options.Count));
+	Random R(static_cast<unsigned int>(Options.Seed) * 7919u + 17u);
+	std::vector<SfxLayerDesign> Layers;
+	double End[2] = { 0.0, 0.0 };
+	const double Every = 2.4 / Count;	// a call every this long on average
+	for (double t = 0.3 * R.Unit(); t < Seconds - 0.5; t += Every * (0.6 + 0.8 * R.Unit())) {
+		const int Lane = End[0] <= End[1] ? 0 : 1;
+		const double At = std::max(t, End[Lane] + 0.05);
+		if (At > Seconds - 0.5)
+			break;
+		const int Bird = static_cast<int>(R.Unit() * Count);	// each bird its own pitch and voice
+		const double Pitch = 72 + (Bird * 5) % 11;
+		SfxLayerDesign Call = Layer(PULSE, At, 0.12 + 0.2 * R.Unit(), Pitch, Pitch + 5 + std::floor(3 * R.Unit()),
+			std::max(3, 9 - Bird - static_cast<int>(3 * R.Unit())), SFX_HIT);
+		Call.Glide = SFX_GLIDE_FAST;
+		Call.Repeats = 1 + static_cast<int>(3 * R.Unit());
+		Call.Duty = Bird % 2 == 0 ? 2 : 1;
+		Call.Voice = Lane;
+		End[Lane] = At + Call.Seconds;
+		Layers.push_back(Call);
+	}
+	if (Layers.empty())
+		Layers.push_back(Layer(PULSE, 0.0, 0.12, 74, 81, 9, SFX_HIT));
+	return Designed(Layers, true, Seconds, Options.Seed);
+}
+
+// Waves on a shore, Seconds long: each draws in, rising and brightening, breaks at its top and washes back, darkening,
+// with a little fizz; never quite silent, so the surf goes on. Small: water lapping, quicker and softer
+SoundEffect Surf(double Seconds, int Seed, bool Small)
+{
+	Random R(static_cast<unsigned int>(Seed) * 104729u + (Small ? 5u : 3u));
+	const double Each = Small ? 1.3 : 3.2;
+	const int Count = std::max(1, static_cast<int>(std::floor(Seconds / Each + 0.5)));
+	std::vector<double> Lengths;
+	double Sum = 0.0;
+	for (int i = 0; i < Count; ++i) {
+		Lengths.push_back(0.75 + 0.5 * R.Unit());
+		Sum += Lengths.back();
+	}
+	std::vector<SfxLayerDesign> Layers;
+	const int Low = Small ? 2 : 3, Ticks = std::max(Count * 8, Round(Seconds * 60.0));
+	double Sofar = 0.0;
+	for (int i = 0; i < Count; ++i) {
+		// In whole ticks, so each wave's two layers meet the next's exactly
+		const int From = Round(Ticks * Sofar / Sum);
+		Sofar += Lengths[static_cast<size_t>(i)];
+		const int To = Round(Ticks * Sofar / Sum), Mid = From + std::max(1, Round((To - From) * 0.4));
+		const double At = From / 60.0, Length = (To - From) / 60.0, In = (Mid - From) / 60.0;
+		const double Size = 0.7 + 0.3 * R.Unit();
+		const int Top = std::max(Low + 2, static_cast<int>(std::floor((Small ? 7 : 10) * Size + 0.5)));
+		SfxLayerDesign Draw = Layer(NOISE, At, In, Small ? 5 : 4, Small ? 8 : 7, Low, SFX_HELD);
+		Draw.VolumeTo = Top;
+		Draw.Glide = SFX_GLIDE_SLOW;
+		SfxLayerDesign Wash = Layer(NOISE, At + In, Length - In, Small ? 9 : 9, Small ? 6 : 4, Top, SFX_HELD);
+		Wash.VolumeTo = Low;
+		Wash.Glide = SFX_GLIDE_FAST;
+		Wash.Crackle = 0.25;
+		Layers.push_back(Draw);
+		Layers.push_back(Wash);
+	}
+	return Designed(Layers, true, Ticks / 60.0, Seed);
+}
+
+SoundEffect WavesFor(double Seconds, const SoundKindOptions &Options)
+{
+	return Surf(Seconds, Options.Seed, false);
+}
+
+SoundEffect LappingFor(double Seconds, const SoundKindOptions &Options)
+{
+	return Surf(Seconds, Options.Seed, true);
+}
+
+SoundEffect Waves()
+{
+	return Surf(6.4, 1, false);
+}
+
+SoundEffect Lapping()
+{
+	return Surf(3.9, 1, true);
+}
+
+SoundEffect Creak()		// a door creaking open: a thin pulse grinding up, then settling back down, and a dull stop
+{
+	SfxLayerDesign Open = Layer(PULSE, 0.0, 0.55, 41, 48, 8, SFX_HELD);
+	Open.VolumeTo = 11;
+	Open.Glide = SFX_GLIDE_SLOW;
+	Open.Vibrato = 1.2;
+	Open.VibratoHz = 7.0;
+	Open.Flutter = 22.0;
+	Open.Rough = true;
+	Open.Duty = 0;
+	SfxLayerDesign Settle = Open;
+	Settle.Start = 0.55;
+	Settle.Seconds = 0.45;
+	Settle.Pitch = 48;
+	Settle.PitchTo = 44;
+	Settle.Volume = 11;
+	Settle.VolumeTo = 5;
+	Settle.Glide = SFX_GLIDE_EVEN;
+	Settle.Vibrato = 1.8;
+	Settle.VibratoHz = 5.0;
+	Settle.Flutter = 18.0;
+	Settle.Envelope = SFX_STEADY;
+	SfxLayerDesign Stop = Layer(NOISE, 1.0, 0.08, 4, -1, 8, SFX_HIT);
+	return Designed({ Open, Settle, Stop }, false);
+}
+
+// One step on a surface: the kind's own soft tap on dirt, a hollow tok on wood, a brush on grass...
+SoundEffect StepOn(const std::string &Surface, int Start)
+{
+	if (Surface == "wood")	// a hollow tok: a short falling thump on the triangle under a click, and a small rattle
+		return Effect(Maker(TRIANGLE, Start).Go(3, 15, 15, 57, 50, 0.6), Maker(NOISE, Start).Go(2, 8, 5, 9, 9).Rest(1).Go(3, 4, 1, 6, 6));
+	if (Surface == "grass")	// a soft, high brush and a small crunch, no thump
+		return Effect(Maker(NOISE, Start).Go(2, 4, 7, 12, 12).Go(3, 7, 2, 12, 11).Rest(2).Go(3, 4, 1, 11, 11));
+	if (Surface == "stone")	// a short bright click, and a little grit
+		return Effect(Maker(NOISE, Start).Go(1, 9, 9, 11, 11).Go(3, 6, 1, 9, 9));
+	if (Surface == "snow")	// a soft, rough crunch
+		return Effect(Maker(NOISE, Start).Go(3, 3, 7, 10, 10).Go(6, 7, 1, 10, 8).Rough(1.0));
+	if (Surface == "sand")	// a duller, softer crunch
+		return Effect(Maker(NOISE, Start).Go(3, 2, 5, 8, 8).Go(6, 5, 1, 8, 7).Rough(1.0));
+	if (Surface == "water")	// a splashy step: wet noise falling away and a small bloop
+		return Effect(Maker(NOISE, Start).Go(2, 8, 8, 11, 11).Go(8, 7, 1, 11, 8, 0.8, 0.6).Rough(1.0),
+			Maker(PULSE, Start + 1).Duty(2).Go(4, 4, 1, 50, 57, 0.6));
+	if (Surface == "metal")	// a ringing clank on the noise's metallic mode
+		return Effect(Maker(NOISE, Start).Duty(1).Go(1, 9, 9, 9, 9).Go(7, 7, 1, 9, 9));
+	return Effect(Maker(NOISE, Start).Go(4, 7, 1, 9, 8));	// dirt: a tiny soft tap
+}
+
+// Count steps (one: the kind's own), a third of a second apart, every other one a little softer
+SoundEffect FootstepWith(const SoundKindOptions &Options)
+{
+	const int Count = std::max(1, std::min(8, Options.Count));
+	SoundEffect Out;
+	for (int i = 0; i < Count; ++i) {
+		SoundEffect Step = StepOn(Options.Surface, i * 20);
+		for (size_t l = 0; l < Step.layers.size(); ++l) {
+			transcribe::SfxLayer &Layer = Step.layers[l];
+			if (i % 2 == 1)
+				for (size_t t = 0; t < Layer.volume.size(); ++t)
+					Layer.volume[t] = Layer.volume[t] > 0 ? std::max(1, Layer.volume[t] - 1) : 0;
+			// Each kind of channel one layer, its steps one after another
+			transcribe::SfxLayer *pLane = 0;
+			for (size_t k = 0; k < Out.layers.size() && pLane == 0; ++k)
+				if (Out.layers[k].channel == Layer.channel)
+					pLane = &Out.layers[k];
+			if (pLane == 0) {
+				Out.layers.push_back(Layer);
+				continue;
+			}
+			while (pLane->start + pLane->length() < Layer.start) {
+				pLane->volume.push_back(0);
+				pLane->pitch.push_back(pLane->pitch.empty() ? Layer.pitchAt(0) : pLane->pitch.back());
+				pLane->duty.push_back(pLane->dutyAt(pLane->length()));
+			}
+			for (int t = 0; t < Layer.length(); ++t) {
+				pLane->volume.push_back(Layer.volume[static_cast<size_t>(t)]);
+				pLane->pitch.push_back(Layer.pitchAt(t));
+				pLane->duty.push_back(Layer.dutyAt(t));
+			}
+		}
+	}
+	return Out;
+}
+
+SoundEffect Footstep()
+{
+	return FootstepWith(SoundKindOptions());
+}
+
+SoundEffect Gust()		// one gust: wind swelling in and brightening, then falling away and darkening, a little unevenly
+{
+	SfxLayerDesign Rise = Layer(NOISE, 0.0, 0.6, 3, 8, 1, SFX_HELD);
+	Rise.VolumeTo = 11;
+	Rise.Glide = SFX_GLIDE_SLOW;
+	SfxLayerDesign Fall = Layer(NOISE, 0.6, 1.0, 8, 3, 11, SFX_FADE);
+	Fall.Glide = SFX_GLIDE_FAST;
+	Fall.Gusts = 2;
+	return Designed({ Rise, Fall }, false);
+}
+
+// A howling wind, Seconds long: the dark rush of wind in gusts, and over it a moan, a quiet pulse whose pitch wanders slowly
+// (never across a multiple of 256 in its period, so it doesn't click)
+SoundEffect HowlFor(double Seconds, const SoundKindOptions &Options)
+{
+	SfxLayerDesign Air = Layer(NOISE, 0.0, Seconds, 5, -1, 9, SFX_STEADY);
+	Air.Gusts = std::max(1, Round(0.75 * Seconds));
+	SfxLayerDesign Moan = Layer(PULSE, 0.0, Seconds, 52, -1, 4, SFX_STEADY);
+	Moan.Gusts = std::max(1, Round(0.5 * Seconds));
+	Moan.Vibrato = 2.5;
+	Moan.VibratoHz = 0.3;
+	return Designed({ Air, Moan }, true, 0.0, Options.Seed);
+}
+
+SoundEffect Howl()
+{
+	return HowlFor(6.0, SoundKindOptions());
+}
+
+SoundEffect Owl()		// "hoo... hoo-hoo, hoooo": soft swelling hoots on a round pulse, the last one falling away
+{
+	std::vector<SfxLayerDesign> Hoots;
+	const double Starts[] = { 0.0, 0.75, 0.95, 1.2 }, Lengths[] = { 0.42, 0.16, 0.18, 0.62 };
+	for (int i = 0; i < 4; ++i) {
+		SfxLayerDesign Hoot = Layer(PULSE, Starts[i], Lengths[i], 43, i == 3 ? 41 : 42.5, i == 1 || i == 2 ? 8 : 10, SFX_SWELL_FADE);
+		Hoot.Glide = SFX_GLIDE_SLOW;
+		Hoot.Vibrato = 0.15;
+		Hoot.VibratoHz = 5.0;
+		Hoots.push_back(Hoot);
+	}
+	return Designed(Hoots, false);
+}
+
+// A water drop: a pure plip rising quickly on the triangle, its echo faint on a pulse as in a cave
+SoundEffect DripAt(int Start, double Pitch, int Volume)
+{
+	return Effect(Maker(TRIANGLE, Start).Go(4, 15, 15, Pitch, Pitch + 7, 0.5),
+		Maker(PULSE, Start + 8).Duty(1).Go(3, Volume, 1, Pitch + 7, Pitch + 12, 0.5).Rest(5).Go(3, std::max(1, Volume / 2), 1,
+			Pitch + 7, Pitch + 12, 0.5));
+}
+
+SoundEffect Drip()
+{
+	return DripAt(0, 81, 4);
+}
+
+// Dripping, Seconds long: Count drops in four seconds (the kind's three) here and there, each a little higher or lower
+SoundEffect DripsFor(double Seconds, const SoundKindOptions &Options)
+{
+	const double PerSecond = (Options.Count > 0 ? std::min(16, Options.Count) : 3) / 4.0;
+	Random R(static_cast<unsigned int>(Options.Seed) * 15485863u + 11u);
+	const int Ticks = std::max(30, Round(Seconds * 60.0));
+	SoundEffect Out;
+	transcribe::SfxLayer Tri, Echo;
+	Tri.channel = TRIANGLE;
+	Echo.channel = PULSE;
+	for (int t = Round(std::min(30, Ticks - 24) * R.Unit()); t + 24 <= Ticks; t += std::max(24, Round(60.0 / PerSecond * (0.5 + R.Unit())))) {
+		const SoundEffect Drop = DripAt(t, 78 + std::floor(5 * R.Unit()), 3 + static_cast<int>(2 * R.Unit()));
+		for (size_t l = 0; l < Drop.layers.size(); ++l) {
+			transcribe::SfxLayer &Lane = Drop.layers[l].channel == TRIANGLE ? Tri : Echo;
+			const transcribe::SfxLayer &D = Drop.layers[l];
+			while (Lane.length() < D.start) {
+				Lane.volume.push_back(0);
+				Lane.pitch.push_back(D.pitchAt(0));
+				Lane.duty.push_back(D.dutyAt(0));
+			}
+			for (int k = 0; k < D.length(); ++k) {
+				Lane.volume.push_back(D.volume[static_cast<size_t>(k)]);
+				Lane.pitch.push_back(D.pitchAt(k));
+				Lane.duty.push_back(D.dutyAt(k));
+			}
+		}
+	}
+	transcribe::SfxLayer *const Lanes[2] = { &Tri, &Echo };
+	for (int l = 0; l < 2; ++l) {
+		transcribe::SfxLayer &Lane = *Lanes[l];
+		if (Lane.volume.empty())
+			continue;
+		while (Lane.length() < Ticks) {
+			Lane.volume.push_back(0);
+			Lane.pitch.push_back(Lane.pitch.back());
+			Lane.duty.push_back(Lane.duty.back());
+		}
+		Lane.volume.resize(static_cast<size_t>(Ticks));
+		Lane.pitch.resize(static_cast<size_t>(Ticks));
+		Lane.duty.resize(static_cast<size_t>(Ticks));
+		Out.layers.push_back(Lane);
+	}
+	if (Out.layers.empty())
+		return DripAt(0, 81, 4);
+	return Out;
+}
+
+SoundEffect Emerge()	// out of the water: a rising rush as the body comes up, water streaming off, and a few drops after
+{
+	SfxLayerDesign Rush = Layer(NOISE, 0.0, 0.15, 7, 10, 3, SFX_HELD);
+	Rush.VolumeTo = 10;
+	SfxLayerDesign Stream = Layer(NOISE, 0.15, 0.85, 10, 6, 10, SFX_FADE);
+	Stream.VolumeTo = 1;
+	Stream.Crackle = 0.25;
+	SfxLayerDesign Drop1 = Layer(TRIANGLE, 0.45, 0.07, 79, 86, 15, SFX_HIT);
+	Drop1.Glide = SFX_GLIDE_FAST;
+	SfxLayerDesign Drop2 = Layer(TRIANGLE, 0.7, 0.06, 82, 89, 15, SFX_HIT);
+	Drop2.Glide = SFX_GLIDE_FAST;
+	return Designed({ Rush, Stream, Drop1, Drop2 }, false);
+}
+
+// Bubbles rising: Count bloops (the kind's six) at uneven times, each a quick slide up at a pitch of its own
+SoundEffect BubblesWith(const SoundKindOptions &Options)
+{
+	const int Count = Options.Count > 0 ? std::min(24, Options.Count) : 6;
+	Random R(static_cast<unsigned int>(Options.Seed) * 32452843u + 7u);
+	Maker M(PULSE);
+	M.Duty(2);
+	for (int i = 0; i < Count; ++i) {
+		const double Pitch = 50 + std::floor(12 * R.Unit());
+		const int Volume = 7 + static_cast<int>(3 * R.Unit());
+		M.Go(3, Volume, Volume / 2, Pitch, Pitch + 5, 0.6).Rest(2 + static_cast<int>(8 * R.Unit()));
+	}
+	return Effect(M);
+}
+
+SoundEffect Bubbles()
+{
+	return BubblesWith(SoundKindOptions());
+}
+
+// Underwater, Seconds long: bubbles here and there over a faint, dark murmur
+SoundEffect BubblesFor(double Seconds, const SoundKindOptions &Options)
+{
+	const int Ticks = std::max(30, Round(Seconds * 60.0));
+	SoundKindOptions Many = Options;
+	Many.Count = std::max(1, Round(Seconds * (Options.Count > 0 ? Options.Count : 6) / 1.5));
+	SoundEffect Out = BubblesWith(Many);
+	transcribe::SfxLayer &B = Out.layers[0];
+	while (B.length() < Ticks) {
+		B.volume.push_back(0);
+		B.pitch.push_back(B.pitch.back());
+		B.duty.push_back(B.duty.back());
+	}
+	B.volume.resize(static_cast<size_t>(Ticks));
+	B.pitch.resize(static_cast<size_t>(Ticks));
+	B.duty.resize(static_cast<size_t>(Ticks));
+	SfxLayerDesign Murmur = Layer(NOISE, 0.0, Ticks / 60.0, 2, -1, 2, SFX_STEADY);
+	Murmur.Gusts = std::max(1, Round(0.5 * Seconds));
+	const SoundEffect Bed = Designed({ Murmur }, true, 0.0, Options.Seed);
+	if (!Bed.layers.empty())
+		Out.layers.push_back(Bed.layers[0]);
+	return Out;
+}
+
+// A lantern swinging on a chain, Seconds long: a thin squeak each way, the second lower, and a faint metallic clink where it
+// turns; each swing a little unlike the one before
+SoundEffect ChainFor(double Seconds, const SoundKindOptions &Options)
+{
+	Random R(static_cast<unsigned int>(Options.Seed) * 49979687u + 3u);
+	const int Swings = std::max(1, Round(Seconds / 1.6));
+	const double Each = Seconds / Swings;
+	std::vector<SfxLayerDesign> Layers;
+	for (int i = 0; i < Swings; ++i) {
+		const double At = i * Each, Shift = std::floor(3 * R.Unit()) - 1;
+		SfxLayerDesign Out = Layer(PULSE, At + 0.1 * Each, 0.25 * Each, 67 + Shift, 69 + Shift, 7, SFX_SWELL_FADE);
+		Out.Glide = SFX_GLIDE_SLOW;
+		Out.Vibrato = 0.4;
+		Out.VibratoHz = 9.0;
+		Out.Rough = true;
+		Out.Duty = 0;
+		SfxLayerDesign Back = Out;
+		Back.Start = At + 0.6 * Each;
+		Back.Pitch = 64 + Shift;
+		Back.PitchTo = 62 + Shift;
+		Back.Volume = 6;
+		SfxLayerDesign Clink = Layer(NOISE, At + 0.4 * Each, 0.06, 11, -1, 5, SFX_HIT);
+		Clink.Duty = 1;
+		Layers.push_back(Out);
+		Layers.push_back(Back);
+		Layers.push_back(Clink);
+	}
+	return Designed(Layers, true, Seconds, Options.Seed);
+}
+
+SoundEffect Chain()
+{
+	return ChainFor(3.2, SoundKindOptions());
+}
+
+// Entering a cave: a low, dark swell of air and a deep moan, and a drop falling far off, echoing
+SoundEffect Cave()
+{
+	SfxLayerDesign Air = Layer(NOISE, 0.0, 2.4, 2, 3, 8, SFX_SWELL_FADE);
+	SfxLayerDesign Moan = Layer(PULSE, 0.1, 2.2, 28, 27, 5, SFX_SWELL_FADE);
+	Moan.Vibrato = 0.3;
+	Moan.VibratoHz = 3.0;
+	SfxLayerDesign Drop = Layer(TRIANGLE, 1.2, 0.07, 81, 88, 15, SFX_HIT);
+	Drop.Glide = SFX_GLIDE_FAST;
+	SfxLayerDesign Echo = Layer(PULSE, 1.35, 0.6, 88, 93, 4, SFX_HIT);
+	Echo.Repeats = 3;
+	Echo.Gap = 0.75;
+	Echo.Glide = SFX_GLIDE_FAST;
+	Echo.Duty = 1;
+	Echo.VolumeTo = 1;
+	return Designed({ Air, Moan, Drop, Echo }, false);
+}
+
+SoundEffect Outfit()	// changing an outfit: a soft cloth swish twice, then a little sparkle rising and ringing
+{
+	SfxLayerDesign Swish = Layer(NOISE, 0.0, 0.36, 9, 11, 9, SFX_SWELL_FADE);
+	Swish.Repeats = 2;
+	Swish.Gap = 0.1;
+	std::vector<SfxLayerDesign> Layers = { Swish };
+	const int Sparkle[] = { 76, 80, 83, 88 };
+	for (int i = 0; i < 4; ++i) {
+		SfxLayerDesign Note = Layer(PULSE, 0.38 + i * 0.05, i == 3 ? 0.35 : 0.05, Sparkle[i], -1, 7, i == 3 ? SFX_FADE : SFX_HELD);
+		Note.Duty = 1;
+		Note.Echo = i == 3;
+		Layers.push_back(Note);
+	}
+	return Designed(Layers, false);
+}
+
+// "You got something awesome": a quick run up a C major chord landing on a high C that rings with a light vibrato, a
+// harmony a sixth under it, and a short drop on the triangle under the landing (the designed item get the user chose)
+SoundEffect Reward()
+{
+	std::vector<SfxLayerDesign> Layers;
+	const int Run[] = { 55, 60, 64, 67 }, Loud[] = { 10, 10, 11, 11 };
+	for (int i = 0; i < 4; ++i) {
+		SfxLayerDesign Note = Layer(PULSE, i * 0.08, 0.08, Run[i], -1, Loud[i], SFX_STEADY);
+		Note.Duty = 1;
+		Layers.push_back(Note);
+	}
+	SfxLayerDesign Top = Layer(PULSE, 0.32, 0.7, 72, -1, 12, SFX_STEADY);
+	Top.VolumeTo = 2;
+	Top.Vibrato = 0.25;
+	Top.VibratoHz = 6.0;
+	Top.Duty = 1;
+	SfxLayerDesign Under = Layer(PULSE, 0.32, 0.6, 64, -1, 7, SFX_STEADY);
+	Under.VolumeTo = 1;
+	SfxLayerDesign Bom = Layer(TRIANGLE, 0.32, 0.1, 48, 36, 15, SFX_STEADY);
+	Bom.Glide = SFX_GLIDE_SLOW;
+	Layers.push_back(Top);
+	Layers.push_back(Under);
+	Layers.push_back(Bom);
+	return Designed(Layers, false);
+}
+
 
 SoundEffectKind Kind(const char *Name, const char *Use, std::vector<std::string> Words, SoundEffect (*Make)(), bool Loops = false)
 {
@@ -471,6 +958,7 @@ SoundEffectKind Kind(const char *Name, const char *Use, std::vector<std::string>
 	K.Make = Make;
 	K.Loops = Loops;
 	K.MakeLong = 0;
+	K.MakeWith = 0;
 	return K;
 }
 
@@ -480,7 +968,7 @@ std::vector<SoundEffectKind> MakeKinds()
 	All.push_back(Kind("jump", "a quick rising blip for jumping", { "hop", "jumping" }, Jump));
 	All.push_back(Kind("land", "a soft thud for landing", { "landing", "thud" }, Land));
 	All.push_back(Kind("coin", "a bright glint of two notes, for coins and gems", { "gem", "ring", "money" }, Coin));
-	All.push_back(Kind("pickup", "a short rising arpeggio, for picking up an item", { "item", "pick up", "collect", "get item" }, Pickup));
+	All.push_back(Kind("pickup", "a short rising arpeggio, for picking up an item", { "item", "pick up", "collect" }, Pickup));
 	All.push_back(Kind("power-up", "three rising runs and a shimmer, for power-ups and upgrades", { "powerup", "upgrade", "power" }, PowerUp));
 	All.push_back(Kind("hurt", "a harsh falling buzz with a hit, for taking damage", { "damage", "hit", "ouch", "pain" }, Hurt));
 	All.push_back(Kind("laser", "a falling zap (\"pew\"), for shooting", { "pew", "shoot", "shot", "zap", "blaster" }, Laser));
@@ -490,10 +978,17 @@ std::vector<SoundEffectKind> MakeKinds()
 	All.push_back(Kind("confirm", "two rising notes, for OK and accept", { "ok", "accept", "yes", "start" }, Confirm));
 	All.push_back(Kind("cancel", "two falling notes, for back and cancel", { "back", "no", "close" }, Cancel));
 	All.push_back(Kind("error", "a low double buzz, for something that can't be done", { "buzz", "wrong", "denied", "invalid" }, Error));
-	All.push_back(Kind("door", "a short wooden knock, for doors", { "knock", "open door" }, Door));
+	All.push_back(Kind("door", "a short wooden knock, for doors (a door creaking open: creak)", { "knock", "door knock", "knocking",
+		"close door", "door shut", "shut door" }, Door));
 	All.push_back(Kind("chest", "a sparkling rise with an echo, for opening a chest", { "treasure", "open chest", "loot" }, Chest));
-	All.push_back(Kind("splash", "water: a burst of noise and a rising bloop", { "water", "swim", "drop" }, Splash));
-	All.push_back(Kind("footstep", "a tiny soft tap, for footsteps", { "step", "walk", "footsteps" }, Footstep));
+	All.push_back(Kind("splash", "water: a burst of noise and a rising bloop, for jumping into water", { "water", "swim",
+		"jump into water", "jumping into water", "into water", "into the water", "dive", "dive in", "diving", "plunge",
+		"fall into water", "splash in" }, Splash));
+	All.push_back(Kind("footstep", "a step: a tiny soft tap on dirt, or on another surface (wood, grass, stone, snow, sand, water, "
+		"metal), count steps", { "step", "walk", "footsteps", "steps", "walking", "footfall" }, Footstep));
+	All.back().MakeWith = FootstepWith;
+	All.back().Surfaces = { "dirt", "wood", "grass", "stone", "snow", "sand", "water", "metal" };
+	All.back().Counts = "steps";
 	All.push_back(Kind("warp", "a wobbling rise, for teleporting", { "teleport", "portal" }, Warp));
 	All.push_back(Kind("message", "a soft two-note chime, for chat messages and notifications", { "chat", "ping", "notification", "notify",
 		"whisper" }, Message));
@@ -503,8 +998,8 @@ std::vector<SoundEffectKind> MakeKinds()
 	All.push_back(Kind("whoosh", "a rush of air, for dashing", { "dash", "swoosh", "swing", "woosh" }, Whoosh));
 	All.push_back(Kind("break", "bursts of noise, for breaking blocks or pots", { "crumble", "smash", "shatter", "crack" }, Break));
 	All.push_back(Kind("fall", "a long falling whistle, for falling into a pit", { "falling", "pit" }, Fall));
-	All.push_back(Kind("wind", "a heavy wind blowing in gusts (loops, for ambience)", { "breeze", "gale", "gust", "gusts", "heavy wind",
-		"howling wind", "windy", "blizzard" }, Wind, true));
+	All.push_back(Kind("wind", "a heavy wind blowing in gusts (loops, for ambience; one gust: gust; a howl: howl)", { "breeze",
+		"gale", "heavy wind", "windy", "wind blowing", "blowing wind", "strong wind" }, Wind, true));
 	All.back().MakeLong = WindFor;
 	All.push_back(Kind("rain", "rain: a soft hiss with drops pattering (loops, for ambience)", { "rainfall", "drizzle", "downpour",
 		"raining", "rainy", "shower" }, Rain, true));
@@ -514,8 +1009,13 @@ std::vector<SoundEffectKind> MakeKinds()
 	All.back().MakeLong = FireFor;
 	All.push_back(Kind("thunder", "a crack of thunder rumbling away", { "thunderclap", "lightning", "thunderstorm", "rumble",
 		"storm" }, Thunder));
-	All.push_back(Kind("birds", "two birds chirping, one answering the other", { "bird", "chirp", "chirps", "tweet", "birdsong",
-		"songbird", "chirping" }, Birds));
+	All.push_back(Kind("birds", "birds chirping, one answering the other (count: 1-4 birds; loop for birdsong as ambience)",
+		{ "bird", "birdsong", "songbird", "chirping", "birds chirping", "chirping birds", "bird song", "bird call", "chirps" }, Birds));
+	All.back().MakeWith = BirdsWith;
+	All.back().MakeLong = BirdsFor;
+	All.back().Counts = "birds";
+	All.push_back(Kind("chirp", "one bird's single chirp, a quick \"chir-rup\"", { "bird chirp", "tweet", "single chirp", "peep",
+		"cheep", "one chirp" }, Chirp));
 	All.push_back(Kind("wings", "wings flapping away with a chirp, for a bird flying off", { "bird flying away", "flying away", "fly away",
 		"flap", "flaps", "flapping", "take off", "takeoff", "flutter", "bat" }, Wings));
 	All.push_back(Kind("engine", "an engine idling, a low throbbing hum (loops)", { "motor", "car", "machine", "engine hum", "vehicle",
@@ -524,6 +1024,50 @@ std::vector<SoundEffectKind> MakeKinds()
 		Alarm, true));
 	All.push_back(Kind("heartbeat", "a heartbeat, lub-dub once a second (loops), for low health or tension", { "heart", "heart beat",
 		"heartbeats", "lub dub", "low health", "low hp" }, Heartbeat, true));
+	All.push_back(Kind("waves", "waves on a shore, drawing in, breaking and washing back (loops, for ambience)", { "wave", "sea",
+		"ocean", "surf", "shore", "beach", "tide", "seaside", "harbor", "harbour", "coast", "ocean waves", "sea waves" }, Waves, true));
+	All.back().MakeLong = WavesFor;
+	All.push_back(Kind("lapping", "small waves lapping at a dock or a lake's edge, softer and quicker (loops)", { "water lapping",
+		"lapping water", "lake", "pond", "dock", "pier", "ripples", "gentle waves", "small waves" }, Lapping, true));
+	All.back().MakeLong = LappingFor;
+	All.push_back(Kind("creak", "a door creaking open: a thin grinding pulse up and settling down, and a dull stop", { "door creak",
+		"creaking", "creaking door", "creaky door", "creaky", "open door", "door opening", "opening door", "hinge", "creaky hinge",
+		"squeaky door", "floorboard", "creaking floor" }, Creak));
+	All.push_back(Kind("gust", "one gust of wind swelling in and falling away (plays once; wind loops)", { "gust of wind",
+		"wind gust", "gusts", "a gust", "puff of wind", "blast of wind" }, Gust));
+	All.push_back(Kind("howl", "a howling wind: the rush of wind with a low moan wandering over it (loops)", { "howling wind",
+		"wind howling", "wind howl", "howling", "moaning wind", "blizzard", "cave wind", "wind in a cave", "wind in cave",
+		"haunted wind", "ghostly wind", "storm wind" }, Howl, true));
+	All.back().MakeLong = HowlFor;
+	All.push_back(Kind("owl", "an owl hooting softly, hoo... hoo-hoo, hoooo", { "owl hoot", "hoot", "hooting", "owls", "night bird",
+		"hoo" }, Owl));
+	All.push_back(Kind("drip", "a water drop: a pure plip with a faint echo, as in a cave (loop: dripping, count drops in 4 s)",
+		{ "drop", "water drop", "drops", "droplet", "dripping", "drip drop", "plip", "plink", "water drip", "leak", "dripping water",
+		"cave drip" }, Drip));
+	All.back().MakeLong = DripsFor;
+	All.back().Counts = "drops in four seconds (with loop)";
+	All.push_back(Kind("emerge", "out of the water: a rising rush, water streaming off, and a few drops", { "out of water",
+		"out of the water", "jump out of water", "jumping out of water", "climb out of water", "leave water", "leaving water",
+		"surface", "surfacing", "get out of water", "splash out" }, Emerge));
+	All.push_back(Kind("bubbles", "bubbles rising underwater, uneven bloops (count: how many; loop for underwater ambience)",
+		{ "bubble", "underwater", "bubbling", "blub", "gurgle", "air bubbles", "underwater bubbles", "bubbles underwater" }, Bubbles));
+	All.back().MakeWith = BubblesWith;
+	All.back().MakeLong = BubblesFor;
+	All.back().Counts = "bubbles";
+	All.push_back(Kind("chain", "a lantern swinging on a chain: a thin squeak each way and a faint clink (loops)", { "chains",
+		"chain creak", "chain squeak", "squeaking chain", "squeaky chain", "creaking chain", "lantern", "swinging lantern",
+		"hanging lantern", "rusty chain", "squeak", "squeaking" }, Chain, true));
+	All.back().MakeLong = ChainFor;
+	All.push_back(Kind("cave", "entering a cave: a low, dark swell of air, a deep moan and a drop echoing far off", {
+		"cave entrance", "enter cave", "entering cave", "entering a cave", "cavern", "into the cave", "underground", "mine entrance",
+		"dungeon entrance", "enter the cave" }, Cave));
+	All.push_back(Kind("outfit", "changing an outfit: a soft cloth swish twice and a little sparkle", { "outfit change",
+		"change outfit", "changing outfit", "costume", "costume change", "change clothes", "changing clothes", "dress up",
+		"wardrobe", "equip", "clothes", "new clothes", "swish", "change costume" }, Outfit));
+	All.push_back(Kind("reward", "\"you got something awesome\": a bright run up landing on a high note that rings, with a "
+		"harmony and a low drop (a lucky box, an item get)", { "lucky box", "loot box", "mystery box", "gift box", "open lucky box",
+		"opening lucky box", "item get", "get item", "got item", "you got", "you got something", "fanfare", "prize", "jackpot",
+		"achievement", "unlock", "unlocked", "rare item", "treasure get", "item fanfare", "present" }, Reward));
 	return All;
 }
 
@@ -575,6 +1119,162 @@ const SoundEffectKind *FindSoundEffect(const std::string &Name)
 	return 0;
 }
 
+namespace {
+
+// The words of a text, lowercase, without punctuation
+std::vector<std::string> WordsOf(const std::string &Text)
+{
+	std::vector<std::string> Out;
+	std::string Word;
+	for (size_t i = 0; i <= Text.size(); ++i) {
+		const char c = i < Text.size() ? Text[i] : ' ';
+		if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '\'')
+			Word += c;
+		else if (c >= 'A' && c <= 'Z')
+			Word += static_cast<char>(c - 'A' + 'a');
+		else if (!Word.empty()) {
+			Out.push_back(Word);
+			Word.clear();
+		}
+	}
+	return Out;
+}
+
+// Other words for the surfaces, as people say them
+const char *const SURFACE_WORDS[][2] = { { "wooden", "wood" }, { "planks", "wood" }, { "plank", "wood" }, { "floorboards", "wood" },
+	{ "boards", "wood" }, { "bridge", "wood" }, { "deck", "wood" }, { "grassy", "grass" }, { "leaves", "grass" }, { "meadow", "grass" },
+	{ "lawn", "grass" }, { "rock", "stone" }, { "rocks", "stone" }, { "rocky", "stone" }, { "tile", "stone" }, { "tiles", "stone" },
+	{ "marble", "stone" }, { "cobble", "stone" }, { "cobblestone", "stone" }, { "cobblestones", "stone" }, { "brick", "stone" },
+	{ "concrete", "stone" }, { "snowy", "snow" }, { "ice", "snow" }, { "sandy", "sand" }, { "gravel", "sand" }, { "beach", "sand" },
+	{ "puddle", "water" }, { "puddles", "water" }, { "wet", "water" }, { "shallow", "water" }, { "mud", "water" },
+	{ "muddy", "water" }, { "iron", "metal" }, { "steel", "metal" }, { "grate", "metal" }, { "metallic", "metal" },
+	{ "earth", "dirt" }, { "ground", "dirt" }, { "path", "dirt" }, { "soil", "dirt" } };
+
+}	// namespace
+
+std::string FindSurface(const SoundEffectKind &Kind, const std::string &Word)
+{
+	std::string Wanted = Squeezed(Word);
+	for (size_t i = 0; i < sizeof(SURFACE_WORDS) / sizeof(SURFACE_WORDS[0]); ++i)
+		if (Wanted == SURFACE_WORDS[i][0])
+			Wanted = SURFACE_WORDS[i][1];
+	for (size_t i = 0; i < Kind.Surfaces.size(); ++i)
+		if (Kind.Surfaces[i] == Wanted)
+			return Wanted;
+	return std::string();
+}
+
+int FindSoundStyle(const std::string &Word)
+{
+	static const struct { const char *Word; int Style; } STYLES[] = { { "realistic", SFX_STYLE_REALISTIC },
+		{ "grounded", SFX_STYLE_REALISTIC }, { "natural", SFX_STYLE_REALISTIC }, { "real", SFX_STYLE_REALISTIC },
+		{ "subtle", SFX_STYLE_REALISTIC }, { "lifelike", SFX_STYLE_REALISTIC }, { "cartoon", SFX_STYLE_CARTOON },
+		{ "cartoony", SFX_STYLE_CARTOON }, { "cartoonish", SFX_STYLE_CARTOON }, { "silly", SFX_STYLE_CARTOON },
+		{ "exaggerated", SFX_STYLE_CARTOON }, { "bouncy", SFX_STYLE_CARTOON }, { "game", SFX_STYLE_GAME },
+		{ "retro", SFX_STYLE_GAME }, { "default", SFX_STYLE_GAME }, { "classic", SFX_STYLE_GAME } };
+	const std::string Wanted = Squeezed(Word);
+	for (size_t i = 0; i < sizeof(STYLES) / sizeof(STYLES[0]); ++i)
+		if (Wanted == STYLES[i].Word)
+			return STYLES[i].Style;
+	return -1;
+}
+
+const SoundEffectKind *FindSoundEffectIn(const std::string &Text, std::string &Surface, int &Style)
+{
+	Surface.clear();
+	Style = -1;
+	const SoundEffectKind *pWhole = FindSoundEffect(Text);
+	if (pWhole != 0)
+		return pWhole;
+	const std::vector<std::string> Words = WordsOf(Text);
+	static const char *const FILLERS[] = { "a", "an", "the", "of", "on", "in", "into", "with", "and", "sound", "sounds", "sfx",
+		"effect", "some", "inside", "for", "my", "to" };
+	auto Filler = [&](const std::string &W) {
+		for (size_t f = 0; f < sizeof(FILLERS) / sizeof(FILLERS[0]); ++f)
+			if (W == FILLERS[f])
+				return true;
+		return false;
+	};
+	for (size_t Length = Words.size(); Length > 0; --Length)
+		for (size_t From = 0; From + Length <= Words.size(); ++From) {
+			if (Filler(Words[From]) || Filler(Words[From + Length - 1]))
+				continue;
+			std::string Run;
+			for (size_t w = From; w < From + Length; ++w)
+				Run += (w == From ? "" : " ") + Words[w];
+			const SoundEffectKind *pKind = FindSoundEffect(Run);
+			if (pKind == 0)
+				continue;
+			for (size_t w = 0; w < Words.size(); ++w) {
+				if (w >= From && w < From + Length)
+					continue;
+				if (Surface.empty())
+					Surface = FindSurface(*pKind, Words[w]);
+				if (Style < 0)
+					Style = FindSoundStyle(Words[w]);
+			}
+			return pKind;
+		}
+	return 0;
+}
+
+SoundEffect MakeSoundKind(const SoundEffectKind &Kind, const SoundKindOptions &Options)
+{
+	return Kind.MakeWith != 0 ? Kind.MakeWith(Options) : Kind.Make();
+}
+
+bool HasPulse(const SoundEffect &Effect)
+{
+	for (size_t l = 0; l < Effect.layers.size(); ++l)
+		if (Effect.layers[l].channel == PULSE)
+			return true;
+	return false;
+}
+
+void StyleSoundEffect(SoundEffect &Effect, int Style)
+{
+	if (Style != SFX_STYLE_REALISTIC && Style != SFX_STYLE_CARTOON)
+		return;
+	const double Sweep = Style == SFX_STYLE_REALISTIC ? 0.5 : 1.5;
+	for (size_t l = 0; l < Effect.layers.size(); ++l) {
+		SfxLayer &Layer = Effect.layers[l];
+		const bool Noise = Layer.channel == NOISE;
+		// Each stretch it sounds: its pitch around where it ends up, a sweep of more than half an octave narrowed (or widened)
+		for (int a = 0; a < Layer.length(); ) {
+			if (Layer.volume[static_cast<size_t>(a)] <= 0) {
+				++a;
+				continue;
+			}
+			int b = a;
+			while (b < Layer.length() && Layer.volume[static_cast<size_t>(b)] > 0)
+				++b;
+			while (static_cast<int>(Layer.pitch.size()) < b)
+				Layer.pitch.push_back(Layer.pitch.empty() ? 0.0 : Layer.pitch.back());
+			if (!Noise) {
+				double Low = 1e9, High = -1e9;
+				for (int t = a; t < b; ++t) {
+					Low = std::min(Low, Layer.pitch[static_cast<size_t>(t)]);
+					High = std::max(High, Layer.pitch[static_cast<size_t>(t)]);
+				}
+				const double Rest = Layer.pitch[static_cast<size_t>(b - 1)];
+				if (High - Low > 7.0)
+					for (int t = a; t < b; ++t) {
+						double &P = Layer.pitch[static_cast<size_t>(t)];
+						P = std::max(9.0, std::min(95.0, Rest + (P - Rest) * Sweep));
+					}
+			}
+			// A softer attack: a sound of four ticks or more that starts loud comes in over two
+			if (Style == SFX_STYLE_REALISTIC && Layer.channel != TRIANGLE && b - a >= 4 && Layer.volume[static_cast<size_t>(a)] >= 6) {
+				const int Full = Layer.volume[static_cast<size_t>(a)];
+				Layer.volume[static_cast<size_t>(a)] = std::max(1, Round(Full * 0.55));
+				Layer.volume[static_cast<size_t>(a + 1)] = std::max(1, std::min(Layer.volume[static_cast<size_t>(a + 1)],
+					Round(Full * 0.85)));
+			}
+			a = b;
+		}
+	}
+}
+
 std::string SoundEffectNames()
 {
 	std::string Names;
@@ -593,7 +1293,7 @@ const int VARIANT_LENGTH[] = { 85, 120, 75, 110, 90, 130, 80, 115 };
 
 }	// namespace
 
-std::string VariantText(int Variant)
+std::string VariantText(int Variant, bool Pulse)
 {
 	if (Variant <= 1)
 		return std::string();
@@ -601,7 +1301,7 @@ std::string VariantText(int Variant)
 	const int Pitch = VARIANT_PITCH[i], Length = VARIANT_LENGTH[i];
 	std::string Text = std::to_string(std::abs(Pitch)) + (std::abs(Pitch) == 1 ? " semitone " : " semitones ") +
 		(Pitch > 0 ? "higher" : "lower") + ", " + std::to_string(std::abs(Length - 100)) + "% " + (Length < 100 ? "shorter" : "longer");
-	if (Variant % 2 == 0)
+	if (Variant % 2 == 0 && Pulse)
 		Text += ", another pulse duty";
 	return Text;
 }
@@ -644,7 +1344,7 @@ bool FitSoundEffect(const SoundEffect &Effect, int Most, SoundEffectChanges &Cha
 	return Shortened;
 }
 
-void RingOut(SoundEffect &Effect)
+void RingOut(SoundEffect &Effect, int Most)
 {
 	for (size_t l = 0; l < Effect.layers.size(); ++l) {
 		SfxLayer &Layer = Effect.layers[l];
@@ -658,7 +1358,7 @@ void RingOut(SoundEffect &Effect)
 		while (Last >= 0 && Layer.volume[static_cast<size_t>(Last)] <= 0)
 			--Last;
 		int Volume = Last >= 0 ? Layer.volume[static_cast<size_t>(Last)] : 0;
-		for (int t = Last + 1; Volume > 1 && t < transcribe::SFX_MAX_TICKS - 1; ++t) {
+		for (int t = Last + 1; Volume > 1 && t < std::max(transcribe::SFX_MAX_TICKS, Most) - 1; ++t) {
 			Volume /= 2;
 			if (t < Layer.length())
 				Layer.volume[static_cast<size_t>(t)] = Volume;
@@ -731,7 +1431,7 @@ SoundEffect ChangeSoundEffect(const SoundEffect &Effect, const SoundEffectChange
 
 SfxLayerDesign::SfxLayerDesign() : Channel(transcribe::SfxChannel::Pulse), Start(0.0), Seconds(0.5), Pitch(60.0), PitchTo(-1.0),
 	Glide(SFX_GLIDE_EVEN), Volume(12), VolumeTo(-1), Envelope(SFX_STEADY), Repeats(1), Gap(-1.0), Step(0.0), Gusts(0),
-	Flutter(0.0), Vibrato(0.0), VibratoHz(6.0), Crackle(0.0), Rough(false), Duty(2), Echo(false)
+	Flutter(0.0), Vibrato(0.0), VibratoHz(6.0), Crackle(0.0), Rough(false), Duty(2), Echo(false), Voice(-1), Pan(0.0)
 {
 }
 
@@ -743,6 +1443,11 @@ int MaxSoundTicks(bool Loop)
 int MaxLoopTicks(int MaxFrames, int PatternLength)
 {
 	return std::max(MaxSoundTicks(true), MaxFrames * PatternLength);
+}
+
+int MaxOneShotTicks(int MaxFrames, int PatternLength)
+{
+	return std::max(MaxSoundTicks(false), std::min(SFX_ONE_SHOT_TICKS, MaxFrames * PatternLength - SFX_SILENT_TICKS - 2));
 }
 
 std::vector<SfxLayer> SoundPieces(const SfxLayer &Layer, int Period)
@@ -806,7 +1511,8 @@ SoundEffect Repeated(const SoundEffect &Base, int Times)
 
 }	// namespace
 
-SoundEffect LoopOfLength(const SoundEffectKind &Kind, double Seconds, const SoundEffectChanges &Asked, int Most, int &Period)
+SoundEffect LoopOfLength(const SoundEffectKind &Kind, double Seconds, const SoundEffectChanges &Asked, int Most, int &Period,
+	const SoundKindOptions &Options)
 {
 	SoundEffectChanges Changes = Asked;
 	Changes.LengthPercent = 100;		// the length is the one asked
@@ -814,12 +1520,12 @@ SoundEffect LoopOfLength(const SoundEffectKind &Kind, double Seconds, const Soun
 	Period = 0;
 	if (Kind.MakeLong != 0) {
 		const double Made = std::min(Seconds, Most / 60.0) / Stretch;
-		SoundEffect Out = ChangeSoundEffect(Kind.MakeLong(Made), Changes, 1 << 20);
+		SoundEffect Out = ChangeSoundEffect(Kind.MakeLong(Made, Options), Changes, 1 << 20);
 		while (Out.length() > Most && Changes.Variant > 1)	// rounding: a tick or two over
-			Out = ChangeSoundEffect(Kind.MakeLong(Made - (Out.length() - Most + 1) / (60.0 * Stretch)), Changes, 1 << 20);
+			Out = ChangeSoundEffect(Kind.MakeLong(Made - (Out.length() - Most + 1) / (60.0 * Stretch), Options), Changes, 1 << 20);
 		return Out;
 	}
-	const SoundEffect Base = ChangeSoundEffect(Kind.Make(), Changes, 1 << 20);
+	const SoundEffect Base = ChangeSoundEffect(MakeSoundKind(Kind, Options), Changes, 1 << 20);
 	const int Length = Base.length();
 	if (Length <= 0)
 		return Base;
@@ -830,30 +1536,6 @@ SoundEffect LoopOfLength(const SoundEffectKind &Kind, double Seconds, const Soun
 
 namespace {
 
-// A steady random draw, so a sound comes out the same each time it's made
-class Random {
-public:
-	explicit Random(unsigned int Seed) : m_State(Seed * 2654435761u + 0x9E3779B9u)
-	{
-		if (m_State == 0)
-			m_State = 1;
-		Next();
-	}
-	unsigned int Next()
-	{
-		m_State ^= m_State << 13;
-		m_State ^= m_State >> 17;
-		m_State ^= m_State << 5;
-		return m_State;
-	}
-	double Unit()    // 0 to just under 1
-	{
-		return (Next() >> 8) / 16777216.0;
-	}
-
-private:
-	unsigned int m_State;
-};
 
 // Slow, uneven swells: a value from 0 to 1 a tick, Count of them in Ticks.
 // Whole cycles, so its end leads back into its start.
@@ -911,6 +1593,9 @@ struct Shape {
 	int Start;
 	std::vector<double> Volume, Pitch;
 	std::vector<int> Duty;
+	int Voice;		// a pulse's own (0, 1), -1 any
+	int Pan;		// 8xx, -1 the middle
+	Shape() : Channel(PULSE), Start(0), Voice(-1), Pan(-1) {}
 	int End() const { return Start + static_cast<int>(Volume.size()); }
 };
 
@@ -945,6 +1630,9 @@ Shape MakeShape(const SfxLayerDesign &D, int FrameRate, bool Wraps, Random &R)
 	Shape S;
 	S.Channel = D.Channel;
 	S.Start = std::max(0, Round(D.Start * FrameRate));
+	S.Voice = D.Channel == PULSE && D.Voice >= 0 ? std::min(1, D.Voice) : -1;
+	const double Pan = std::max(-1.0, std::min(1.0, D.Pan));
+	S.Pan = std::fabs(Pan) < 1e-6 ? -1 : std::max(0, std::min(255, Round(128.0 + Pan * (Pan < 0.0 ? 128.0 : 127.0))));
 	S.Volume.assign(static_cast<size_t>(N), 0.0);
 	S.Pitch.assign(static_cast<size_t>(N), From);
 	S.Duty.assign(static_cast<size_t>(N), Noise ? (D.Duty == 1 ? 1 : 0) : std::max(0, std::min(3, D.Duty)));	// noise: 1 is metallic
@@ -1018,15 +1706,24 @@ Shape MakeShape(const SfxLayerDesign &D, int FrameRate, bool Wraps, Random &R)
 			t += 2;
 		}
 	}
-	// Crackle: pops louder and brighter than the sound under them
+	// Crackle: pops louder than the sound under them, as loud as it is there (a fading wash pops softer: a pop at the
+	// layer's peak stood 6 dB over a wave's faded end). On the noise a pop moves a step or two either way and never above
+	// CRACKLE_TOP: brighter, the 2A03's noise carries most of its power above 20 kHz, which the export filters out, and a
+	// louder pop at noise pitch 13 came out no louder than the hiss under it (rain's drops were nearly inaudible)
 	else if (D.Crackle > 0.0) {
+		const double CRACKLE_TOP = 11.0;
 		const double Chance = 0.03 + 0.15 * std::min(1.0, D.Crackle);
-		const double Pop = std::min(15.0, 2.0 * Loudest + 2.0);
 		for (int t = 0; t < N; ++t) {
 			if (R.Unit() >= Chance)
 				continue;
-			S.Volume[static_cast<size_t>(t)] = std::max(S.Volume[static_cast<size_t>(t)], Pop * (0.7 + 0.3 * R.Unit()));
-			S.Pitch[static_cast<size_t>(t)] += Noise ? 3.0 + std::floor(R.Unit() * 4.0) : 12.0;
+			const double Here = S.Volume[static_cast<size_t>(t)];
+			const double Pop = std::min(15.0, 2.0 * std::max(1.0, Here) + 2.0);
+			S.Volume[static_cast<size_t>(t)] = std::max(Here, Pop * (0.7 + 0.3 * R.Unit()));
+			double &Pitch = S.Pitch[static_cast<size_t>(t)];
+			if (Noise)
+				Pitch = std::min(CRACKLE_TOP, Pitch + std::floor(R.Unit() * 5.0) - 2.0);
+			else
+				Pitch += 12.0;
 		}
 	}
 	if (D.Rough)
@@ -1061,6 +1758,8 @@ SfxLayer ToLayer(const Shape &S)
 		L.pitch.push_back(Noise ? std::max(0.0, std::min(15.0, std::floor(S.Pitch[t] + 0.5))) : std::max(9.0, std::min(95.0, S.Pitch[t])));
 		L.duty.push_back(S.Duty[t]);
 	}
+	L.voice = S.Voice;
+	L.pan = S.Pan;
 	return L;
 }
 
@@ -1111,6 +1810,8 @@ bool DesignSoundEffect(const std::vector<SfxLayerDesign> &Layers, double Seconds
 				Echo.Volume[t] *= 0.45;
 			for (size_t t = 0; t < Echo.Duty.size(); ++t)
 				Echo.Duty[t] = Echo.Duty[t] == 2 ? 1 : 2;
+			if (Echo.Voice >= 0)
+				Echo.Voice = 1 - Echo.Voice;
 			if (Echo.End() > Total) {
 				if (Loop) {
 					const size_t Keep = static_cast<size_t>(std::max(0, Total - Echo.Start));
@@ -1142,9 +1843,21 @@ bool DesignSoundEffect(const std::vector<SfxLayerDesign> &Layers, double Seconds
 			if (Lanes[l].Channel != S.Channel)
 				continue;
 			++Same;
-			if (Lanes[l].End() <= S.Start && S.End() - Lanes[l].Start <= Most)
+			// A pulse of its own only shares with that pulse's lane (or one free of any), and layers share at one pan
+			const bool Voices = S.Voice < 0 || Lanes[l].Voice < 0 || S.Voice == Lanes[l].Voice;
+			if (Voices && Lanes[l].Pan == S.Pan && Lanes[l].End() <= S.Start && S.End() - Lanes[l].Start <= Most)
 				Found = static_cast<int>(l);
 		}
+		if (Found >= 0 && Lanes[static_cast<size_t>(Found)].Voice < 0)
+			Lanes[static_cast<size_t>(Found)].Voice = S.Voice;
+		if (Found < 0 && S.Voice >= 0)
+			for (size_t l = 0; l < Lanes.size(); ++l)
+				if (Lanes[l].Channel == PULSE && Lanes[l].Voice == S.Voice) {
+					Problem = "A layer at " + SecondsText(static_cast<double>(S.Start) / FrameRate) + " asks for Pulse " +
+						std::to_string(S.Voice + 1) + ", which another layer plays then; let one end before the next starts, or give "
+						"it the other pulse.";
+					return false;
+				}
 		if (Found >= 0) {
 			Append(Lanes[static_cast<size_t>(Found)], S);
 			continue;
@@ -1161,6 +1874,21 @@ bool DesignSoundEffect(const std::vector<SfxLayerDesign> &Layers, double Seconds
 			return false;
 		}
 		Lanes.push_back(S);
+	}
+	// The pulses' lanes: those of a voice keep it, the others take the voices left, in order
+	{
+		bool Taken[2] = { false, false };
+		for (size_t l = 0; l < Lanes.size(); ++l)
+			if (Lanes[l].Channel == PULSE && Lanes[l].Voice >= 0)
+				Taken[Lanes[l].Voice] = true;
+		for (size_t l = 0; l < Lanes.size(); ++l)
+			if (Lanes[l].Channel == PULSE && Lanes[l].Voice < 0 && (Taken[0] || Taken[1]))
+				for (int v = 0; v < 2; ++v)
+					if (!Taken[v]) {
+						Lanes[l].Voice = v;
+						Taken[v] = true;
+						break;
+					}
 	}
 
 	// The sound lasts its whole length: silence after the layers when it's longer
@@ -1182,10 +1910,13 @@ bool DesignSoundEffect(const std::vector<SfxLayerDesign> &Layers, double Seconds
 std::string DescribeLayerDesign(const SfxLayerDesign &D)
 {
 	const bool Noise = D.Channel == NOISE;
-	static const char *const ONCE[] = { "steady", "a hit", "fading", "swelling", "swelling and fading", "drops" };
-	static const char *const MANY[] = { "steady sounds", "hits", "fading sounds", "swells", "swells", "bursts of drops" };
-	const int Envelope = std::max(0, std::min(5, D.Envelope));
-	std::string Text = std::string(ChannelWord(D.Channel)) + " from " + SecondsText(D.Start) + " for " + SecondsText(D.Seconds) + ": ";
+	static const char *const ONCE[] = { "steady", "a hit", "fading", "swelling", "swelling and fading", "drops", "held" };
+	static const char *const MANY[] = { "steady sounds", "hits", "fading sounds", "swells", "swells", "bursts of drops",
+		"held sounds" };
+	const int Envelope = std::max(0, std::min(6, D.Envelope));
+	const bool Triangle = D.Channel == TRIANGLE;
+	std::string Text = std::string(ChannelWord(D.Channel)) + (D.Channel == PULSE && D.Voice >= 0 ? " " + std::to_string(D.Voice + 1) :
+		std::string()) + " from " + SecondsText(D.Start) + " for " + SecondsText(D.Seconds) + ": ";
 	Text += D.Repeats > 1 ? std::to_string(D.Repeats) + " " + MANY[Envelope] : ONCE[Envelope];
 	auto PitchText = [&](double Pitch) {
 		return Noise ? "noise pitch " + std::to_string(Round(Pitch)) : PitchName(Round(Pitch));
@@ -1204,9 +1935,14 @@ std::string DescribeLayerDesign(const SfxLayerDesign &D)
 			(std::fabs(D.Step) == 1.0 ? "semitone" : "semitones"), D.Step > 0 ? "higher" : "lower");
 		Text += Step;
 	}
-	Text += ", volume " + std::to_string(std::max(1, std::min(15, D.Volume)));
-	if (D.VolumeTo >= 0 && D.VolumeTo != D.Volume)
-		Text += (D.VolumeTo < D.Volume ? " fading to " : " growing to ") + std::to_string(D.VolumeTo);
+	// The triangle has no volume: it sounds whole while it sounds, and stops at once
+	if (Triangle)
+		Text += ", at the triangle's one level";
+	else {
+		Text += ", volume " + std::to_string(std::max(1, std::min(15, D.Volume)));
+		if (D.VolumeTo >= 0 && D.VolumeTo != D.Volume)
+			Text += (D.VolumeTo < D.Volume ? " fading to " : " growing to ") + std::to_string(D.VolumeTo);
+	}
 	if (D.Gusts > 0)
 		Text += ", " + std::to_string(D.Gusts) + (D.Gusts == 1 ? " gust" : " gusts");
 	char Buffer[64];
@@ -1230,6 +1966,12 @@ std::string DescribeLayerDesign(const SfxLayerDesign &D)
 	}
 	else if (Noise && D.Duty == 1)
 		Text += ", metallic";
+	if (std::fabs(D.Pan) >= 1e-6) {
+		char Pan[64];
+		std::snprintf(Pan, sizeof(Pan), ", panned %s%s", std::fabs(D.Pan) < 0.5 ? "a little " : (std::fabs(D.Pan) >= 0.99 ? "all the way " :
+			""), D.Pan < 0 ? "left" : "right");
+		Text += Pan;
+	}
 	return Text;
 }
 

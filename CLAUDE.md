@@ -2937,6 +2937,47 @@ whose melody is long notes, one that holds; the why naming it; drums as the
 recipe says; no colors where plain; dorian's IV); `TestGen4Balance` holds
 the cozy walks to 4.5-7.5 dB and checks the cozy mix on its own.
 
+Sound effect kinds and sounds heard as sounds (from `feat-sfx-kinds`): the
+user, hearing an expert's two takes of 13 effects, preferred the tool's own
+kinds to the designs from layers, but the designed item get to the tool's;
+so the kinds stay as they were, the new ones are made in their style and at
+their level (after `Heartbeat` in `SoundEffects.cpp`), and `reward` is that
+item get's call as it was made. New kinds: `chirp` (one), `waves` and
+`lapping` (`Surf`, drawn in whole ticks, never below 2-3), `creak` (the door
+kind stays a knock), `gust` (one-shot; wind loops), `howl` (a moan on a
+pulse, `vibrato_hz` 0.3), `owl`, `drip` (a triangle plip; loop: `DripsFor`),
+`emerge`, `bubbles`, `chain` (loops), `cave`, `outfit` and `reward`;
+`birds` takes a count (`BirdsWith`, `BirdsFor` for birdsong) and `footstep`
+a surface (`StepOn`, `FootstepWith`). `SoundEffectKind` has
+`MakeWith(SoundKindOptions)`, `Surfaces` and `Counts`, and `MakeLong` takes
+the options. `FindSoundEffectIn` reads a kind from words (the longest run
+naming one, then `FindSurface` and `FindSoundStyle` among the rest), and
+`StyleSoundEffect` makes a sound realistic (sweeps over 7 semitones halved,
+attacks softened) or cartoon. Every word names one kind (`TestSfxKinds`).
+Crackle's pops follow the envelope at their tick and stay at noise pitch 11
+and under (`CRACKLE_TOP` in `MakeShape`). Layers take `pulse 1`/`pulse 2`
+(`SfxLayerDesign::Voice`, `SfxLayer::voice`, kept by the packing and
+`WriteSoundEffect`) and `pan` (`SfxLayer::pan`, `8xx` on each piece's note;
+lanes share a pan), envelope `held` (`SFX_HELD`, appended) and `vibrato_hz`
+from 0.1. One-shots last up to `SFX_ONE_SHOT_TICKS` (12 s;
+`MaxOneShotTicks`, as pieces like a loop's, `RingOut`'s `Most`;
+`UseOfTrack` takes them as sounds at the sound tempo): the local model's
+"one-shots are capped at 4.2 s" was true (`MaxSoundTicks`), but no jingle
+needs it. `replace` (`ReplaceSoundTrack`, `SoundEffectName`) writes a sound
+into an earlier sound's track with `WriteSong` (frames past it taken out)
+after removing the instruments only that track played; the reply counts the
+instruments (`SoundRoomText`) and warns of a held triangle
+(`TriangleWarning`). Exports: a sound effect held back by its peak is
+limited (`LimitPeaks` in `GameAudio.cpp`, `SFX_LIMIT_MOST_DB`), a normalized
+one raised up to `SFX_NORMALIZE_MOST_DB`, and every raised file is decoded
+and trimmed until its peak is under -1 dBFS (`OGG_PEAK_DB`). `listen`
+(`SoundListen`), `check_loop` and `review_arrangement` on a sound effect
+hear it with `HearSoundAudio` (`GameAudio.cpp`: 50 ms windows, `SFX_*_DB`)
+and `SoundCut` (the envelope's cut), not as music; listen's JSON keeps its
+fields with no findings and a `sound` object. A cue's review gives the
+length to its halt (`HaltBar`). `VariantText` says another duty only for a
+sound with a pulse (`HasPulse`). `TestSfxKinds` covers them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
