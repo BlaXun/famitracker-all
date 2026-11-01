@@ -592,6 +592,41 @@ tie the words' kinds go tense, bittersweet, melancholic, festive,
 mysterious, atmospheric, floating, playful, cozy, adventure (two words that
 belong together, "eerie silence", count twice); a fight's words stay action.
 
+### Flavours
+
+Beside the kind (the mood and the form), a flavour says the place's
+material and colour: `cold` (ice, snow: thin, glassy, bell-like sounds, high
+and sparse), `hot` (lava, a desert, a forge: warm, buzzing, a slow
+vibrato), `wet` (rain, a sewer, a swamp: round, dripping sounds and an
+echo), `mechanical` (a factory, clockwork, a mine cart: ostinatos, a steady
+pulse, clanks on the noise), `nature` (a forest, a meadow: open fifths, a
+gentle tune), `spooky` (haunted, a graveyard: a borrowed chord's chill, a
+wavering vibrato), `airy` (the sky, the heights), `ancient` (a temple,
+ruins: modal chords over a drone) and `magical` (sparkling arpeggios, rich
+chords). `what_next`, `song_shape`, `get_recipe` and `finish_song` take
+`flavour`; without it the words in `about` pick one ("ice", "snow", "frozen":
+cold; "lava", "desert", "forge": hot; "sewer", "rain", "swamp": wet;
+"factory", "clockwork", "mine cart": mechanical; "forest", "meadow": nature;
+"haunted", "graveyard": spooky), else the track's name on a song with a seed
+(a song made before seeds keeps its steps), and the reply says which and
+why ("Flavour: cold (from the words frozen, snow): ..."); `none` turns it
+off. A flavour leans the kind's picks, never replaces them: the entries of
+the kind's pools it suits (leads, chord and bass styles, grooves) weigh
+three times as much, the tempo leans slower or faster within the kind's
+range, so every choice stays possible and another seed still differs; any
+kind goes with any flavour (a cold cozy shop, a hot mysterious cave). On top
+of the pools it gives a pulse lead its width and vibrato where the kind's
+call leaves them (cold: 12.5% without a vibrato), lighter drums or drums on
+the noise alone, the chords' rich colours once the tune is there (cold, airy,
+magical), a borrowed chord in the chords `what_next` writes (spooky: bII
+before the dominant in minor, the minor iv in major; ancient: bVII), and an
+ambience on a free noise channel for the kinds that take one (cold: wind,
+wet: rain or a stream...). Each step says what came from the flavour
+("From the cold flavour: thin and glassy (12.5%), without a vibrato"). The
+recipe gets the flavour's line and its topic of the guide (`cold`, `hot`...);
+`finish_song` adds what to listen for. Without a flavour every kind's
+picks and steps are as before.
+
 ### Arguments a tool doesn't take
 
 A call with an argument the tool doesn't take does nothing and says so,
@@ -700,7 +735,7 @@ is the recipes':
 
 It takes `kind` (calm, lively, cozy or action; without one, the kind the
 words in `about` ask for, else calm when the track's name says so, else the
-general recipe), `like` (a studied track the song should be like, whose
+general recipe), `flavour` (the place's material, see [Flavours](#flavours)), `like` (a studied track the song should be like, whose
 study gives the picks; see [How a track is built, and songs like
 it](#how-a-track-is-built-and-songs-like-it)), `skip` (steps to leave out, like
 `["drums"]`, or a kind of `check_song`'s finding) and `all` (every step found

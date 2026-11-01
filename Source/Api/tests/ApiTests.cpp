@@ -79,6 +79,7 @@
 #include "../../Nsf/tests/TestNsf.h"
 #include "../../Nsf/Study.h"
 #include "FakeModel.h"
+#include "../Flavours.h"
 
 #include <algorithm>
 #include <atomic>
@@ -31075,6 +31076,202 @@ void TestAmbience()
 	}
 }
 
+// Flavours (feat-flavours): the place's material beside the kind. Words pick them; they lean the kind's pools (never
+// limit them: every entry stays possible, another seed still differs); without one every pick is as before; walks of
+// each flavour with a few kinds end done with the review clean, on both sets
+void CheckFlavourWalk(int Flavour, int Kind, const char *Name, bool Core, int Line)
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.GivesSeeds = true;
+	Song.Info.TrackName = Song.Tracks[0].Name = Name;
+	bool Finished = false;
+	const std::string Asked = (Kind == NEXT_GENERAL ? std::string("{") : std::string("{\"kind\": \"") + NextKindInfo(Kind).Name +
+		"\", ") + "\"flavour\": \"" + FlavourOf(Flavour).Name + "\"}";
+	const std::string What = Asked + " " + Name + (Core ? " (core)" : "");
+	std::vector<std::string> Replies;
+	const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 70, Finished, Line, Core, 0, &Replies);
+	Check(Finished && Song.Info.Seed != 0, What.c_str(), Line);
+	CheckDoneReview(Song, What, Line);
+	CheckHookHeads(Song, Made, What, Line);
+	const std::string Style = std::string(NextKindInfo(Kind).Style) == "any" ? std::string() : std::string(", \"style\": \"") +
+		NextKindInfo(Kind).Style + "\"";
+	const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + Style + "}").Text);
+	for (const char *Kind_ : { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "monotone" }) {
+		int Count = 0;
+		for (const Json *pFound : FindingsOf(Found, Kind_))
+			Count += std::string(Kind_) != "clash" || TextOf(pFound, "severity") != "low" ? 1 : 0;
+		Check(Count == 0, (What + " " + Kind_).c_str(), Line);
+	}
+	// The reply names the flavour, and a step says what came from it
+	bool Named = false, Said = false;
+	for (const std::string &R : Replies) {
+		Named = Named || Contains(R, "Flavour: " + std::string(FlavourOf(Flavour).Name) + " (given)");
+		Said = Said || Contains(R, "From the " + std::string(FlavourOf(Flavour).Name) + " flavour") || Contains(R, "the " +
+			std::string(FlavourOf(Flavour).Name) + " flavour leaning to it");
+	}
+	Check(Named, (What + ": names the flavour").c_str(), Line);
+	Check(Said, (What + ": a step says what came from the flavour").c_str(), Line);
+	// The lead the flavour shaped: its pulse width and vibrato, where the kind's call left them
+	const FlavourInfo &F = FlavourOf(Flavour);
+	for (const std::string &Call : Made)
+		if (Call.compare(0, 18, "design_instrument ") == 0 && Contains(Call, NextKindInfo(Kind).LeadName)) {
+			const Json A = Parse(Call.substr(18));
+			if (F.LeadVibrato != 0 && Kind != NEXT_GENERAL)
+				Check(TextOf(&A, "vibrato") == F.LeadVibrato, (What + ": " + Call).c_str(), Line);
+		}
+}
+
+void TestFlavours()
+{
+	// Words pick flavours, as kinds are picked
+	const struct { const char *Words; int Flavour; } WORDS[] = { { "an ice palace", FLAVOUR_COLD }, { "snow on the roofs",
+		FLAVOUR_COLD }, { "a frozen lake", FLAVOUR_COLD }, { "lava flows", FLAVOUR_HOT }, { "the desert road", FLAVOUR_HOT },
+		{ "the old forge", FLAVOUR_HOT }, { "the sewer", FLAVOUR_WET }, { "rain all day", FLAVOUR_WET }, { "a swamp",
+		FLAVOUR_WET }, { "a factory floor", FLAVOUR_MECHANICAL }, { "clockwork tower", FLAVOUR_MECHANICAL }, { "a mine cart ride",
+		FLAVOUR_MECHANICAL }, { "a quiet forest", FLAVOUR_NATURE }, { "the meadow", FLAVOUR_NATURE }, { "a haunted house",
+		FLAVOUR_SPOOKY }, { "the graveyard at night", FLAVOUR_SPOOKY }, { "above the clouds", FLAVOUR_AIRY }, { "an ancient temple",
+		FLAVOUR_ANCIENT }, { "an enchanted grove of fairies", FLAVOUR_MAGICAL }, { "a town square", FLAVOUR_NONE },
+		{ "not cold at all", FLAVOUR_NONE } };
+	for (const auto &W : WORDS)
+		Check(ReadFlavourWords(W.Words).Flavour == W.Flavour, W.Words, __LINE__);
+	int Parsed = -1;
+	CHECK(ParseFlavour("Cold", Parsed) && Parsed == FLAVOUR_COLD && ParseFlavour("icy", Parsed) && Parsed == FLAVOUR_COLD);
+	CHECK(ParseFlavour("none", Parsed) && Parsed == FLAVOUR_NONE && !ParseFlavour("purple", Parsed));
+	CHECK_HAS(FlavourNames(), "cold, hot, wet, mechanical, nature, spooky, airy, ancient or magical");
+	// The progressions' borrowed chords
+	CHECK_EQ(FlavourProgression(FLAVOUR_SPOOKY, "| i | VII | III | VII | i | VII | v | VII |", true),
+		std::string("| i | VII | III | VII | i | bII | v | VII |"));
+	CHECK_EQ(FlavourProgression(FLAVOUR_SPOOKY, "| I | V | vi | IV | I | V | IV | V |", false),
+		std::string("| I | V | vi | iv | I | V | IV | V |"));
+	CHECK_EQ(FlavourProgression(FLAVOUR_ANCIENT, "| I | V | IV | V | I | vi | IV | V |", false),
+		std::string("| I | bVII | IV | V | I | vi | IV | V |"));
+	CHECK_EQ(FlavourProgression(FLAVOUR_COLD, "| I | V | IV | V |", false), std::string("| I | V | IV | V |"));
+
+	// The pools: without a flavour every pick as before; with one, leaning (its entries more often), every entry still
+	// possible, the tempos within the kind's, two seeds apart
+	const char *const NAMES[] = { "Town", "Lantern Row", "Old Mill", "Brook", "Crossing", "Hollow", "Mossy Steps", "Kettle",
+		"Harbor Light", "Pine Gate", "Copper Lane", "Quiet Bend" };
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k) {
+		const NextKind &K = NextKindInfo(k);
+		for (int f = FLAVOUR_COLD; f < FLAVOUR_COUNT; ++f) {
+			const FlavourInfo &F = FlavourOf(f);
+			int LeanedWith = 0, LeanedWithout = 0, Picks = 0, Other = 0;
+			double BpmWith = 0.0, BpmWithout = 0.0;
+			std::set<std::string> Leads, Pool;
+			for (const std::string &E : PoolEntries(K.Leads))
+				Pool.insert(E);
+			for (unsigned int s = 1; s <= 60; ++s)
+				for (const char *Name : NAMES) {
+					const NextPicks With = NextPicksOf(k, Name, 0x1234u + s, f), Without = NextPicksOf(k, Name, 0x1234u + s);
+					LeanedWith += FlavourLeansTo(F.Leads, With.Lead.Value) ? 1 : 0;
+					LeanedWithout += FlavourLeansTo(F.Leads, Without.Lead.Value) ? 1 : 0;
+					BpmWith += With.Bpm();
+					BpmWithout += Without.Bpm();
+					Leads.insert(With.Lead.Value);
+					++Picks;
+					Check(K.SlowestBpm <= 0.0 || (With.Bpm() >= K.SlowestBpm - 0.05 && With.Bpm() <= K.FastestBpm + 0.05),
+						(std::string(K.Name) + " " + F.Name + " " + With.Tempo.Value).c_str(), __LINE__);
+					const NextPicks Again = NextPicksOf(k, Name, 0x1234u + s, f), Next = NextPicksOf(k, Name, 0x9999u + s, f);
+					CHECK(Again.Lead.Value == With.Lead.Value && Again.Tempo.Value == With.Tempo.Value);
+					Other += Next.Lead.Value != With.Lead.Value || Next.ChordStyle.Value != With.ChordStyle.Value ||
+						Next.BassStyle.Value != With.BassStyle.Value || Next.Tempo.Value != With.Tempo.Value ? 1 : 0;
+				}
+			Check(LeanedWith >= LeanedWithout, (std::string(K.Name) + " " + F.Name).c_str(), __LINE__);
+			Check(Pool.empty() || Leads == Pool, (std::string(K.Name) + " " + F.Name + ": every lead still possible").c_str(), __LINE__);
+			Check(Other * 4 >= Picks, (std::string(K.Name) + " " + F.Name + ": another seed differs").c_str(), __LINE__);
+			if (F.TempoLean < 0)
+				Check(BpmWith <= BpmWithout + 0.01, (std::string(K.Name) + " " + F.Name).c_str(), __LINE__);
+			if (F.TempoLean > 0)
+				Check(BpmWith >= BpmWithout - 0.01, (std::string(K.Name) + " " + F.Name).c_str(), __LINE__);
+		}
+		// no flavour: the very same picks
+		for (const char *Name : NAMES) {
+			const NextPicks A = NextPicksOf(k, Name, 0x5EEDu), B = NextPicksOf(k, Name, 0x5EEDu, FLAVOUR_NONE);
+			CHECK(A.Lead.Value == B.Lead.Value && A.Tempo.Value == B.Tempo.Value && A.Groove.Value == B.Groove.Value && !B.Lead.Leaned);
+		}
+	}
+	// A flavour that leans, measured: cozy's leads lean to the struck ones in a cold place
+	{
+		int Struck = 0, Plain = 0;
+		for (unsigned int s = 1; s <= 300; ++s) {
+			Struck += NextPicksOf(NEXT_COZY, "Kettle", s, FLAVOUR_COLD).Lead.Value != "breath" ? 1 : 0;
+			Plain += NextPicksOf(NEXT_COZY, "Kettle", s).Lead.Value != "breath" ? 1 : 0;
+		}
+		Check(Struck > Plain, (std::to_string(Struck) + " against " + std::to_string(Plain)).c_str(), __LINE__);
+	}
+
+	// what_next: the words pick the flavour and say so, it's asked again with it; a song made before seeds keeps its steps
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.Seed = 4242;
+		const std::string Text = Run(Song, "what_next", "{\"kind\": \"cozy\", \"about\": \"a frozen shop in the snow\"}").Text;
+		CHECK_HAS(Text, "Flavour: cold (from the words frozen, snow)");
+		CHECK_HAS(Text, "\"flavour\":\"cold\"");
+		Song.Info.TrackName = Song.Tracks[0].Name = "Lava Forge";
+		CHECK_HAS(Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text, "Flavour: hot (from the track's name lava, forge)");
+		CHECK_LACKS(Run(Song, "what_next", "{\"kind\": \"cozy\", \"flavour\": \"none\"}").Text, "Flavour:");
+		CHECK(Run(Song, "what_next", "{\"flavour\": \"purple\"}").IsError);
+		Song.Info.Seed = 0;
+		CHECK_LACKS(Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text, "Flavour:");
+		// two seeds of the same flavoured song differ in their picks
+		std::set<std::string> Rolls;
+		Song.Info.Seed = 77;
+		for (int r = 1; r <= 5; ++r)
+			Rolls.insert(PicksShown(Run(Song, "what_next", "{\"kind\": \"cozy\", \"flavour\": \"cold\", \"all\": true, \"seed\": " +
+				std::to_string(r) + "}").Text));
+		CHECK(Rolls.size() >= 2);
+	}
+	// song_shape, get_recipe and finish_song take it too
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		const ToolResult Laid = Run(Song, "song_shape", "{\"about\": \"a snowy town\"}");
+		Check(!Laid.IsError && Contains(Laid.Text, "Flavour: cold (from the words snowy)"), Laid.Text.c_str(), __LINE__);
+		CHECK(Run(Song, "song_shape", "{\"shape\": \"town\", \"flavour\": \"purple\"}").IsError);
+		const std::string Recipe = Run(Song, "get_recipe", "{\"kind\": \"cozy\", \"flavour\": \"mechanical\"}").Text;
+		CHECK_HAS(Recipe, "Flavour (the place's material and colour");
+		CHECK_HAS(Recipe, "Flavour: mechanical (a factory, clockwork, a mine cart)");
+		CHECK_HAS(Run(Song, "get_recipe", "{\"about\": \"a haunted graveyard\"}").Text, "Flavour: spooky (from the words haunted, graveyard)");
+		ToolSet Tools(Song);
+		Caller Who;
+		Who.Core = true;
+		CHECK_HAS(Tools.Call("get_recipe", Parse("{\"kind\": \"lively\", \"flavour\": \"wet\"}"), Who).Text, "Flavour wet:");
+		CHECK_LACKS(Run(Song, "get_recipe", "{\"kind\": \"cozy\"}").Text, "Flavour");
+	}
+
+	// Walks: each flavour with a few kinds, on the full set, and some on the small set
+	const struct { int Flavour, Kind; const char *Name; } WALKS[] = { { FLAVOUR_COLD, NEXT_COZY, "Kettle" },
+		{ FLAVOUR_COLD, NEXT_LIVELY, "Brook" }, { FLAVOUR_HOT, NEXT_MYSTERIOUS, "Hollow" }, { FLAVOUR_HOT, NEXT_ADVENTURE, "Crossing" },
+		{ FLAVOUR_WET, NEXT_FLOATING, "Old Mill" }, { FLAVOUR_WET, NEXT_COZY, "Pine Gate" }, { FLAVOUR_MECHANICAL, NEXT_LIVELY,
+		"Copper Lane" }, { FLAVOUR_MECHANICAL, NEXT_TENSE, "Hollow" }, { FLAVOUR_NATURE, NEXT_ADVENTURE, "Mossy Steps" },
+		{ FLAVOUR_NATURE, NEXT_CALM, "Quiet Bend" }, { FLAVOUR_SPOOKY, NEXT_MYSTERIOUS, "Brook" }, { FLAVOUR_SPOOKY, NEXT_PLAYFUL,
+		"Town" }, { FLAVOUR_AIRY, NEXT_FLOATING, "Lantern Row" }, { FLAVOUR_AIRY, NEXT_FESTIVE, "Harbor Light" },
+		{ FLAVOUR_ANCIENT, NEXT_ATMOSPHERIC, "Kettle" }, { FLAVOUR_ANCIENT, NEXT_ACTION, "Old Mill" }, { FLAVOUR_MAGICAL,
+		NEXT_PLAYFUL, "Crossing" }, { FLAVOUR_MAGICAL, NEXT_GENERAL, "Brook" } };
+	for (const auto &W : WALKS)
+		CheckFlavourWalk(W.Flavour, W.Kind, W.Name, false, __LINE__);
+	CheckFlavourWalk(FLAVOUR_COLD, NEXT_COZY, "Brook", true, __LINE__);
+	CheckFlavourWalk(FLAVOUR_MECHANICAL, NEXT_LIVELY, "Kettle", true, __LINE__);
+	CheckFlavourWalk(FLAVOUR_SPOOKY, NEXT_MYSTERIOUS, "Town", true, __LINE__);
+	CheckFlavourWalk(FLAVOUR_WET, NEXT_FLOATING, "Hollow", true, __LINE__);
+
+	// A wet floating song's walk takes its ambience from the flavour (the noise is free: no drums)
+	{
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.GivesSeeds = true;
+		Song.Info.TrackName = Song.Tracks[0].Name = "Old Mill";
+		bool Finished = false;
+		const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"floating\", \"flavour\": \"wet\"}", 70, Finished,
+			__LINE__);
+		const int At = CallIndex(Made, "add_ambience");
+		Check(At >= 0 && (Contains(Made[static_cast<size_t>(At)], "\"rain\"") || Contains(Made[static_cast<size_t>(At)],
+			"\"stream\"")), "a wet place's ambience", __LINE__);
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -31336,6 +31533,7 @@ int main()
 	TestCozyKind();
 	TestLaterKinds();
 	TestKindPools();
+	TestFlavours();
 	TestLikeReference();
 	TestRecipesAgree();
 	TestWhatNextSavesForClient();
