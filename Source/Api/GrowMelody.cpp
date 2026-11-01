@@ -20,6 +20,7 @@
 */
 
 #include "GrowMelody.h"
+#include "TuneShape.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -226,11 +227,12 @@ const FormBlocks ONE_BAR[2][FORM_COUNT] = {
 	},
 };
 
-// A two-bar motif is a phrase's first half itself
+// A two-bar motif is a phrase's first half itself (the calls' last block of a section brings the motif back before its climb:
+// two answers there left the shape of an eight-bar tune never coming back, feat-hooks)
 const FormBlocks TWO_BAR[FORM_COUNT] = {
 	{ "M M A A.", "M M S^ E.", "S^ S^, C H.", "M V, C E.", "M M Rv E.", "M M C E.", "M M C H." },
 	{ "M M S^ S^.", "M M Rv E.", "S^ S^, C H.", "M V, C E.", "M V, Rv E.", "M V, C E.", "M V, C H." },
-	{ "M M A A.", "M V, Rv E.", "A A, C H.", "A A, C E.", "M M Rv E.", "M M C E.", "M M C H." },
+	{ "M M A A.", "M V, Rv E.", "A A, C H.", "M M C E.", "M M Rv E.", "M M C E.", "M M C H." },
 };
 
 // A section of Count bars: blocks of four (the last two of three and two where four don't divide it, or one of two or
@@ -333,6 +335,8 @@ struct Candidate {
 };
 
 const double NEVER = 1e9;
+// What a move against the motif's shape costs, in a bar that follows the motif (a step of leap is about 1)
+const double SHAPE_KEPT = 2.5;
 
 class Grower {
 public:
@@ -707,7 +711,8 @@ private:
 		}
 		}
 		// A calm song's copies of the motif strike on the beats only (a note between them held on from the one before)
-		if (m_Calm && (B.Role == BAR_MOTIF || B.Role == BAR_SEQUENCE || B.Role == BAR_VARIED || B.Role == BAR_ANSWER) && H.size() > 1) {
+		// (not a bar of four notes or fewer: the Caves' hook F4 - - G4 F4 lost its G4 so, and came back as F4 struck twice)
+		if (m_Calm && (B.Role == BAR_MOTIF || B.Role == BAR_SEQUENCE || B.Role == BAR_VARIED || B.Role == BAR_ANSWER) && H.size() > 4) {
 			std::vector<Hit> Beats;
 			for (size_t i = 0; i < H.size(); ++i) {
 				if (!Beats.empty() && H[i].Step % m_SPBeat != 0 && Beats.back().Step + Beats.back().Steps == H[i].Step) {
@@ -1058,12 +1063,27 @@ private:
 				// Over a chord answered before, from another of its notes, so the phrase doesn't come back unchanged
 				std::vector<int> &Starts = Answered[Context(b)];
 				const int Near = Level + m_MotifWay * (Starts.empty() ? 3 : -2);
+				// ...whose notes, the motif's turned upside down from there, all fit between the melody's lowest and the
+				// section's ceiling: one pressed against the floor came out a note or two struck again and again (the Hut)
+				auto Outside = [&](int Start) {
+					int Count = 0;
+					for (size_t j = 0; j < m_Q.Motif.size(); ++j) {
+						const int Pitch = m_Ladder.Shift(Start, -(m_Ladder.Rung(m_Q.Motif[j].Pitch) - m_Ladder.Rung(Reference)));
+						Count += Pitch < m_Low || Pitch > Ceiling(Section) ? 1 : 0;
+					}
+					return Count;
+				};
+				double AnswerCost = NEVER;
 				for (int Pass = 0; Pass < 2 && Answer < 0; ++Pass)
 					for (int p = m_Low; p <= Ceiling(Section); ++p)
 						if (Allowed(p, S.Step, S.Steps) && (pChord == 0 || pChord->HasPitchClass(ClassOf(p))) &&
-							(Pass == 1 || std::find(Starts.begin(), Starts.end(), p) == Starts.end()) &&
-							(Answer < 0 || std::abs(p - Near) < std::abs(Answer - Near)))
-							Answer = p;
+							(Pass == 1 || std::find(Starts.begin(), Starts.end(), p) == Starts.end())) {
+							const double Cost = std::abs(p - Near) + 4.0 * Outside(p);
+							if (Answer < 0 || Cost < AnswerCost) {
+								Answer = p;
+								AnswerCost = Cost;
+							}
+						}
 				Starts.push_back(Answer);
 			}
 			for (int n = 0; n < Count; ++n) {
@@ -1254,7 +1274,7 @@ private:
 
 	// A step from one note to the next: steps are free, leaps cost more the wider they are (a calm song's most), a
 	// tritone and a harmonic minor's augmented second worst; less after a rest, where a phrase starts afresh
-	double Pair(const Slot &To, int a, int b) const
+	double Pair(const Slot &From, const Slot &To, int a, int b) const
 	{
 		static const double COST[3][13] = {
 			{ 1.1, 0.0, 0.0, 1.4, 1.6, 2.6, 7.0, 4.0, 6.0, 6.0, 8.0, 9.0, 7.0 },
@@ -1270,6 +1290,15 @@ private:
 		}
 		if (To.Early && d == 0)
 			Cost += 3.0;	// an anticipation of the note before it is no anticipation
+		// The motif's shape kept where a bar follows it (moved, turned upside down or with a new ending): each move the way
+		// the motif's goes, so the ear hears the motif come back (feat-hooks: the Hut's answers and sequences, fitted to their
+		// chords note by note, kept the motif's rhythm but lost its shape, and the user heard the tune as monotone)
+		if (From.ModelPitch >= 0 && To.ModelPitch >= 0 && From.Bar / std::max(1, m_MotifBars) == To.Bar / std::max(1, m_MotifBars) &&
+			!To.AfterRest) {
+			const int Want = To.ModelPitch - From.ModelPitch, Got = b - a;
+			if ((Want > 0) != (Got > 0) || (Want < 0) != (Got < 0))
+				Cost += SHAPE_KEPT;
+		}
 		return To.AfterRest ? 0.35 * Cost : Cost;
 	}
 
@@ -1317,7 +1346,7 @@ private:
 		Best[1].assign(C[0].size() * C[1].size(), NEVER);
 		for (size_t j = 0; j < C[0].size(); ++j)
 			for (size_t k = 0; k < C[1].size(); ++k)
-				Best[1][j * C[1].size() + k] = C[0][j].Cost + C[1][k].Cost + Pair(m_Slots[1], C[0][j].Pitch, C[1][k].Pitch);
+				Best[1][j * C[1].size() + k] = C[0][j].Cost + C[1][k].Cost + Pair(m_Slots[0], m_Slots[1], C[0][j].Pitch, C[1][k].Pitch);
 		for (size_t i = 2; i < N; ++i) {
 			const size_t A = C[i - 2].size(), B = C[i - 1].size(), K = C[i].size();
 			Best[i].assign(B * K, NEVER);
@@ -1336,7 +1365,7 @@ private:
 							From = static_cast<int>(h);
 						}
 					}
-					Best[i][j * K + k] = Least + Pair(m_Slots[i], C[i - 1][j].Pitch, C[i][k].Pitch) + C[i][k].Cost;
+					Best[i][j * K + k] = Least + Pair(m_Slots[i - 1], m_Slots[i], C[i - 1][j].Pitch, C[i][k].Pitch) + C[i][k].Cost;
 					Back[i][j * K + k] = From;
 				}
 		}
@@ -1587,9 +1616,20 @@ bool GrowMelody(const GrowRequest &Q, std::vector<GrownVersion> &Out, std::strin
 	Hash = Mix(Hash, static_cast<uint32_t>(Q.Bars * 16 + Q.Kind));
 	const int Count = Q.Bars >= 4 ? 3 : 2;
 	const int Variant = std::max(1, Q.Variant);
+	// What's monotone about a version's first 8 bars, as TuneShape measures the user's tunes (feat-hooks)
+	auto Measure = [&](GrownVersion &V) {
+		const int Bars = std::min(8, Q.Bars);
+		std::vector<ShapeNote> Notes;
+		for (size_t i = 0; i < V.Notes.size(); ++i)
+			Notes.push_back(ShapeNote(V.Notes[i].Step / Q.StepsPerBar, V.Notes[i].Step, V.Notes[i].Steps, V.Notes[i].Pitch));
+		V.Monotone = MonotoneMelody(MeasureTune(Notes, Bars, Q.StepsPerBar, Q.StepsPerBeat));
+	};
 	for (int v = 0; v < Count; ++v) {
 		const int Form = (v + Variant - 1) % FORM_COUNT;
-		for (int Try = 0; Try < 4; ++Try) {
+		// The first that's new and not monotone, else the first that's new
+		GrownVersion Kept;
+		bool Have = false;
+		for (int Try = 0; Try < 6; ++Try) {
 			const uint32_t Seed = Mix(Mix(Hash, static_cast<uint32_t>(Variant) * 7919u + static_cast<uint32_t>(v)), static_cast<uint32_t>(Try));
 			Grower G(Q, Form, Seed);
 			GrownVersion V;
@@ -1597,12 +1637,21 @@ bool GrowMelody(const GrowRequest &Q, std::vector<GrownVersion> &Out, std::strin
 			bool Same = false;
 			for (size_t o = 0; o < Out.size(); ++o)
 				Same = Same || SameNotes(Out[o].Notes, V.Notes);
-			if (!Same || Try == 3) {
-				Out.push_back(V);
-				break;
+			if (Same && (Have || Try < 5))
+				continue;
+			Measure(V);
+			if (!Have || (Kept.Monotone.size() > V.Monotone.size())) {
+				Kept = V;
+				Have = true;
 			}
+			if (Kept.Monotone.empty())
+				break;
 		}
+		Out.push_back(Kept);
 	}
+	// Those that aren't monotone first, so pick 1 is a tune that brings its motif back
+	std::stable_sort(Out.begin(), Out.end(), [](const GrownVersion &a, const GrownVersion &b) {
+		return a.Monotone.empty() && !b.Monotone.empty(); });
 	return true;
 }
 

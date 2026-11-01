@@ -37,6 +37,7 @@
 #include "../Glossary.h"
 #include "../Grooves.h"
 #include "../GrowMelody.h"
+#include "../TuneShape.h"
 #include "../Http.h"
 #include "../Jingles.h"
 #include "../Json.h"
@@ -18283,7 +18284,8 @@ void TestGrowKinds()
 				}
 			}
 	CHECK(Notes[GROW_CALM] * 1.3 < Notes[GROW_LIVELY] && Notes[GROW_LIVELY] < Notes[GROW_ACTION]);
-	Check(Length[GROW_CALM] / Notes[GROW_CALM] > 1.4 * Length[GROW_LIVELY] / Notes[GROW_LIVELY], (std::to_string(Notes[0]) + " " +
+	// (1.3: since feat-hooks a calm copy of the motif keeps its offbeat notes in bars of four or fewer, which kept its shape)
+	Check(Length[GROW_CALM] / Notes[GROW_CALM] > 1.3 * Length[GROW_LIVELY] / Notes[GROW_LIVELY], (std::to_string(Notes[0]) + " " +
 		std::to_string(Notes[1]) + " " + std::to_string(Notes[2]) + " " + std::to_string(Length[0] / Notes[0]) + " " +
 		std::to_string(Length[1] / Notes[1]) + " " + std::to_string(Length[2] / Notes[2]) + " " + std::to_string(Leaps[0] / Count[0]) + " " +
 		std::to_string(Leaps[1] / Count[1])).c_str(), __LINE__);
@@ -20509,7 +20511,7 @@ void TestWhatNextLoop()
 		const std::string Style = *K.Style ? std::string("\"style\": \"") + K.Style + "\"" : std::string();
 		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + (Style.empty() ? std::string() : ", " + Style) +
 			"}").Text);
-		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "chords_throughout" };
+		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "chords_throughout", "monotone" };
 		bool Clean = true;
 		for (const char *Kind : CLEAN) {
 			Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(K.Asked) + " " + Kind).c_str(), __LINE__);
@@ -28564,7 +28566,7 @@ void FollowShapeWalk(const char *Name, const char *Shape, const char *Asked, con
 	}
 	const std::string StyleArg = *Style ? std::string(", \"style\": \"") + Style + "\"" : std::string();
 	const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + StyleArg + "}").Text);
-	const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "climax_repeats" };
+	const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "monotone", "climax_repeats" };
 	bool Clean = true;
 	for (const char *Kind : CLEAN) {
 		Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(Name) + " " + Kind).c_str(), Line);
@@ -29274,7 +29276,7 @@ void TestKindPools()
 				NextKindInfo(k).Style + "\"";
 			const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + Style + "}").Text);
 			bool Clean = true;
-			for (const char *Kind : { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone" }) {
+			for (const char *Kind : { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "monotone" }) {
 				// (a clash that's a detail, a passing note or a chord's color, may be meant: the finished soundtrack has 239)
 				int Count = 0;
 				for (const Json *pFound : FindingsOf(Found, Kind))
@@ -29321,6 +29323,166 @@ std::string HookRhythmOf(const std::string &Hook)
 		Token.clear();
 	}
 	return Out;
+}
+
+// What makes a tune catch, measured (feat-hooks, TuneShape.h): a line of steps (eighths, 8 a bar) as its notes
+std::vector<ShapeNote> StepsShape(const std::string &Text)
+{
+	StepLine L;
+	std::string Error;
+	std::vector<ShapeNote> Out;
+	if (!ParseStepLine(Text, 1, L, Error))
+		return Out;
+	for (const StepLineNote &N : L.Notes) {
+		int Pitch = 0;
+		ParsePitch(N.Pitch, Pitch);
+		Out.push_back(ShapeNote(N.Step / 8, N.Step, N.Steps, Pitch));
+	}
+	return Out;
+}
+
+// A catchy tune (its motif stated, moved a step and answered, as the kept songs do) and three the user heard as monotone
+// (gen4's second round: the Hut's opening, Night Harbor's, the Caves'); hooks that hardly move; the tools' warnings, the
+// check_song finding and its fix on a model's wandering tune; offered hooks and grown versions that catch
+void TestHooks()
+{
+	// The measures
+	const std::string CATCHY = "E4 F4 G4 - C5 - - - | A4 - G4 - F4 - . . | F4 G4 A4 - D5 - - - | B4 - A4 - G4 - . . | E4 F4 G4 - C5 - - - "
+		"| A4 - G4 - F4 - . . | D4 E4 F4 - B4 - - - | C5 - - - - - . .";
+	{
+		const TuneMeasure M = MeasureTune(StepsShape(CATCHY), 8, 8, 2);
+		CHECK(M.ShapeBars >= 4);
+		CHECK(M.Peaked >= 1 && M.Range >= 7 && M.Leaps >= 2);
+		CHECK(MonotoneMelody(M).empty());
+	}
+	const char *const MONOTONE[] = {
+		// The Hut (cozy, Bb major): the hook's rhythm comes back three times, its shape never, the notes around Bb3
+		"F4 G4 Bb4 - A4 - F4 - | D4 - - - - - . . | Bb3 A3 Bb3 - C4 - Bb3 - | A3 - - - - - . . | Bb3 C4 A3 - Bb3 - C4 - | "
+		"G4 - - - - - - - | - - C5 - Eb5 - - - | C5 - A4 G4 F4 - . .",
+		// Night Harbor (calm): one rhythm, C5 A4 G4, A4 A4 C5, C5 C5 Bb4
+		". . C5 - A4 - G4 - | C5 - - - - - . . | . . A4 - A4 - C5 - | C5 - - - - - . . | . . C5 - C5 - Bb4 - | A4 - - - - - - - | "
+		"Bb4 - C5 - D5 - - - | A4 - A4 - F4 - . .",
+		// The Caves (mysterious): its G4 merged away, F4 struck twice
+		"F4 - - - - - G4 - | F4 - - - - - - - | E4 - - - G4 - - - | - - - - . . . . | F4 - - - - - - - | F4 - - - - - - - | "
+		"G4 - - - E4 - - - | . . . . . . . ." };
+	for (const char *Line : MONOTONE) {
+		const TuneMeasure M = MeasureTune(StepsShape(Line), 8, 8, 2);
+		const std::vector<std::string> Why = MonotoneMelody(M);
+		Check(!Why.empty() && M.ShapeBars == 0, (std::string(Line) + ": " + TuneMeasureText(M)).c_str(), __LINE__);
+	}
+	// Hooks: one that hardly moves, two notes, one note again and again; the worked example's and the Caves' are fine
+	CHECK(!MonotoneHook(MeasureTune(StepsShape("C4 D4 C4 D4 C4 - - - | D4 - - - . . . ."), 2, 8, 2)).empty());
+	CHECK(!MonotoneHook(MeasureTune(StepsShape("C4 - G4 - C4 - G4 - | C4 - - - . . . ."), 2, 8, 2)).empty());
+	CHECK(!MonotoneHook(MeasureTune(StepsShape("E4 E4 E4 F4 E4 - - - | E4 - - - . . . ."), 2, 8, 2)).empty());
+	CHECK(MonotoneHook(MeasureTune(StepsShape("E4 F4 G4 - C5 - - - | A4 - G4 - F4 - . ."), 2, 8, 2)).empty());
+	CHECK(MonotoneHook(MeasureTune(StepsShape("F4 - - G4 F4 - - - | E4 - G4 - - - . ."), 2, 8, 2)).empty());
+	CHECK_HAS(HookAdvice(), "E4 F4 G4 - C5 - - -");
+
+	// A model's own melody that wanders over C Am F G (the Hut's shape, in C): write_notes warns with the fix, check_song
+	// finds it with the same fix, what_next gives it as a step, and the fix makes the opening catch
+	const std::string Wandering = "1: C5 D5 F5 - E5 - C5 - | A4 - - - - - . . | F4 E4 F4 - G4 - F4 - | D4 - - - - - . . | "
+		"E4 F4 D4 - E4 - F4 - | D5 - - - - - - - | - - G4 - A4 - - - | G4 - E4 D4 C4 - . .";
+	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	{
+		FakeSong Song(4);
+		BusyBase(Song);
+		const std::string Wrote = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": \"" +
+			Wandering + "\"}").Text;
+		CHECK_HAS(Wrote, "doesn't catch");
+		CHECK_HAS(Wrote, "its shape never does");
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "monotone", "monotone");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "monotone"), 1);
+		if (!Found.empty()) {
+			CHECK_EQ(TextOf(Found[0], "severity"), std::string("medium"));
+			CHECK_HAS(TextOf(Found[0], "message"), "A hook a player remembers");
+			const Json *pFix = Found[0]->Get("fix");
+			CHECK(pFix != 0 && TextOf(pFix, "tool") == "grow_melody");
+			if (pFix != 0 && TextOf(pFix, "tool") == "grow_melody") {
+				CHECK_HAS(Wrote, "Fix: grow_melody");
+				CHECK_EQ(TextOf(pFix->Get("arguments"), "motif"), std::string("C5 D5 F5 - E5 - C5 - | A4 - - - - - . ."));
+				CHECK_HAS(Run(Song, "what_next", "{\"all\": true, \"melody_channel\": \"VRC6 Pulse 1\"}").Text, "grow_melody");
+				Run(Song, "grow_melody", WriteJson(*pFix->Get("arguments")));
+				CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "monotone").empty());
+			}
+		}
+		ProblemList List;
+		std::string Error;
+		CHECK(List.Read(WriteJson(Out), Error));
+		CHECK_EQ(List.Count(PROBLEM_MONOTONE), 1);
+		CHECK_EQ(std::string(ProblemKindId(PROBLEM_MONOTONE)), std::string("monotone"));
+	}
+	// The catchy one written there: no warning, no finding
+	{
+		FakeSong Song(4);
+		BusyBase(Song);
+		const std::string Wrote = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"notes\": \"1: " +
+			CATCHY + "\"}").Text;
+		CHECK_LACKS(Wrote, "doesn't catch");
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "monotone").empty());
+	}
+	// A model's flat hook: grow_melody says so, with the advice
+	{
+		FakeSong Song(4);
+		BusyBase(Song);
+		const std::string Grown = Run(Song, "grow_melody", "{\"motif\": \"C4 C4 D4 C4 - - . . | C4 - - - . . . .\", \"channel\": "
+			"\"VRC6 Pulse 1\", \"from_bar\": 1, \"to_bar\": 8}").Text;
+		CHECK_HAS(Grown, "The hook hardly moves");
+		CHECK_HAS(Grown, "A hook a player remembers");
+	}
+	// Offered hooks and what grows from them catch: every pace, over three progressions, many picks
+	{
+		const char *const PROGS[] = { "| C | Am | F | G | C | Am | F G | C |", "| Am | F | C | G | Am | F | Dm E | Am |",
+			"| C | F | C | G | Am | F | G | C |" };
+		int Flat = 0, Monotone = 0, Total = 0;
+		for (int Pace = 0; Pace <= 2; ++Pace)
+			for (int p = 0; p < 3; ++p)
+				for (unsigned int Pick = 1; Pick <= 24; ++Pick) {
+					const Key K(p == 1 ? 9 : 0, p == 1 ? MODE_MINOR : MODE_MAJOR);
+					std::vector<BarSpan> Spans;
+					for (int b = 0; b < 8; ++b)
+						Spans.push_back(BarSpan(b * 8, 8));
+					std::vector<ChordAt> Chords;
+					std::string Error;
+					CHECK(LayOutProgression(SplitProgression(PROGS[p]), Spans, 2, K, Chords, Error));
+					std::vector<std::vector<int> > Chord(16), Sounding(16);
+					for (int r = 0; r < 16; ++r)
+						for (const ChordAt &C : Chords)
+							if (r >= C.Row && r < C.Row + C.Rows)
+								Chord[static_cast<size_t>(r)] = C.C.PitchClasses();
+					int Bars = 2;
+					const std::vector<TuneNote> Tune = HookTune(K, 1, 4, 2, Chord, Sounding, Pace, Pick * 2654435761u, 0, Bars);
+					GrowRequest Q;
+					std::vector<ShapeNote> Hook;
+					for (const TuneNote &N : Tune) {
+						const int Step = static_cast<int>(std::lround(((N.Bar - 1) * 4 + N.Beat - 1) * 2));
+						const int Steps = static_cast<int>(std::lround(N.Beats * 2));
+						Q.Motif.push_back(GrowNote(Step, Steps, N.Pitch));
+						Hook.push_back(ShapeNote(Step / 8, Step, Steps, N.Pitch));
+					}
+					Flat += MonotoneHook(MeasureTune(Hook, Bars, 8, 2)).empty() ? 0 : 1;
+					for (const ChordAt &C : Chords)
+						Q.Chords.push_back(C.C);
+					Q.Bars = 8;
+					Q.RowsPerStep = 1;
+					for (int s = 0; s < 64; ++s)
+						Q.StepChord.push_back(s / 8 < static_cast<int>(Chords.size()) ? s / 8 : -1);
+					Q.K = K;
+					Q.Low = 31;
+					Q.High = 67;
+					Q.Kind = Pace == 0 ? GROW_CALM : Pace == 2 ? GROW_ACTION : GROW_LIVELY;
+					Q.Variant = 1 + static_cast<int>(Pick % 4);
+					std::vector<GrownVersion> Versions;
+					CHECK(GrowMelody(Q, Versions, Error));
+					Monotone += !Versions.empty() && !Versions[0].Monotone.empty() ? 1 : 0;
+					++Total;
+				}
+		// (before feat-hooks: 9 of 360 offered hooks hardly moved and 22 of 360 first versions didn't catch)
+		Check(Flat == 0 && Monotone == 0, (std::to_string(Flat) + " flat hooks, " + std::to_string(Monotone) + " monotone first "
+			"versions of " + std::to_string(Total)).c_str(),
+			__LINE__);
+	}
 }
 
 std::string FirstOfferedHook(int Kind, const char *Name, unsigned int Seed, int Line)
@@ -30055,6 +30217,7 @@ int main()
 	TestWhatNextMelodyRoles();
 	TestGen4Done();
 	TestOfferedHooks();
+	TestHooks();
 	TestKindShapes();
 	TestLeadVibratoFits();
 	TestGen4Balance();

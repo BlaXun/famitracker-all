@@ -57,7 +57,8 @@ int g_Failures = 0;
 struct CheckedKind { const char *Kind; const char *Step; bool StepNeeded; };
 const CheckedKind KINDS[] = { { "too_busy", "oo busy for the NES", true }, { "chord_drone", "drone against the tune", true },
 	{ "climax_repeats", "the song's high point, plays the melody", false },
-	{ "chords_throughout", "A chord part that plays all through", true } };
+	{ "chords_throughout", "A chord part that plays all through", true },
+	{ "monotone", "doesn't catch: in ", false } };
 const size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
 std::vector<std::string> FtmFiles(const std::string &Folder)
@@ -168,6 +169,35 @@ int main(int argc, char *argv[])
 #endif
 	}
 	const bool Verbose = argc > 2 && std::string(argv[2]) == "-v";
+	// -tunes: each song's melody measured (TuneShape.h), for calibrating what makes a tune catchy; the folder's songs
+	// themselves, then keep/ and flag/
+	if (argc > 2 && std::string(argv[2]) == "-tunes") {
+		const char *const SUBS[] = { "", "/keep", "/flag" };
+		for (size_t s = 0; s < 3; ++s) {
+			const std::vector<std::string> Files = FtmFiles(Folder + SUBS[s]);
+			for (size_t i = 0; i < Files.size(); ++i) {
+				FileSong Song;
+				std::string Error;
+				if (!Song.Load(Files[i], 0, Error))
+					continue;
+				ToolSet Tools(Song);
+				std::printf("%s: %s\n", Files[i].c_str(), Tools.TuneShapes().c_str());
+				// With -tunes -steps [N], the melody's first N bars (8) in steps too
+				const std::string Shapes = Tools.TuneShapes();
+				const size_t At = Shapes.find(" bars ");
+				if (argc > 3 && std::string(argv[3]) == "-steps" && At != std::string::npos) {
+					Json Args = Json::MakeObject();
+					Args.Set("channel", Shapes.substr(0, At));
+					Args.Set("format", "steps");
+					const int First = std::atoi(Shapes.c_str() + At + 6);
+					Args.Set("from_bar", First);
+					Args.Set("to_bar", First + (argc > 4 ? std::max(1, std::atoi(argv[4])) : 8) - 1);
+					std::printf("%s\n", Tools.Call("read_notes", Args).Text.c_str());
+				}
+			}
+		}
+		return 0;
+	}
 	if (Folder.empty()) {
 		std::printf("No songs to check (give a folder with keep/ and flag/, or set FAMITRACKER_SONG_CHECKS): skipped.\n");
 		return 0;

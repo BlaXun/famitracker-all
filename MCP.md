@@ -921,6 +921,18 @@ JSON as `fix`.
   of its length note for note in nearly every bar, whatever the other parts
   add. Fix: `vary_part` with `octave_up` on the melody there while its top
   stays low enough, else advice: give the climax a higher phrase of its own.
+- **A melody that doesn't catch** (`monotone`): the melody's first 8 bars
+  bring a bar's rhythm back in 4 or more bars without its shape (three moves
+  of four the same way) ever coming back, so the notes wander instead of
+  bringing a motif back; or each phrase stays within a third (a line of one
+  rhythm or one note length is the review's and `phrases`' to say). None of
+  the 44 songs the user keeps does; the three of a round of
+  local-model songs he heard as "not catchy", "monotone" and "just there"
+  did. The text says how a hook catches, with a worked example in steps.
+  Fix: `grow_melody` over those 8 bars from the melody's own first two
+  bars, with `pick` 1, when a dry run's first version catches; advice
+  alone when that hook hardly moves itself or isn't on a grid of eighths.
+  `write_notes` warns the same way when it writes the melody there.
 - **Chords that rub the tune** (`chord_drone`): a chord part (a looping
   arpeggio instrument or `0xy` on half the notes or more) that plays in
   three quarters of the melody's bars or more (16 at least), within 6 dB
@@ -1088,7 +1100,7 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy`, `key` and `held`, notes that vanish counted by the note, then the
 arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
-`short_loop`, `intro`, `too_busy`, `climax_repeats`, `chord_drone` and `chords_throughout`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
+`short_loop`, `intro`, `too_busy`, `climax_repeats`, `chord_drone`, `chords_throughout` and `monotone`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
 (`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
@@ -1394,6 +1406,15 @@ its sequence, and two-bar calls. In every version:
 - the hook comes back as written where the chords let it, and moved up or
   down the scale where they don't;
 - long and short notes mix, and notes tie over bar lines inside a phrase.
+
+A version's notes that follow the hook (moved, turned upside down, with a
+new ending) keep its shape, each move the way the hook's goes, and a version
+whose first 8 bars don't catch (as `check_song`'s `monotone` hears them) is
+grown again with another seed, else listed last with "It doesn't catch:"
+and why. A hook that hardly moves (within a step, two notes, one note again
+and again, all one length) gets a note with how to write one that catches:
+a motif of 2-5 notes in one rhythm, stated, again a step higher or lower,
+then answered; one leap with a step back; one high point a phrase.
 
 `kind` shapes it: calm grows fewer, longer notes that move by step, in
 phrases of 2 bars that each end with a rest; lively (the default) more

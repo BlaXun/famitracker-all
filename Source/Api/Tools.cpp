@@ -31,6 +31,7 @@
 #include "GameAudio.h"
 #include "GameSounds.h"
 #include "GrowMelody.h"
+#include "TuneShape.h"
 #include "Jingles.h"
 #include "Music.h"
 #include "Network.h"
@@ -12122,6 +12123,19 @@ std::string GrownLine(const ChannelInfo &Info, const std::vector<GrowNote> &Note
 	return FormatStepLine(Line);
 }
 
+// "a, b and c"
+std::string ListText(const std::vector<std::string> &Items)
+{
+	std::string Text;
+	for (size_t i = 0; i < Items.size(); ++i)
+		Text += (i == 0 ? "" : i + 1 == Items.size() ? " and " : ", ") + Items[i];
+	return Text;
+}
+
+// What grow_melody's reply says after a version that doesn't catch (TuneShape.h's MonotoneMelody), which check_song's
+// monotone finding looks for in a dry run
+const char *const MONOTONE_WORD = "It doesn't catch:";
+
 std::string GrowMelodyTool(Session &S, const Json &Args)
 {
 	const int Sixteenths = StepArg(Args);
@@ -12356,6 +12370,22 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 		}
 	}
 
+	// A hook that hardly moves grows into a tune that doesn't either (TuneShape.h's MonotoneHook)
+	{
+		std::vector<ShapeNote> Hook;
+		for (size_t i = 0; i < Q.Motif.size(); ++i)
+			Hook.push_back(ShapeNote(Q.Motif[i].Step / StepsPerBar, Q.Motif[i].Step, Q.Motif[i].Steps, Q.Motif[i].Pitch));
+		const std::vector<std::string> Flat = MonotoneHook(MeasureTune(Hook, static_cast<int>(Motif.Bars.size()), StepsPerBar,
+			StepsPerBeat));
+		if (!Flat.empty())
+			Remarks.push_back("The hook hardly moves: " + ListText(Flat) + ", so what grows from it can't either. " + HookAdvice());
+		bool Every = true;
+		for (size_t v = 0; v < Versions.size(); ++v)
+			Every = Every && !Versions[v].Monotone.empty();
+		if (Every && Flat.empty() && !Versions.empty())
+			Remarks.push_back("None of these versions catches (each says why): try variant " + std::to_string(Q.Variant + 1) + ", or a "
+				"hook with a motif that can come back. " + HookAdvice());
+	}
 	const int Pick = IntArg(Args, "pick", 0, 0, static_cast<int>(Versions.size()));
 	std::vector<std::string> Lines;
 	for (size_t v = 0; v < Versions.size(); ++v)
@@ -12378,8 +12408,11 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 			Write.Set("as_clip", *Arg(Args, "as_clip"));
 		Write.Set("clip_name", StringArg(Args, "clip_name", Format("Grown melody %d", Pick)));
 		const std::string Reply = WriteNotesInSteps(S, Write);
+		const GrownVersion &Picked = Versions[static_cast<size_t>(Pick) - 1];
 		std::string Text = Format("Version %d of the hook grown over %s (variant %d). %s\n%s\n", Pick, Over.c_str(), Q.Variant,
-			Versions[static_cast<size_t>(Pick) - 1].Shape.c_str(), Lines[static_cast<size_t>(Pick) - 1].c_str()) + Reply +
+			Picked.Shape.c_str(), Lines[static_cast<size_t>(Pick) - 1].c_str()) + Reply + (Picked.Monotone.empty() ? std::string() :
+			std::string("\nWarning: ") + MONOTONE_WORD + " " + ListText(Picked.Monotone) + ". Another version, a variant, or a hook "
+			"of your own brings the motif back: " + HookAdvice()) +
 			"\nShape it by hand from here (read_notes with format steps, write_notes), then check_song and review_arrangement.";
 		for (size_t i = 0; i < Remarks.size(); ++i)
 			Text += "\nNote: " + Remarks[i];
@@ -12389,7 +12422,8 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 		"numbered); pick %s with variant %d writes one, and variant %d gives others.", MotifText.c_str(), Padded.c_str(), Over.c_str(),
 		Versions.size() == 3 ? "Three" : "Two", Versions.size() == 3 ? "1, 2 or 3" : "1 or 2", Q.Variant, Q.Variant + 1);
 	for (size_t v = 0; v < Versions.size(); ++v)
-		Text += Format("\n\nVersion %d. %s\n", static_cast<int>(v) + 1, Versions[v].Shape.c_str()) + Lines[v];
+		Text += Format("\n\nVersion %d. %s%s\n", static_cast<int>(v) + 1, Versions[v].Shape.c_str(), Versions[v].Monotone.empty() ?
+			"" : (std::string(" ") + MONOTONE_WORD + " " + ListText(Versions[v].Monotone) + ".").c_str()) + Lines[v];
 	Text += "\n\nPick the one that sings, then shape it by hand: a note, a rhythm, a held note longer.";
 	for (size_t i = 0; i < Remarks.size(); ++i)
 		Text += "\nNote: " + Remarks[i];
@@ -14579,9 +14613,9 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main
 // part (IntroFinding); and (BusyFindings) a part too busy for the NES; and (DroneFindings) chords that drone against the tune
 // through the song; and (ThroughoutFindings, feat-texture) a chord part that rolls on the same way in nearly every bar of
-// the melody. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
+// the melody; and (MonotoneFindings, feat-hooks) a melody that doesn't catch. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
 enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO, ARRANGE_BUSY,
-	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_THROUGHOUT, ARRANGE_KINDS };
+	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_THROUGHOUT, ARRANGE_MONOTONE, ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -15709,6 +15743,164 @@ void BusyFindings(Session &S, int Melody, int From, int To, std::vector<ArrangeF
 	}
 }
 
+// A melody's notes in Bars bars from FromBar as TuneShape measures them (feat-hooks): those heard (a volume over 0) that start
+// there, each bar's rows counted from its start as if every bar were RowsPerBar long
+std::vector<ShapeNote> TuneNotes(Session &S, int Melody, int FromBar, int Bars)
+{
+	std::vector<ShapeNote> Out;
+	if (Melody < 0 || Bars <= 0)
+		return Out;
+	const int First = S.Time.BarStart(FromBar), End = std::min(S.Time.BarEnd(FromBar + Bars - 1), S.Time.TotalRows());
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = NotesIn(PitchedNotes(S, Melody, Kept), First, End);
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Volume <= 0)
+			continue;
+		const int Bar = S.Time.BarOf(N.Row);
+		Out.push_back(ShapeNote(Bar - FromBar, (Bar - FromBar) * S.Time.RowsPerBar + N.Row - S.Time.BarStart(Bar),
+			std::max(1, std::min(N.Row + N.Rows, End) - N.Row), N.Pitch));
+	}
+	return Out;
+}
+
+// The first and last bars a channel's heard notes start in from FromBar to ToBar; false without one
+bool TuneBars(Session &S, int Melody, int FromBar, int ToBar, int &First, int &Last)
+{
+	First = Last = -1;
+	if (Melody < 0)
+		return false;
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = NotesIn(PitchedNotes(S, Melody, Kept), S.Time.BarStart(FromBar),
+		std::min(S.Time.BarEnd(ToBar), S.Time.TotalRows()));
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Volume > 0 && Notes[i].Row >= S.Time.BarStart(FromBar)) {
+			const int Bar = S.Time.BarOf(Notes[i].Row);
+			First = First < 0 ? Bar : First;
+			Last = Bar;
+		}
+	return First >= 0;
+}
+
+// The melody's first two bars from FirstBar as a hook in steps of eighths, a bar a part ("E4 F4 G4 - C5 - - - | A4 - G4 -
+// F4 - . ."), as what_next's SongHook reads one: empty when they're off that grid or hold fewer than 4 notes or more than 7
+std::string HookStepsOf(Session &S, int Melody, int FirstBar, const Key *pKey)
+{
+	const int Beat = std::max(1, S.Time.RowsPerBeat), Eighth = Beat % 2 == 0 ? Beat / 2 : Beat;	// (EighthRows, defined later)
+	if (Melody < 0 || Eighth <= 0)
+		return std::string();
+	const int First = S.Time.BarStart(FirstBar), End = std::min(S.Time.BarEnd(FirstBar + 1), S.Time.TotalRows());
+	StepLine Line;
+	Line.FirstBar = FirstBar;
+	for (int b = 0; b < 2; ++b) {
+		if (S.Time.BarLength(FirstBar + b) % Eighth != 0)
+			return std::string();
+		StepLineBar Bar;
+		Bar.First = b == 0 ? 0 : Line.Bars.back().Steps;
+		Bar.Steps = S.Time.BarLength(FirstBar + b) / Eighth;
+		Line.Bars.push_back(Bar);
+	}
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = NotesIn(PitchedNotes(S, Melody, Kept), First, End);
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const NoteInfo &N = Notes[i];
+		if (N.Row < First || N.Volume <= 0)
+			continue;
+		const int Rows = std::min(N.Row + N.Rows, End) - N.Row;
+		if ((N.Row - First) % Eighth != 0 || Rows < Eighth || Line.Notes.size() >= 7)
+			return std::string();
+		StepLineNote Step;
+		Step.Step = (N.Row - First) / Eighth;
+		Step.Steps = Rows / Eighth;
+		Step.Pitch = StepPitch(S.Channel(Melody), N.Pitch, pKey);
+		Line.Notes.push_back(Step);
+	}
+	if (Line.Notes.size() < 4)
+		return std::string();
+	std::string Text = FormatStepLine(Line);
+	for (size_t At = Text.find('\n'); At != std::string::npos; At = Text.find('\n', At))
+		Text.replace(At, 1, " | ");
+	return Text;
+}
+
+// A melody's opening as TuneShape measures it (from feat-hooks): its first 8 bars from its first note, what's monotone
+// about them (MonotoneMelody) and about its first two bars, the hook (MonotoneHook). False when it has fewer than 8 bars
+struct TuneOpening {
+	int FirstBar;
+	TuneMeasure Tune, Hook;
+	std::vector<std::string> Why, HookWhy;
+	TuneOpening() : FirstBar(0) {}
+};
+
+bool MeasureOpening(Session &S, int Melody, TuneOpening &Out)
+{
+	int First = 0, Last = 0;
+	if (Melody < 0 || !IsMelodic(S.Channel(Melody)) || !TuneBars(S, Melody, 1, S.Time.BarCount(), First, Last) || Last - First + 1 < 8)
+		return false;
+	Out.FirstBar = First;
+	Out.Tune = MeasureTune(TuneNotes(S, Melody, First, 8), 8, S.Time.RowsPerBar, S.Time.RowsPerBeat);
+	Out.Hook = MeasureTune(TuneNotes(S, Melody, First, 2), 2, S.Time.RowsPerBar, S.Time.RowsPerBeat);
+	Out.Why = MonotoneMelody(Out.Tune);
+	Out.HookWhy = MonotoneHook(Out.Hook);
+	return true;
+}
+
+// A melody that doesn't catch (from feat-hooks; TuneShape.cpp has the numbers): its first 8 bars bring a rhythm back
+// with no shape coming back, or stay within a third, or play one rhythm or one note length throughout. Its fix grows the
+// opening again from its own first two bars (grow_melody, whose versions keep the motif's shape), tried first: advice
+// alone where that hook hardly moves itself, isn't on a grid of eighths or grows no better
+void MonotoneFindings(Session &S, int Melody, int Style, const Key &K, std::vector<ArrangeFinding> &Out)
+{
+	TuneOpening O;
+	if (!MeasureOpening(S, Melody, O) || O.Why.empty())
+		return;
+	const std::string Name = S.Channel(Melody).FullName();
+	ArrangeFinding F;
+	F.Kind = ARRANGE_MONOTONE;
+	F.Channel = Melody;
+	F.FromBar = O.FirstBar;
+	F.ToBar = O.FirstBar + 7;
+	F.Weight = 1.5;
+	F.Text = Format("The melody (%s) doesn't catch: in %s %s. A tune a player hums brings its motif back. ", Name.c_str(),
+		RangeText(F.FromBar, F.ToBar).c_str(), ListText(O.Why).c_str()) + HookAdvice();
+	F.Summary = Format("the melody in %s is monotone: %s", RangeText(F.FromBar, F.ToBar).c_str(), O.Why[0].c_str());
+	F.Details.Set("problem", "monotone");
+	F.Details.Set("shape_bars", O.Tune.ShapeBars);
+	F.Details.Set("rhythm_bars", O.Tune.RhythmBars);
+	F.Details.Set("phrase_range", Json::NumberText(FormatNumber(std::floor(O.Tune.PhraseRange * 10 + 0.5) / 10)));
+	F.Fix = Json();
+	const std::string Hook = O.HookWhy.empty() ? HookStepsOf(S, Melody, O.FirstBar, &K) : std::string();
+	if (!O.HookWhy.empty())
+		F.Text += " Its hook (bars " + std::to_string(O.FirstBar) + "-" + std::to_string(O.FirstBar + 1) + ") hardly moves: " +
+			ListText(O.HookWhy) + "; write a new one and grow it (grow_melody).";
+	if (!Hook.empty()) {
+		Json A = Json::MakeObject();
+		A.Set("motif", Hook);
+		A.Set("channel", Name);
+		A.Set("from_bar", F.FromBar);
+		A.Set("to_bar", F.ToBar);
+		if (Style == STYLE_CALM)
+			A.Set("kind", "calm");
+		// Tried first: the versions grown, the first of which must bring its motif back
+		bool Grows = false;
+		try {
+			Session D(S);
+			const std::string Reply = GrowMelodyTool(D, A);
+			const size_t One = Reply.find("\n\nVersion 1. "), Two = Reply.find("\n\nVersion 2. ");
+			Grows = One != std::string::npos && Reply.substr(One, Two == std::string::npos ? std::string::npos : Two - One).find(
+				MONOTONE_WORD) == std::string::npos;
+		}
+		catch (const Problem &) {
+		}
+		if (Grows) {
+			A.Set("pick", 1);
+			F.Fix = ToolCall("grow_melody", A, "grows " + RangeText(F.FromBar, F.ToBar) + " again from the melody's own first two bars, "
+				"the motif coming back as written and moved, answered and climbing to one high point");
+		}
+	}
+	Out.push_back(F);
+}
+
 // Chords that rub the tune (from feat-chords-room; feat-chord-rests' first rule judged their rhythm). A local model's
 // lively VRC6 stage (Ironworks) put lush chords on the 2A03's Pulse 1 in every bar, about 4 dB under the melody; the user
 // found that Pulse 1 "super annoying and irritating ... it distracts from the real track", fine in the intro and for the
@@ -16284,6 +16476,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	LoopFinding(S, Style, Use, Out);
 	IntroFinding(S, Ears, Melody, From, Style, Out);
 	BusyFindings(S, Melody, From, To, Out);
+	MonotoneFindings(S, Melody, Style, K, Out);
 	DroneFindings(S, Ears, Melody, From, To, Style, K, Out);
 	ThroughoutFindings(S, Ears, Melody, From, To, Out);
 	return Out;
@@ -18146,6 +18339,40 @@ std::string VaryPartTool(Session &S, const Json &Args)
 		return Pitch + Direction;
 	};
 	int Changed = 0, Rubbing = 0;
+	// An ornament (or a syncopated note's early half beat) stays off a semitone rub (SemitoneRub, as check_song hears a
+	// clash) against what the other parts sound over its rows, as add_harmony's notes do: one that would rub is left out
+	// (Rubbing counts them)
+	struct Sounding { int Row, End; std::vector<int> Pitches; };
+	std::vector<Sounding> Others;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Channel || !IsMelodic(S.Channel(c)))
+			continue;
+		const int Lift = Written(S.Channel(c), 0);
+		const std::vector<NoteInfo> &Theirs = S.Notes(c);
+		const std::vector<int> Arps = StickyAt(S.Cells(c), Theirs, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
+		for (size_t i = 0; i < Theirs.size(); ++i) {
+			const int Stop = Theirs[i].Row + std::max(1, Theirs[i].Rows);
+			if (Theirs[i].Volume <= 0 || Stop <= First || Theirs[i].Row >= End)
+				continue;
+			Sounding o;
+			o.Row = Theirs[i].Row;
+			o.End = Stop;
+			o.Pitches.push_back(Theirs[i].Pitch - Lift);
+			const std::vector<int> Chord = ChordAbove(S, Theirs[i], Arps[i]);
+			for (size_t a = 0; a < Chord.size(); ++a)
+				o.Pitches.push_back(Theirs[i].Pitch - Lift + Chord[a]);
+			Others.push_back(o);
+		}
+	}
+	const int Lifted = Written(Info, 0);
+	auto Rubs = [&](int Pitch, int Row, int Rows) {
+		for (size_t k = 0; k < Others.size(); ++k)
+			if (Others[k].Row < Row + Rows && Others[k].End > Row)
+				for (size_t p = 0; p < Others[k].Pitches.size(); ++p)
+					if (SemitoneRub(Pitch - Lifted, Others[k].Pitches[p]))
+						return true;
+		return false;
+	};
 	std::vector<PartNote> Out;
 	std::string EndingChord;	// the ending: the chord under it, when that hasn't the tonic
 	switch (Variation) {
@@ -18154,39 +18381,6 @@ std::string VaryPartTool(Session &S, const Json &Args)
 				// shorter one (two sixteenths or more, as a lively melody's are) gives its last sixteenth
 		std::map<int, int> PerBar;
 		const int Sixteenth = std::max(1, R / 4);
-		// An ornament stays off a semitone rub (SemitoneRub, as check_song hears a clash) against what the other parts sound
-		// over its rows, as add_harmony's notes do: one that would rub is left out (Rubbing counts them)
-		struct Sounding { int Row, End; std::vector<int> Pitches; };
-		std::vector<Sounding> Others;
-		for (int c = 0; c < S.ChannelCount(); ++c) {
-			if (c == Channel || !IsMelodic(S.Channel(c)))
-				continue;
-			const int Lift = Written(S.Channel(c), 0);
-			const std::vector<NoteInfo> &Theirs = S.Notes(c);
-			const std::vector<int> Arps = StickyAt(S.Cells(c), Theirs, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
-			for (size_t i = 0; i < Theirs.size(); ++i) {
-				const int Stop = Theirs[i].Row + std::max(1, Theirs[i].Rows);
-				if (Theirs[i].Volume <= 0 || Stop <= First || Theirs[i].Row >= End)
-					continue;
-				Sounding o;
-				o.Row = Theirs[i].Row;
-				o.End = Stop;
-				o.Pitches.push_back(Theirs[i].Pitch - Lift);
-				const std::vector<int> Chord = ChordAbove(S, Theirs[i], Arps[i]);
-				for (size_t a = 0; a < Chord.size(); ++a)
-					o.Pitches.push_back(Theirs[i].Pitch - Lift + Chord[a]);
-				Others.push_back(o);
-			}
-		}
-		const int Lifted = Written(Info, 0);
-		auto Rubs = [&](int Pitch, int Row, int Rows) {
-			for (size_t k = 0; k < Others.size(); ++k)
-				if (Others[k].Row < Row + Rows && Others[k].End > Row)
-					for (size_t p = 0; p < Others[k].Pitches.size(); ++p)
-						if (SemitoneRub(Pitch - Lifted, Others[k].Pitches[p]))
-							return true;
-			return false;
-		};
 		auto Ornament = [&](const PartNote &From, int Row, int Rows, int Pitch) {
 			PartNote B = From;
 			B.Row = Row;
@@ -18285,7 +18479,12 @@ std::string VaryPartTool(Session &S, const Json &Args)
 			const int InBar = N.Row - S.Time.BarStart(Bar);
 			const int Middle = S.Time.BarLength(Bar) / R / 2 * R;
 			const bool Strong = (InBar == Middle && Middle > 0) || (InBar == 0 && Bar % 2 == 0);
-			if (Strong && !Out.empty() && Out.back().Row + Out.back().Rows == N.Row && Out.back().Rows >= R && N.Row - Half >= First) {
+			// (not where its early half beat rubs a semitone against the chord before: a melody's C anticipated over a G chord's B
+			// clashed in a walk's A'', feat-hooks)
+			if (Strong && !Out.empty() && Out.back().Row + Out.back().Rows == N.Row && Out.back().Rows >= R && N.Row - Half >= First &&
+				Rubs(N.Pitch, N.Row - Half, Half))
+				++Rubbing;
+			else if (Strong && !Out.empty() && Out.back().Row + Out.back().Rows == N.Row && Out.back().Rows >= R && N.Row - Half >= First) {
 				Out.back().Rows -= Half;
 				N.Row -= Half;
 				N.Rows += Half;
@@ -23696,6 +23895,23 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 		}
 	}
 
+	// A melody that doesn't catch (check_song's monotone, feat-hooks): the melody's first 8 bars as the write leaves them,
+	// where the part written is the melody and plays in them
+	if (S.Song.Speed != 1) {
+		Session View(S);
+		View.Assume(Channel, Cells);
+		const int Lead = UseOfTrack(View).Use == TRACK_MUSIC ? GuessMelodyChannel(View, 0, View.Time.TotalRows()) : -1;
+		TuneOpening O;
+		if (Lead == Channel && MeasureOpening(View, Lead, O) && !O.Why.empty() && FromBar <= O.FirstBar + 7 && ToBar >= O.FirstBar) {
+			Key MK;
+			TrackKey(View, 0, View.Time.TotalRows(), MK);
+			std::vector<ArrangeFinding> Found;
+			MonotoneFindings(View, Lead, NameSaysCalm(S.Song.TrackName) ? STYLE_CALM : STYLE_ANY, MK, Found);
+			for (size_t i = 0; i < Found.size(); ++i)
+				Out.push_back(Found[i].Text + (Direct && !Found[i].Fix.IsNull() ? " " + FixText(Found[i].Fix, true) : std::string()));
+		}
+	}
+
 	// Chords that rub the tune all through the song (check_song's chord_drone), where the part written is the melody or the
 	// chord part: the same rule, on the song as the write leaves it, so a song check_song leaves alone gets no warning
 	if (UseOfTrack(S).Use == TRACK_MUSIC && S.Song.Speed != 1 && !NameSaysCalm(S.Song.TrackName)) {
@@ -26336,14 +26552,16 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // bar of quick notes, the older and smaller check. CLIMAX (from feat-tool-replies): ARRANGE_CLIMAX, a section named as the
 // high point whose melody repeats an earlier one's (ClimaxFindings). CHORD_DRONE (from feat-chord-rests, its rule from
 // feat-chords-room): ARRANGE_DRONE, chords that rub the tune through the song (DroneFindings). CHORDS_THROUGHOUT (from
-// feat-texture): ARRANGE_THROUGHOUT, a chord part that plays the same way in nearly every bar of the melody (ThroughoutFindings)
+// feat-texture): ARRANGE_THROUGHOUT, a chord part that plays the same way in nearly every bar of the melody (ThroughoutFindings). MONOTONE (from feat-hooks):
+// ARRANGE_MONOTONE, a melody whose opening doesn't catch (MonotoneFindings)
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
 	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY,
-	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_CHORDS_THROUGHOUT, FOUND_KINDS };
+	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_CHORDS_THROUGHOUT, FOUND_MONOTONE, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats", "chord_drone", "chords_throughout" };
+	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats", "chord_drone", "chords_throughout",
+	"monotone" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium", "low" };
+	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium", "low", "medium" };
 
 // The check_song kind of one of ArrangeFindings' (arrange_kind)
 int ArrangeCheckKind(int Kind)
@@ -26351,6 +26569,7 @@ int ArrangeCheckKind(int Kind)
 	return Kind == ARRANGE_BUSY ? static_cast<int>(FOUND_TOO_BUSY) : Kind == ARRANGE_CLIMAX ? static_cast<int>(FOUND_CLIMAX) :
 		Kind == ARRANGE_DRONE ? static_cast<int>(FOUND_CHORD_DRONE) :
 		Kind == ARRANGE_THROUGHOUT ? static_cast<int>(FOUND_CHORDS_THROUGHOUT) :
+		Kind == ARRANGE_MONOTONE ? static_cast<int>(FOUND_MONOTONE) :
 		FOUND_PHRASES + Kind;
 }
 
@@ -26867,7 +27086,7 @@ std::string CheckTool(Session &S, const Json &Asked)
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
 		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX], Arranged[ARRANGE_DRONE],
-		Arranged[ARRANGE_THROUGHOUT] };
+		Arranged[ARRANGE_THROUGHOUT], Arranged[ARRANGE_MONOTONE] };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -30305,7 +30524,8 @@ NextStep WhatNext::TuneStep(int FirstBar, int Bars, int Variant, const std::stri
 	Out.Arguments.Set("to_bar", FirstBar + Bars - 1);
 	Out.Arguments.Set("notes", Notes);
 	Out.Why = Format("%s has no melody in bars %d-%d yet. The notes given are a phrase to start from, on its chords (their tones on the "
-		"strong beats, %s): write your own tune in their place, %s.%s", PartName.c_str(), FirstBar, FirstBar + Bars - 1, Bars >= 4 ?
+		"strong beats, %s): write your own tune in their place, %s; its motif (2-5 notes, one rhythm) coming back a step higher "
+		"or lower, then answered.%s", PartName.c_str(), FirstBar, FirstBar + Bars - 1, Bars >= 4 ?
 		"a held note after two bars, a held note and a rest at the end, so it breathes" : "ending on a held note and a rest",
 		CalmTune() ? "2-4 notes a bar, mostly by step" : "a motif a player would hum, mostly in octave 3, one high point a section",
 		Notes.IsString() ? " They're in steps: each token an eighth, - holds the note before, . rests, | ends a bar (read_notes with format "
@@ -30453,9 +30673,11 @@ void WhatNext::MelodyStep()
 					const std::string Bars = Format("bars %d-%d", Missing, P.LastBar);
 					if (Step("melody", "grow_melody", G, (Offered ? P.Name + " has no melody in " + Bars + " yet. Write a hook of your own in "
 						"motif, 4-7 notes in steps, a bar or two (the one given is a start, on the chords there: a token an eighth, - holds "
-						"the note, . rests, | between bars); grow_melody grows it" : P.Name + " has no melody in " + Bars + " yet: "
+						"the note, . rests, | between bars): a motif of 2-5 notes in a rhythm you could clap, that motif again a step "
+						"higher or lower, then a held note, with one leap and a step back (\"E4 F4 G4 - F4 G4 A4 - | G4 - - - . . . .\" in "
+						"C); grow_melody grows it" : P.Name + " has no melody in " + Bars + " yet: "
 						"grow_melody grows the song's hook (its first notes in " + Source + ", so it comes back)") + " over the chords "
-						"into versions, each with a sentence on its shape." + (h < Aimed ? Aim : std::string()) + " Then call grow_melody "
+						"into versions, each with a sentence on its shape (and says when one doesn't catch)." + (h < Aimed ? Aim : std::string()) + " Then call grow_melody "
 						"again with the same arguments and pick 1, 2 or 3, the version whose shape fits (variant 2 gives others); shape it by hand if you like (read_notes with "
 						"format steps, write_notes), and ask what_next again." + (m_Core ? " get_recipe shows a whole melody of 8 bars "
 						"in steps." : "")))
@@ -32511,6 +32733,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		return Where(Tool == "vary_part" ? "Simplify a part too busy for the NES" : "Clear a line that competes with the melody", true);
 	if (Id == "climax_repeats")
 		return Where("Lift the climax's melody an octave", true);
+	if (Id == "monotone")
+		return Where("Grow the melody's opening again so its motif comes back", true);
 	if (Id == "chord_drone")
 		return Where(Tool == "polish" ? "Take out the chords' colors that rub the melody" :
 			"Fit the chords to the melody so they stop rubbing it", true);
@@ -35205,6 +35429,35 @@ ToolResult ToolSet::CallTool(const std::string &Name, const Json &Arguments, con
 	return Result;
 }
 
+// Each 8 bars of the melody from its first, measured (TuneShapes)
+static std::string Blocks(Session &S, int Melody, int First, int Last)
+{
+	std::string Out = "\n  hook: " + TuneMeasureText(MeasureTune(TuneNotes(S, Melody, First, 2), 2, S.Time.RowsPerBar, S.Time.RowsPerBeat));
+	for (int Bar = First; Bar + 7 <= Last; Bar += 8)
+		Out += Format("\n  bars %d-%d: ", Bar, Bar + 7) + TuneMeasureText(MeasureTune(TuneNotes(S, Melody, Bar, 8), 8, S.Time.RowsPerBar,
+			S.Time.RowsPerBeat));
+	return Out;
+}
+
+std::string ToolSet::TuneShapes()
+{
+	try {
+		Session S(m_Host);
+		const int Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		int First = 0, Last = 0;
+		if (!TuneBars(S, Melody, 1, S.Time.BarCount(), First, Last))
+			return "no melody";
+		const int Opening = std::min(8, Last - First + 1), Whole = Last - First + 1;
+		return S.Channel(Melody).FullName() + Format(" bars %d-%d\n  opening: ", First, Last) + TuneMeasureText(MeasureTune(TuneNotes(S,
+			Melody, First, Opening), Opening, S.Time.RowsPerBar, S.Time.RowsPerBeat)) + "\n  whole:   " +
+			TuneMeasureText(MeasureTune(TuneNotes(S, Melody, First, Whole), Whole, S.Time.RowsPerBar, S.Time.RowsPerBeat)) + Blocks(S,
+			Melody, First, Last);
+	}
+	catch (const Problem &P) {
+		return P.Text;
+	}
+}
+
 bool ToolSet::Harmony(TrackHarmony &Out, std::string &Error)
 {
 	Out = TrackHarmony();
@@ -35397,11 +35650,12 @@ std::string ToolSet::CoreInstructions()
 		"briefly (write_log with a category); between steps, read_user_notes. Before a batch of changes, create_backup with a label "
 		"(restore_backup goes back).\n"
 		"Write music that sounds composed, not generated:\n"
-		"- Melody (on a pulse): write only the hook, 4-7 notes in steps, a bar or two, a token an eighth: \"D4 G4 A4 B4 - A4 "
-		"G4 - | B4 - - - . . D5 -\" (- holds, across | too; . rests). grow_melody grows it over the chords, with the kind and "
-		"the section: pick the version whose shape fits (variant 2 for others), then shape it by hand (read_notes format "
-		"steps, write_notes). By hand: phrases of 2 or 4 bars that end on a held note or a rest (not at every bar line), chord "
-		"tones on strong beats, long and short notes mixed, mostly in octave 3. get_recipe shows a whole melody of 8 bars.\n"
+		"- Melody (on a pulse): write only the hook, 4-7 notes in steps, a token an eighth: \"D4 G4 A4 B4 - A4 G4 - | B4 - - - "
+		". . D5 -\" (- holds, across | too; . rests); it catches when a motif (2-5 notes, one rhythm) returns moved a step, "
+		"then is answered. grow_melody grows it over the chords: pick a version (variant 2 for others), then shape it "
+		"(read_notes format steps, write_notes). By hand: phrases of 2 or 4 "
+		"bars ending on a held note or a rest (not at every bar line), chord tones on strong beats, long and short notes, "
+		"mostly octave 3. get_recipe shows a whole melody of 8 bars.\n"
 		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\"), "
 		"about one a bar, with a chord_style, color and bass_style that fit the mood; other chords for the B part.\n"
 		"- Sounds: design_instrument for a sound in words, add_instrument a preset (soft lead, pluck, bell, "
@@ -35497,7 +35751,7 @@ std::string ToolSet::Instructions()
 		"A phrase breathes at its end, not at every bar line: inside it, let notes run up to the bar line or hold one across "
 		"it. read_notes with format steps gives a part back that way, to change and write again. grow_melody grows a hook (4-7 "
 		"notes in steps) into phrases over the chords, in versions to choose from: write the hook, grow it, pick one, then shape "
-		"it by hand.\n"
+		"it by hand. " + HookAdvice() + " check_song says when a melody doesn't catch (monotone).\n"
 		"- Harmony with direction: tonic, subdominant, dominant, home; a B part on other chords (IV, vi, the relative key); "
 		"sevenths, added ninths and suspensions resolving into V (color sevenths or rich); chords changing about once a bar, "
 		"not every beat. Bass: walking for towns and jazz, octaves for action, syncopated for pop, arpeggio for adventure. "
@@ -35729,6 +35983,10 @@ static std::string LaterDrums(const NextKind &K)
 		K.Intensity : std::string()) + (K.Samples ? " and kit samples" : "") + ", fills where phrases end.";
 }
 
+// The recipes' line on a hook that catches (TuneShape.h: HookAdvice has the whole of it, with an example)
+static const char *const HOOK_SHORT = "a hook catches when a motif of 2-5 notes in one rhythm is stated, comes back a step "
+	"higher or lower, then is answered, with one leap and one high note (grow_melody and check_song say when a tune doesn't).";
+
 static std::string LaterKindRecipe(const NextKind &K, const std::string &Idea, const std::string &Bars)
 {
 	const std::string Kind = K.Name, Style = std::string(K.Style) == "any" ? std::string() : std::string(" style ") + K.Style;
@@ -35756,7 +36014,8 @@ static std::string LaterKindRecipe(const NextKind &K, const std::string &Idea, c
 		"6. The melody with write_notes, phrase by phrase: " + K.Melody + ". The melody must breathe: about 2 of every 3 two-bar "
 		"spans end on a rest of a beat or more or a note held two beats or more. Write it in steps (notes as text: \"5: D4 G4 A4 "
 		"B4 - A4 G4 -\", - holds across | too): it breathes at a phrase's end, not at every bar line. Or write the hook alone and "
-		"grow_melody (kind " + Kind + ") grows it over the chords in versions: pick the one that sings, then shape it by hand.\n"
+		"grow_melody (kind " + Kind + ") grows it over the chords in versions: pick the one that sings, then shape it by hand. " +
+		HookAdvice() + "\n"
 		"7. The form: name each section as it takes shape (name_section), copy_bars for the repeats, each made different (" +
 		K.Depth + "), and a break before the loop comes round.\n"
 		"8. Drums: " + LaterDrums(K) + " Depth: add_echo a beat behind on the other side where it leaves the tune room, a "
@@ -35788,7 +36047,7 @@ static std::string LaterCoreRecipe(const NextKind &K)
 		"reply.\n"
 		"3. add_chords_and_bass with chords you choose, chord_style " + PoolText(K.ChordStyles, K.ChordStyle) + ", color " + K.Color +
 		", bass_style " + PoolText(K.BassStyles, K.BassStyle) + " (options: what_next picks one of each for the song).\n"
-		"4. The melody: write only the hook, 4-7 notes in steps (\"D4 - F4 - A4 - G4 -\"), and grow_melody with kind " + Kind +
+		"4. The melody: " + std::string(HOOK_SHORT) + " Write only the hook, 4-7 notes in steps (\"D4 - F4 - A4 - G4 -\"), and grow_melody with kind " + Kind +
 		" and the section grows it over the chords: pick the version whose shape fits (variant 2 for others), then shape it by "
 		"hand (read_notes with format steps, write_notes). It wants " + K.Melody + "; each phrase ends on a held note or a rest "
 		"(not at every bar line). A melody of 8 bars that works, in C major over | C | Am | F | G | C | Am | F G | C | (each "
@@ -35885,8 +36144,8 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"with tension (minor, phrygian or harmonic minor; "
 		"bVI-bVII-i), a driving chord_style and bass_style (octaves, a gallop; bass_instrument \"thump bass\" for punch)") +
 		". Other chords for the B part.\n";
-	T += "6. The melody with write_notes, phrase by phrase: " + Of("2-4 notes a bar, mostly by step and "
-		"repeated notes, two-bar phrases each ending with a rest of a beat or more, one gentle high point a section, a few "
+	T += "6. The melody with write_notes, phrase by phrase: " + Of("2-4 notes a bar, mostly by step, the "
+		"motif coming back, two-bar phrases each ending with a rest of a beat or more, one gentle high point a section, a few "
 		"notes a frame or two late (Gxx 01-02), in a rhythm and a shape of the tune's own: not quarter notes by step every "
 		"time (a dotted rhythm, a rest on beat 1, a turn around the high note, a fall of a sixth after it)",
 		"a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
@@ -35900,7 +36159,7 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"beats or more (review_arrangement counts them and names the bars that run on). Write it in steps (notes as text: "
 		"\"5: D4 G4 A4 B4 - A4 G4 -\", - holds across | too): it breathes at a phrase's end, not at every bar line. Or write "
 		"the hook alone and grow_melody (kind " + Kind + ") grows it over the chords in versions: pick the one that sings, then "
-		"shape it by hand.\n";
+		"shape it by hand. " + HookAdvice() + "\n";
 	T += std::string("7. The form: name each section as it takes shape (name_section), an intro of 2-4 bars that plays once, "
 		"6-10 dB under the main part (insert_bars at bar 1, copy_bars with channels), copy_bars for the repeats, each made "
 		"different (") + Of("an echo or a second voice joining (add_counter_melody style calm answers only in the melody's "
@@ -35992,10 +36251,10 @@ static std::string CoreRecipe(const std::string &Kind)
 		"3. add_chords_and_bass with chords you choose, a chord a bar or two, colored (m7, maj7, add9, sus2), iv-i or IV-I "
 		"rather than V-I, the last bar open (a sus2 or a maj7): chord_style lush with arp_frames 3 for a slow shimmer, "
 		"bass_style roots.\n"
-		"4. The melody: write only the hook, 4-7 notes in steps, a bar or two (\"D4 - - - E4 - F4 - | A4 - - - - - . .\"), and "
+		"4. The melody: " + std::string(HOOK_SHORT) + " Write only the hook, 4-7 notes in steps, a bar or two (\"D4 - - - E4 - F4 - | A4 - - - - - . .\"), and "
 		"grow_melody with kind calm and the section grows it over the chords: pick the version whose shape fits (variant 2 for "
 		"others), then shape it by hand (read_notes with format steps, write_notes). It wants 2-4 notes a bar (quarters, "
-		"halves, wholes), mostly by step and repeated notes, each two-bar phrase ending with a rest of a beat or more (not at "
+		"halves, wholes), mostly by step, its motif coming back, each two-bar phrase ending with a rest of a beat or more (not at "
 		"every bar line), one gentle high point per section, no slides. A melody of 8 bars that works, in C major over | C | "
 		"Am | F | G | C | Am | F G | C | (each two-bar phrase ends on a held note or a rest; chord tones on the beats, steps "
 		"between them): \"1: E3 - G3 - C4 - - B3 | 2: A3 - - - E3 - . . | 3: F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | 5: "
@@ -36023,7 +36282,7 @@ static std::string CoreRecipe(const std::string &Kind)
 		"3. add_chords_and_bass with colored chords you choose (a chord a bar: sevenths, add9, sus; bVI and bVII for a lift), "
 		"chord_style lush with arp_frames 2 (fast lush arpeggios, for a bright place) or broken, bass_style arpeggio or "
 		"root_fifth (a walking bass rubs against broken chords).\n"
-		"4. The melody: write only the hook, a motif a player would hum, 4-7 notes in steps (\"D4 G4 A4 B4 - A4 G4 -\"), and "
+		"4. The melody: " + std::string(HOOK_SHORT) + " Write only the hook, a motif a player would hum, 4-7 notes in steps (\"D4 G4 A4 B4 - A4 G4 -\"), and "
 		"grow_melody with kind lively and the section grows it over the chords: pick the version whose shape fits (variant 2 "
 		"for others), then shape it by hand (read_notes with format steps, write_notes). It wants phrases of 2 or 4 bars "
 		"ending on a held note or a rest (not at every bar line), chord tones on strong beats, one high point per section, "
@@ -36056,7 +36315,7 @@ static std::string CoreRecipe(const std::string &Kind)
 		"3. add_chords_and_bass with plain, friendly chords you choose (| I | vi | IV | V |, a sixth or sus2 for warmth), "
 		"chord_style broken, lush or stabs, color plain, bass_style root_fifth, walking or half (what_next picks one of each "
 		"per song).\n"
-		"4. The melody: write only the hook, 4-7 notes in steps (\"C4 - E4 G4 A4 - G4 -\"), and grow_melody with kind cozy and "
+		"4. The melody: " + std::string(HOOK_SHORT) + " Write only the hook, 4-7 notes in steps (\"C4 - E4 G4 A4 - G4 -\"), and grow_melody with kind cozy and "
 		"the section grows it over the chords: pick the version whose shape fits (variant 2 for others), then shape it by hand "
 		"(read_notes with format steps, write_notes). It wants short phrases of 2 bars, question and answer, each ending on a "
 		"held note or a rest (not at every bar line), a skip up and steps down, chord tones on the beats, the answer coming "
@@ -36085,7 +36344,7 @@ static std::string CoreRecipe(const std::string &Kind)
 		"restrike_beats 0.5 (struck again every eighth), or stepped lead with click true.\n"
 		"3. add_chords_and_bass with chords that build tension (i bVI bVII i; a sus4 climbing a semitone a bar), chord_style "
 		"stabs or arpeggio, bass_style octaves or driving (bass_instrument \"thump bass\" for punch).\n"
-		"4. The melody: write only the hook, a motif with a rhythm you'd recognize, 4-7 notes in steps (\"D4 G4 A4 B4 - A4 G4 "
+		"4. The melody: " + std::string(HOOK_SHORT) + " Write only the hook, a motif with a rhythm you'd recognize, 4-7 notes in steps (\"D4 G4 A4 B4 - A4 G4 "
 		"-\"), and grow_melody with kind action and the section grows it over the chords: pick the version whose shape fits "
 		"(variant 2 for others), then shape it by hand (read_notes with format steps, write_notes). It wants phrases of 2 or 4 "
 		"bars that breathe at their end, not at every bar line, one high point per section, long and short notes mixed. A "

@@ -1287,6 +1287,9 @@
     <ClCompile Include="Source\Api\GrowMelody.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\TuneShape.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\ChordHelper.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1429,6 +1432,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\GrowMelody.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\TuneShape.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\ChordHelper.h">

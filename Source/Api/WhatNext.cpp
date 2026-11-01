@@ -20,6 +20,7 @@
 */
 
 #include "WhatNext.h"
+#include "TuneShape.h"
 #include "SongSeed.h"
 
 #include <algorithm>
@@ -797,45 +798,53 @@ std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int Beat
 
 namespace {
 
-// A figure: its bars (1 or 2) and its notes, ending on a note of a beat or more (a two-bar one with a rest after it)
+// A figure: its bars (1 or 2) and its notes, ending on a note of a beat or more (a two-bar one with a rest after it); Cell,
+// when it's more than 0, the notes of a cell that comes again right after it a step higher or lower in the same shape (the
+// kept songs' commonest hook: a short motif stated and moved at once, 011 New City's, 07 Gears & Glue's, 010 Mines')
 struct HookFigure {
 	int Bars;
 	Hit Notes[8];
 	int Count;
+	int Cell;
 };
 
 // Slow: calm songs' (2-4 notes a bar, long ones)
 const HookFigure SLOW_FIGURES[] = {
-	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 2 }, { 1, 1, 2 } }, 4 },						// steady, then held (ExampleTune's)
-	{ 2, { { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 3 } }, 4 },						// a pickup of three into the bar
-	{ 2, { { 0, 1, 3 }, { 0, 4, 1 }, { 1, 1, 1 }, { 1, 2, 2 } }, 4 },						// a held opening note
-	{ 2, { { 0, 1, 1.5 }, { 0, 2.5, 0.5 }, { 0, 3, 2 }, { 1, 1, 1 }, { 1, 2, 2 } }, 5 },	// dotted
-	{ 2, { { 0, 1, 2 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 2 } }, 4 },						// long, short, short, long
-	{ 2, { { 0, 1, 1 }, { 0, 2, 1.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 2.5 } }, 5 },	// a syncopated lilt
-	{ 2, { { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 2 }, { 1, 3, 1 } }, 4 },						// late, a two-beat pickup
+	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 2 }, { 1, 1, 2 } }, 4, 0 },						// steady, then held (ExampleTune's)
+	{ 2, { { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 3 } }, 4, 0 },						// a pickup of three into the bar
+	{ 2, { { 0, 1, 3 }, { 0, 4, 1 }, { 1, 1, 1 }, { 1, 2, 2 } }, 4, 0 },						// a held opening note
+	{ 2, { { 0, 1, 1.5 }, { 0, 2.5, 0.5 }, { 0, 3, 2 }, { 1, 1, 1 }, { 1, 2, 2 } }, 5, 0 },	// dotted
+	{ 2, { { 0, 1, 2 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 2 } }, 4, 0 },						// long, short, short, long
+	{ 2, { { 0, 1, 1 }, { 0, 2, 1.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 2.5 } }, 5, 0 },	// a syncopated lilt
+	{ 2, { { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 2 }, { 1, 3, 1 } }, 4, 0 },						// late, a two-beat pickup
+	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 3 } }, 5, 2 },			// a pair, the pair moved, held
+	{ 2, { { 0, 1, 1.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1.5 }, { 0, 4.5, 0.5 }, { 1, 1, 3 } }, 5, 2 },	// a dotted pair, moved, held
 };
 // Medium: lively, cozy and most kinds' (quarters and eighths)
 const HookFigure MEDIUM_FIGURES[] = {
-	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 3 } }, 6 },	// ExampleTune's
-	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 2.5 } }, 6 },	// its syncopated close
-	{ 2, { { 0, 2.5, 0.5 }, { 0, 3, 1 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 1 }, { 1, 2, 2 } }, 6 },	// a pickup
-	{ 2, { { 0, 1, 1.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1.5 }, { 0, 4.5, 0.5 }, { 1, 1, 2 } }, 5 },			// dotted
-	{ 2, { { 0, 1, 2 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 2 } }, 5 },				// a held opening note
-	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 1 }, { 0, 2.5, 1 }, { 0, 3.5, 1.5 }, { 1, 1, 2 } }, 5 },			// syncopated
-	{ 1, { { 0, 1, 1 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 2 } }, 4 },								// one bar, long-short
-	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 2 }, { 1, 1, 0.5 }, { 1, 1.5, 0.5 }, { 1, 2, 2 } }, 6 },	// call and answer
-	{ 1, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 2 } }, 5 },			// one bar, a run
+	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 3 } }, 6, 0 },	// ExampleTune's
+	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 2.5 } }, 6, 0 },	// its syncopated close
+	{ 2, { { 0, 2.5, 0.5 }, { 0, 3, 1 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 1 }, { 1, 2, 2 } }, 6, 0 },	// a pickup
+	{ 2, { { 0, 1, 1.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1.5 }, { 0, 4.5, 0.5 }, { 1, 1, 2 } }, 5, 0 },			// dotted
+	{ 2, { { 0, 1, 2 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 2 } }, 5, 0 },				// a held opening note
+	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 1 }, { 0, 2.5, 1 }, { 0, 3.5, 1.5 }, { 1, 1, 2 } }, 5, 0 },			// syncopated
+	{ 1, { { 0, 1, 1 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 2 } }, 4, 0 },								// one bar, long-short
+	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 2 }, { 1, 1, 0.5 }, { 1, 1.5, 0.5 }, { 1, 2, 2 } }, 6, 0 },	// call and answer
+	{ 1, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 2 } }, 5, 0 },			// one bar, a run
+	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 3 } }, 7, 3 },	// a cell, moved
+	{ 2, { { 0, 1, 1 }, { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 2 } }, 5, 2 },			// a pair, the pair moved, held
 };
 // Busy: action and festive songs' (eighths, drive)
 const HookFigure BUSY_FIGURES[] = {
-	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 3 } }, 6 },	// ExampleTune's
-	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 2 } }, 7 },
-	{ 1, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 } }, 6 },	// one bar, pairs
-	{ 1, { { 0, 1, 0.5 }, { 0, 1.5, 1 }, { 0, 2.5, 0.5 }, { 0, 3, 0.5 }, { 0, 3.5, 1.5 } }, 5 },			// one bar, syncopated
-	{ 2, { { 0, 1, 1.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1.5 }, { 0, 4.5, 0.5 }, { 1, 1, 0.5 }, { 1, 1.5, 0.5 }, { 1, 2, 2 } }, 7 },	// dotted
-	{ 2, { { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 1 }, { 1, 2, 1 }, { 1, 3, 1 } }, 7 },	// a run-up
-	{ 2, { { 0, 1, 1 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 2 } }, 7 },
-	{ 2, { { 0, 1, 2 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 2 } }, 6 },	// held, then a run
+	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 3 } }, 6, 0 },	// ExampleTune's
+	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1 }, { 0, 4, 1 }, { 1, 1, 2 } }, 7, 0 },
+	{ 1, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 } }, 6, 3 },	// one bar, a cell twice
+	{ 1, { { 0, 1, 0.5 }, { 0, 1.5, 1 }, { 0, 2.5, 0.5 }, { 0, 3, 0.5 }, { 0, 3.5, 1.5 } }, 5, 0 },			// one bar, syncopated
+	{ 2, { { 0, 1, 1.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1.5 }, { 0, 4.5, 0.5 }, { 1, 1, 0.5 }, { 1, 1.5, 0.5 }, { 1, 2, 2 } }, 7, 0 },	// dotted
+	{ 2, { { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 1 }, { 1, 2, 1 }, { 1, 3, 1 } }, 7, 0 },	// a run-up
+	{ 2, { { 0, 1, 1 }, { 0, 2, 0.5 }, { 0, 2.5, 0.5 }, { 0, 3, 1 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 2 } }, 7, 0 },
+	{ 2, { { 0, 1, 2 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 0.5 }, { 0, 4.5, 0.5 }, { 1, 1, 2 } }, 6, 0 },	// held, then a run
+	{ 2, { { 0, 1, 0.5 }, { 0, 1.5, 0.5 }, { 0, 2, 1 }, { 0, 3, 0.5 }, { 0, 3.5, 0.5 }, { 0, 4, 1 }, { 1, 1, 2 } }, 7, 3 },	// a cell, moved
 };
 
 const HookFigure *FiguresOf(int Pace, size_t &Count)
@@ -914,12 +923,11 @@ int HookFigures(int Pace)
 	return static_cast<int>(Count);
 }
 
-std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int RowsPerBeat, const std::vector<std::vector<int> > &Chord,
+namespace {
+
+std::vector<TuneNote> HookTuneOf(const Key &K, int FirstBar, int BeatsPerBar, int RowsPerBeat, const std::vector<std::vector<int> > &Chord,
 	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars)
 {
-	Bars = 2;
-	if (Pick == 0 || BeatsPerBar != 4)
-		return ExampleTune(K, FirstBar, 2, BeatsPerBar, RowsPerBeat, Chord, Sounding, Pace <= 0, Variant);
 	RowsPerBeat = std::max(1, RowsPerBeat);
 	// The pools' picks: each its own hash, the variant moving every one of them
 	size_t FigureCount = 0;
@@ -965,6 +973,14 @@ std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int 
 		}
 		const bool Strong = H.Beats >= 1.0 || std::fabs(H.Beat - 1.0) < 1e-9 || std::fabs(H.Beat - 3.0) < 1e-9;
 		const std::vector<int> &Under = From < static_cast<int>(Chord.size()) ? Chord[static_cast<size_t>(From)] : std::vector<int>();
+		// A cell's copy: a step the way the contour goes from the cell's own note (up where it doesn't fall)
+		const bool Copy = Figure.Cell > 0 && i >= static_cast<size_t>(Figure.Cell) && i < static_cast<size_t>(2 * Figure.Cell);
+		double CopyTarget = 0.0;
+		if (Copy) {
+			const double Then = Count > 1 ? static_cast<double>(i - Figure.Cell) / static_cast<double>(Count - 1) : 0.0;
+			const int Way = ContourAt(Contour, Along) < ContourAt(Contour, Then) - 1e-9 ? -1 : 1;
+			CopyTarget = DegreesFrom(Out[i - Figure.Cell].Pitch, Way, K);
+		}
 		int Best = -1;
 		double BestCost = 0.0;
 		for (int Pass = 0; Pass < 4 && Best < 0; ++Pass) {
@@ -978,6 +994,13 @@ std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int 
 					continue;
 				const int Move = p - Previous, Size = std::abs(Move);
 				double Cost = 0.5 * std::fabs(p - Target);
+				if (Copy) {
+					// A cell again: the note it copies a step along, each move the way the cell's went
+					Cost += 0.7 * std::fabs(p - CopyTarget) + (p == Out[i - Figure.Cell].Pitch ? 1.5 : 0.0);	// (moved, not again)
+					const int Was = i > static_cast<size_t>(Figure.Cell) ? Out[i - Figure.Cell].Pitch - Out[i - Figure.Cell - 1].Pitch : 0;
+					if (i > static_cast<size_t>(Figure.Cell) && ((Move > 0) != (Was > 0) || (Move < 0) != (Was < 0)))
+						Cost += 2.5;
+				}
 				if (i > 0) {
 					if (Strong)
 						Cost += Size == 0 ? 1.5 : Size <= 2 ? 0.0 : Size <= 4 ? 0.5 : Size <= 7 ? 1.25 : 4.0;
@@ -1007,6 +1030,41 @@ std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int 
 		Previous = Best;
 	}
 	return Out;
+}
+
+}	// namespace
+
+std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int RowsPerBeat, const std::vector<std::vector<int> > &Chord,
+	const std::vector<std::vector<int> > &Sounding, int Pace, unsigned int Pick, int Variant, int &Bars)
+{
+	Bars = 2;
+	if (Pick == 0 || BeatsPerBar != 4)
+		return ExampleTune(K, FirstBar, 2, BeatsPerBar, RowsPerBeat, Chord, Sounding, Pace <= 0, Variant);
+	// A hook that hardly moves (TuneShape's MonotoneHook: within a step, two notes, one struck again and again) is drawn
+	// again from the pools, salted, up to 8 times (feat-hooks: 9 of 360 offered over three progressions were)
+	std::vector<TuneNote> First;
+	int FirstBars = 2;
+	for (unsigned int Try = 0; Try < 8; ++Try) {
+		int Got = 2;
+		const std::vector<TuneNote> Tune = HookTuneOf(K, FirstBar, BeatsPerBar, RowsPerBeat, Chord, Sounding, Pace,
+			Try == 0 ? Pick : std::max(1u, Mixed(Pick, 10 + Try)), Variant, Got);
+		std::vector<ShapeNote> Notes;
+		for (size_t i = 0; i < Tune.size(); ++i) {
+			const int Start = static_cast<int>(std::floor(((Tune[i].Bar - FirstBar) * BeatsPerBar + Tune[i].Beat - 1.0) * 2 + 0.5));
+			Notes.push_back(ShapeNote(Start / (2 * BeatsPerBar), Start, std::max(1, static_cast<int>(std::floor(Tune[i].Beats * 2 + 0.5))),
+				Tune[i].Pitch));
+		}
+		if (Try == 0) {
+			First = Tune;
+			FirstBars = Got;
+		}
+		if (MonotoneHook(MeasureTune(Notes, Got, 2 * BeatsPerBar, 2)).empty()) {
+			Bars = Got;
+			return Tune;
+		}
+	}
+	Bars = FirstBars;
+	return First;
 }
 
 }	// namespace ftapi

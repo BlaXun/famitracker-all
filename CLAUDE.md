@@ -2692,6 +2692,53 @@ code (`TextureSong`), `CheckDoneReview` holds every walk to no
 `chords_throughout` finding (and the review's texture tip with the others),
 and `song_file_checks` checks `chords_throughout` on keep/ and flag/.
 
+Hooks that catch (from `feat-hooks`): of round 2's songs made by following
+`what_next`, the user heard the Caves as "not catchy at all", the Hut as
+"kinda boring and monotone in its melody" and Night Harbor's melody as "just
+there" (the Guard Tower's was fine). `Source/Api/TuneShape.cpp` (portable)
+measures a tune (`MeasureTune` on `ShapeNote`s): notes a bar, the opening
+motif's returns, the bars (a bar, or two) whose rhythm an earlier one had
+with its shape (`ShapeBars`: three moves of four the same way) or without
+it (`RhythmBars`), rhythms and note lengths, the range and high point of
+each 4-bar phrase, leaps and their answers, repeated notes, steps,
+zigzags. `song_file_checks <folder> -tunes [-steps]` prints each song's
+(`ToolSet::TuneShapes`: the melody's opening, whole, its hook and every 8
+bars); the numbers over the 44 kept songs are in the comment before
+`WANDER_BARS`. `MonotoneMelody` (the melody's first 8 bars: the rhythm back
+in 4 or more with no shape back, as the user's three do and no kept song,
+which reach 3; or a phrase under a third: a line of one rhythm is the
+review's "one or two note lengths" and `phrases`') and
+`MonotoneHook` (within a step, two notes, one note again and again, one
+length) judge, `HookAdvice` is the craft with a worked example in steps.
+check_song's `monotone` (`MonotoneFindings` among the arrangement's,
+`ARRANGE_MONOTONE`, `FOUND_MONOTONE`, `PROBLEM_MONOTONE`, medium) measures
+the melody's opening (`MeasureOpening`, `TuneNotes`); its fix grows those 8
+bars again from the melody's own first two bars (`HookStepsOf`) with
+grow_melody `pick` 1 when a dry run's first version catches (no
+`MONOTONE_WORD` in it), else it's advice; what_next gives it as a step
+(`PartFixes`) and write_notes warns on the melody (`WritingWarnings`).
+grow_melody's notes that follow the motif keep its shape (`SHAPE_KEPT` in
+`Pair`, between slots with a `ModelPitch`), an answer starts where the
+motif upside down fits between the floor and the ceiling (the Hut's struck
+A3 again and again), a calm copy keeps its offbeat notes in bars of four or
+fewer (the Caves' G4 merged away), the calls' last block brings the motif
+back, and a version that doesn't catch is grown again with another seed,
+else listed last and said (`GrownVersion::Monotone`); a hook that hardly
+moves gets the advice. Offered hooks (`HookTune`, `HookTuneOf`) gain cells
+stated and moved at once (`HookFigure::Cell`) and are drawn again when
+`MonotoneHook` flags them. Over 360 offered hooks (three progressions,
+three paces, 40 picks): hooks that hardly move 9 before, 0 after; first
+versions that don't catch 22, then 0; any version 67, then 1. The recipes
+(`HOOK_SHORT`; `HookAdvice` in the full ones, where calm's "mostly by step
+and repeated notes" is "its motif coming back"), the melody step's text,
+`TuneStep`, `Instructions` and `CoreInstructions` teach it. A bar
+ornamented (embellish's passing notes kept the motif's notes where they
+were) still brings its shape back, so the review's varied repeat and the
+check don't undo each other, and `vary_part`'s syncopate leaves out an
+anticipation whose early half beat rubs the chord before (a walk's A''
+clashed so once its tune changed). `TestHooks` covers them, and the walks'
+`CLEAN` lists hold `monotone` at 0.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
