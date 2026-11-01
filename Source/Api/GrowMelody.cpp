@@ -1376,10 +1376,10 @@ private:
 
 	std::string Name(int Pitch) const
 	{
-		std::string Text = PitchName(Pitch);
-		if (Text.size() == 3 && Text[1] == '-')
-			Text.erase(1, 1);
-		return Text;
+		// (spelled as the key spells it: "Eb5" in Bb major)
+		if (Pitch < 0 || Pitch >= PITCHES)
+			return PitchName(Pitch);
+		return NoteClassName(Pitch % 12, m_Q.K) + std::to_string(Pitch / 12);
 	}
 
 	std::string BarsText(const std::vector<int> &Bars) const

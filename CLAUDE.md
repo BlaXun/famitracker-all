@@ -2539,6 +2539,43 @@ over it. `TestEchoInTuneWithItsMelody`, `TestKindJudged` and
 gives a calm-styled kind no accents, walking bass or drums; a cozy shop's
 none of company) cover them.
 
+The calm mix where the chords can't come up, a bass in the key and hooks
+spelled in it (from `fix-gen4-balance`), from the same six songs: finish_song
+mixed the Odds and Ends Shop (cozy, stabs on 2A03 Pulse 2) to 7.7 dB of
+melody over its chords and Hut in a Field (cozy, broken chords on 2A03 Pulse
+1) to 5.8, which the review, by the same places (`PlacesFor`, `HearBalance`),
+then tipped: the calm mix keeps the melody's level and raises the chords, and
+theirs were at 15 already. `MixTool` now brings the melody down where a chord
+layer falls `CALM_MELODY_DOWN_FROM` (1.5 dB, where the review's tip starts:
+over 4 against the place's 2.5) or more short of its place at 15, as far as
+it falls short (to a whole volume, at most `CALM_MELODY_DOWN_MOST`, its
+loudest at `CALM_MELODY_LEAST` or over), the other parts following it
+(`MelodyShift`, `MelodyWhy` in the reply); calm only, not over some bars or
+with a level given to the melody. Then the triangle's DPCM level is found
+again from the draft as heard (the level from the shift alone came out half a
+dB off, a second mix moved it, and `what_next` asked for the mix again: any
+`Zxx` change counts in `DryChange`). Under the threshold nothing changes, so
+of the 44 kept songs a calm mix asked for by hand would now bring the melody
+down in five (1.6-5.5 dB); what_next's steps for every kept song are as before.
+The hut's walking bass went G F E D into Eb in Bb major (check_song: 4
+outside the key, `what_next` done anyway): `WalkLine` in `Arrange.cpp` tries
+the ways in the key (or the chord, `WalksInKey`) first and grades each way's
+notes between (all the chord's or the key's, one grinding, one outside),
+falling back to scale steps rather than a chromatic passing note; `CleanWalk`
+keeps to the key's and the chord's notes where any don't rub, and the
+syncopated bass's approach tries them before a chromatic one. So the
+generators make no note outside the key check_song would count (a secondary
+dominant's own third stays, which check_song accepts as the chord's). The
+offered hooks, grow_melody's versions and remarks, the climbing and
+contrasting hooks and `vibrato_at` spell pitches in the key
+(`StepPitch` with `WhatNext::Spell()` or the grow's key, `GrowMelody`'s
+`Name` by `NoteClassName`): Eb4 in Bb major, not D#4. `TestGen4Balance`
+walks the shop and the hut again with their seeds (FakeSong reproduces
+the runs: against the code before, it finds all three) and cozy on both sets
+and calm unseeded, each ending with the melody 1-4 dB over its chords, no
+balance tip, nothing outside the key and no sharps in a key spelled with
+flats, and checks the mix and the walking bass on their own.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

@@ -1079,11 +1079,20 @@ namespace {
 
 bool ClashesWithChord(int Pitch, const Chord &C);
 
+// Whether a bass note belongs where it walks: the key's, or the chord's own (a secondary dominant's third)
+bool WalksInKey(int Pitch, const Chord &C, const Key &K)
+{
+	return InKey(Pitch, K) || C.HasPitchClass(Mod12(Pitch));
+}
+
 // A walking line from Root to the note before Target, a note a beat: chord
 // tones on the way, and an approach note into Target. No note of it grinds a
 // semitone against the chord it walks under (a held V at a half cadence, or
 // the chords' parts over it): a chromatic approach that would gives way to
-// a step of the scale into the target, or to its fifth.
+// a step of the scale into the target, or to its fifth. Its notes stay in the
+// key (or the chord) wherever a way in lets them: check_song counts a note
+// outside the key (a cozy hut's walk G F E D into Eb in Bb major had four),
+// so a chromatic approach or passing note comes only where nothing else walks.
 std::vector<int> WalkLine(int Root, int Target, int Beats, const Chord &C, const Key &K, int Low, int High)
 {
 	std::vector<int> Line(1, Root);
@@ -1117,6 +1126,7 @@ std::vector<int> WalkLine(int Root, int Target, int Beats, const Chord &C, const
 		if (Ways[w] != Root && Ways[w] >= Lowest && Ways[w] <= Highest && !ClashesWithChord(Ways[w], C) &&
 			std::find(Clean.begin(), Clean.end(), Ways[w]) == Clean.end())
 			Clean.push_back(Ways[w]);
+	std::stable_partition(Clean.begin(), Clean.end(), [&](int p) { return WalksInKey(p, C, K); });	// the key's ways first
 	int Approach = Clean.empty() ? Ways[0] : Clean[0];
 	if (Beats == 2) {
 		Line.push_back(Approach == Root ? Root + 7 * Direction : Approach);
@@ -1138,7 +1148,10 @@ std::vector<int> WalkLine(int Root, int Target, int Beats, const Chord &C, const
 			Middle.push_back(Pool[static_cast<size_t>(k * static_cast<int>(Pool.size()) / Needed)]);
 	}
 	else {
-		for (size_t Try = 0; Try < std::max<size_t>(1, Clean.size()) && Middle.empty(); ++Try) {
+		// Each way in, its notes between graded: 0 all the chord's or the key's without grinding, 1 one of the key's grinds,
+		// 2 one is outside the key; the first way of the best grade walks
+		int BestGrade = 3;
+		for (size_t Try = 0; Try < std::max<size_t>(1, Clean.size()) && BestGrade > 0; ++Try) {
 			const int Way = Clean.empty() ? Approach : Clean[Try];
 			const int Along = Way > Root ? 1 : -1;
 			std::vector<std::pair<int, int> > Ranked;	// (rank, pitch)
@@ -1152,11 +1165,15 @@ std::vector<int> WalkLine(int Root, int Target, int Beats, const Chord &C, const
 			if (static_cast<int>(Ranked.size()) < Needed)
 				continue;
 			std::sort(Ranked.begin(), Ranked.end());
-			bool Grinding = false;
-			for (int k = 0; k < Needed; ++k)
-				Grinding = Grinding || Ranked[static_cast<size_t>(k)].first / 100 == 2 || Ranked[static_cast<size_t>(k)].first / 100 == 4;
-			if (Grinding && Try + 1 < Clean.size())
-				continue;	// another way in may walk cleaner
+			int Grade = 0;
+			for (int k = 0; k < Needed; ++k) {
+				const int Rank = Ranked[static_cast<size_t>(k)].first / 100;
+				Grade = std::max(Grade, Rank >= 3 ? 2 : Rank == 2 ? 1 : 0);
+			}
+			if (Grade >= BestGrade)
+				continue;	// another way in walked as cleanly
+			BestGrade = Grade;
+			Middle.clear();
 			for (int k = 0; k < Needed; ++k)
 				Middle.push_back(Ranked[static_cast<size_t>(k)].second);
 			std::sort(Middle.begin(), Middle.end());
@@ -1165,6 +1182,8 @@ std::vector<int> WalkLine(int Root, int Target, int Beats, const Chord &C, const
 			Approach = Way;
 			Direction = Along;
 		}
+		if (BestGrade == 2)
+			Middle.clear();	// no way in walks in the key: scale steps, below
 	}
 	if (static_cast<int>(Middle.size()) < Needed) {
 		Middle.clear();
@@ -1245,10 +1264,18 @@ std::vector<int> CleanWalk(const std::vector<int> &Old, int Target, const Chord 
 		return Out;
 	}
 	std::vector<std::vector<int> > Choices(Old.size());
-	for (size_t k = 1; k < Old.size(); ++k)
+	for (size_t k = 1; k < Old.size(); ++k) {
 		for (int p = std::max(Lowest, Root - 12); p <= std::min(Highest, Root + 12); ++p)
 			if (!Bad(k, p))
 				Choices[k].push_back(p);
+		// (the key's or the chord's notes where there are any that don't rub: check_song counts a note outside the key)
+		std::vector<int> Keyed;
+		for (size_t c = 0; c < Choices[k].size(); ++c)
+			if (WalksInKey(Choices[k][c], C, K))
+				Keyed.push_back(Choices[k][c]);
+		if (!Keyed.empty())
+			Choices[k] = Keyed;
+	}
 	std::vector<int> Line(Old.size(), Root), Best = Old;
 	double BestCost = 1e18;
 	// Each line, the cost of its notes: what they are, how they move and how the last goes into the target
@@ -1391,12 +1418,15 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 					// it (the fifth held on where every one does)
 					const int Toward = Target > Pitch ? 1 : -1;
 					const int Ways[5] = { Target - Toward, ScaleStep(Target, -Toward, O.K), Target - 2 * Toward, Pitch, Root };
+					// (the key's or the chord's first: check_song counts a note outside the key)
 					int Approach = Pitch;
-					for (int w = 0; w < 5; ++w)
-						if (!BassRubs(Ways[w], Row + Half, To - Row - Half, C, O)) {
-							Approach = Ways[w];
-							break;
-						}
+					bool Chosen = false;
+					for (int Pass = 0; Pass < 2 && !Chosen; ++Pass)
+						for (int w = 0; w < 5 && !Chosen; ++w)
+							if ((Pass == 1 || WalksInKey(Ways[w], C, O.K)) && !BassRubs(Ways[w], Row + Half, To - Row - Half, C, O)) {
+								Approach = Ways[w];
+								Chosen = true;
+							}
 					Add(Row + Half, To - Row - Half, Approach);
 					Last = Approach;
 					continue;

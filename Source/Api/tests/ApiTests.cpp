@@ -29410,6 +29410,115 @@ void TestWhatNextMelodyRoles()
 	CHECK_LACKS(A.Text, "\"channel\":\"VRC6 Plus Soft");
 }
 
+// The calm-styled kinds' mix, bass and spelling (fix-gen4-balance), from six songs made by following what_next: the
+// Odds and Ends Shop (cozy, stabs on 2A03 Pulse 2) was mixed to 7.7 dB of melody over its chords and Hut in a Field
+// (cozy, VRC6, broken chords at 15) to 5.8, which the review then tipped (a calm track wants 2-3); the hut's walking bass
+// passed through E natural in Bb major (check_song: 4 outside the key, what_next done); its B hook was offered as
+// D#4 F4 D#4. Each walk here (the two songs again with their seeds, and cozy on both sets and calm unseeded) ends with
+// the melody within the calm places over its chords and no balance tip, nothing outside the key and no sharps in a key
+// spelled with flats
+double MelodyOverChords(const std::string &Review)
+{
+	const size_t At = Review.find("Balance as heard: the melody (");
+	if (At == std::string::npos)
+		return -100.0;
+	const size_t Close = Review.find(") ", At);
+	return Close == std::string::npos ? -100.0 : std::atof(Review.c_str() + Close + 2) * (Review.compare(Review.find(" dB ",
+		Close) + 4, 4, "over") == 0 ? 1.0 : -1.0);
+}
+
+void TestGen4Balance()
+{
+	struct Walk {
+		const char *Name, *Expansion, *Asked;
+		unsigned int Seed;
+		bool Core;
+	};
+	const Walk WALKS[] = {
+		{ "Odds and Ends Shop", "none", "{\"about\": \"a small cluttered shop with a cheerful shopkeeper\"}", 3625273605u, true },
+		{ "Hut in a Field", "VRC6", "{\"kind\": \"cozy\", \"about\": \"a cozy wooden hut in a sunny field, an old woman sells odds "
+			"and ends\"}", 2953778645u, false },
+		{ "Lantern Row", "VRC6", "{\"kind\": \"cozy\"}", 0, false },
+		{ "Lantern Row", "VRC6", "{\"kind\": \"cozy\"}", 0, true },
+		{ "Quiet Bend", "VRC6", "{\"kind\": \"calm\"}", 0, false },
+	};
+	for (const Walk &W : WALKS) {
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.Info.TrackName = Song.Tracks[0].Name = W.Name;
+		Song.Info.Seed = W.Seed;
+		const ToolResult Chip = Run(Song, "set_expansion", std::string("{\"chip\": \"") + W.Expansion + "\"}");
+		Check(!Chip.IsError, Chip.Text.c_str(), __LINE__);
+		const std::string What = std::string(W.Name) + " " + W.Asked + (W.Core ? " (core)" : "");
+		bool Finished = false;
+		const std::vector<std::string> Calls = FollowWhatNext(Song, W.Asked, 70, Finished, __LINE__, W.Core);
+		Check(Finished, What.c_str(), __LINE__);
+		// The mix reached calm's place, and the review (the kind kept) agrees: no balance tip
+		const std::string Review = Run(Song, "review_arrangement", "{}").Text;
+		const double Over = MelodyOverChords(Review);
+		Check(Over >= 1.0 && Over <= 4.0, (What + ": " + Review).c_str(), __LINE__);
+		Check(!Contains(Review, "dB over the chords as heard (a calm track") && !Contains(Review, "The chords cover the melody"),
+			(What + ": " + Review).c_str(), __LINE__);
+		// Nothing outside the key that the steps wrote
+		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		Check(FindingsOf(Found, "key").empty(), (What + ": " + Run(Song, "check_song", "{}").Text).c_str(), __LINE__);
+		// The offered hooks and the versions spelled in the key: no sharp where it's spelled with flats
+		const std::string Key = Run(Song, "get_song", "{}").Text;
+		if (Contains(Key, "Bb major") || Contains(Key, "F major") || Contains(Key, "Eb major"))
+			for (const std::string &Call : Calls)
+				if (Call.compare(0, 12, "grow_melody ") == 0 || Call.compare(0, 12, "write_notes ") == 0)
+					Check(Call.find('#') == std::string::npos, (What + ": " + Call).c_str(), __LINE__);
+	}
+	// The mix itself: chords at 15 already, the melody comes down (the other parts with it), and says why; a second mix
+	// moves the melody no further
+	{
+		FakeSong Song(4);
+		NewSong(Song);
+		CHECK(!Run(Song, "set_expansion", "{\"chip\": \"none\"}").IsError);
+		CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | Am | F | G |\", \"from_bar\": 1, \"to_bar\": 4, "
+			"\"chord_channel\": \"2A03 Pulse 2\", \"chord_style\": \"stabs\", \"bass_style\": \"half\"}").IsError);
+		const ToolResult Tune = Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"from_bar\": 1, \"notes\": \"E5 - - - G5 - "
+			"- - | C5 - - - E5 - - - | A4 - - - C5 - - - | B4 - - - D5 - - -\", \"instrument\": \"soft lead\"}");
+		Check(!Tune.IsError, Tune.Text.c_str(), __LINE__);
+		const std::string Mixed = Run(Song, "mix", "{\"style\": \"calm\"}").Text;
+		CHECK_HAS(Mixed, "so the melody came down");
+		const std::string Review = Run(Song, "review_arrangement", "{\"style\": \"calm\"}").Text;
+		const double Over = MelodyOverChords(Review);
+		Check(Over >= 1.0 && Over <= 4.0, Review.c_str(), __LINE__);
+		const std::string Again = Run(Song, "mix", "{\"style\": \"calm\"}").Text;
+		CHECK_LACKS(Again, "so the melody came down");
+		CHECK_LACKS(Again, "(melody) loudest");
+	}
+	// The walking bass keeps its passing notes in the key: G to Eb in Bb major (the hut's G F E D)
+	{
+		BassOptions O;
+		O.Style = BASS_WALKING;
+		O.K = Key(10, MODE_MAJOR);
+		std::vector<ChordAt> Chords;
+		Chord Gm, Eb;
+		CHECK(ParseChord("Gm", Key(10, MODE_MAJOR), Gm) && ParseChord("Eb", Key(10, MODE_MAJOR), Eb));
+		ChordAt A;
+		A.Row = 0;
+		A.Rows = 16;
+		A.C = Gm;
+		Chords.push_back(A);
+		A.Row = 16;
+		A.C = Eb;
+		Chords.push_back(A);
+		std::vector<BarSpan> Bars(2);
+		Bars[0].Row = 0;
+		Bars[0].Rows = 16;
+		Bars[1].Row = 16;
+		Bars[1].Rows = 16;
+		O.Low = 31 - 7;
+		O.High = 31 + 12;
+		const std::vector<PartNote> Line = BassPart(Chords, Bars, O);
+		CHECK(Line.size() >= 4);
+		for (const PartNote &N : Line)
+			Check(InKey(N.Pitch, O.K), PitchName(N.Pitch).c_str(), __LINE__);
+	}
+}
+
 int main()
 {
 	TestJson();
@@ -29697,6 +29806,7 @@ int main()
 	TestOfferedHooks();
 	TestKindShapes();
 	TestLeadVibratoFits();
+	TestGen4Balance();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

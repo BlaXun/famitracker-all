@@ -10249,6 +10249,13 @@ double GroupTogetherShifted(const HeardBalance &B, size_t m, const std::vector<d
 // busiest bars, put a later stage's hats at 8.1 under by them)
 const double LIVELY_DRUMS = -11.5, LIVELY_HATS = -14.0, DRUMS_SLACK = 1.5;
 
+// A calm mix brings the melody down where its chords can't come up to their place (at 15 already): from this shortfall,
+// where the review's tip starts (the melody over 4 dB over the chords against the place's 2.5; under it the melody keeps
+// its level, as it always did, and a second mix moves nothing), by at most CALM_MELODY_DOWN_MOST, its loudest at
+// CALM_MELODY_LEAST or over (a pulse's 15 to 6 is 8 dB; the shop's stabs fell 5.2 short, the hut's broken chords 3.3)
+const double CALM_MELODY_DOWN_FROM = 1.5, CALM_MELODY_DOWN_MOST = 8.0;
+const int CALM_MELODY_LEAST = 6;
+
 HeardPlaces PlacesFor(bool Calm)
 {
 	const HeardPlaces CALM = { -2.5, -7.0, -4.0, -2.5, -11.0, -3.0, -10.0, false }, LIVELY = { -3.5, -7.0, -3.5, -1.0, LIVELY_DRUMS, -2.5,
@@ -10758,6 +10765,7 @@ std::string MixTool(Session &S, const Json &Args)
 	std::vector<char> ByEar(Spans.size(), 0);
 	std::vector<std::string> DrumsWhy(Spans.size());	// as heard: why the drums kept their volumes, or came down
 	std::string ChordsWhy;	// lively: where the chords together play loudest, when that keeps them under their place
+	std::string MelodyWhy;	// calm: why the melody came down (chords that can't come up)
 	double MelodyShift = 0.0;
 	int TriangleDac = -1, TriangleNow = 0;
 	if (Heard && Melody >= 0) {
@@ -10817,6 +10825,45 @@ std::string MixTool(Session &S, const Json &Args)
 				LayerShift[m] += Miss;
 				for (size_t o = 0; o < Others.size(); ++o)
 					LayerShift[Others[o]] += Miss;
+			}
+		}
+		// A calm mix whose chords can't come up to their place (at 15 already, as a cozy song's short stabs or broken chords
+		// on a pulse are: Odds and Ends Shop's 7.7 dB under the melody, Hut in a Field's 5.8) brings the melody down instead,
+		// as far as the chords fall short (within CALM_MELODY_DOWN_MOST and its loudest at CALM_MELODY_LEAST or over); the
+		// other parts follow it, so the balance is the one the review hears. Not over some bars (the melody keeps one level
+		// through the song), nor with a level given to the melody
+		if (Calm && !Range && MelodyShift == 0.0 && Leveled.count(Melody) == 0 && S.Channel(Melody).Kind != KIND_TRIANGLE &&
+			S.Channel(Melody).Kind != KIND_DPCM) {
+			double Shortfall = 0.0;
+			for (size_t i = 0; i < Spans.size(); ++i) {
+				const MixSpan &P = Spans[i];
+				if (P.Role != ROLE_CHORDS || P.Target >= 1 || B.Layer[i] < 0 || B.Rel[i] <= NO_LOUDNESS || Peaks[i].Played <= 0)
+					continue;
+				const ChannelInfo &Info = S.Channel(P.Channel);
+				const double Room = LevelDb(Info, 15) - LevelDb(Info, Own[i].Highest);
+				Shortfall = std::max(Shortfall, LayerShift[static_cast<size_t>(B.Layer[i])] - Room);
+			}
+			int Highest = 0;
+			for (size_t i = 0; i < Spans.size(); ++i)
+				if (Spans[i].Role == ROLE_MELODY)
+					Highest = std::max(Highest, Own[i].Highest);
+			const ChannelInfo &Lead = S.Channel(Melody);
+			const double Deepest = Highest > CALM_MELODY_LEAST ? std::min(CALM_MELODY_DOWN_MOST, LevelDb(Lead, Highest) -
+				LevelDb(Lead, CALM_MELODY_LEAST)) : 0.0;
+			// (to a whole volume, so the parts set against it, the triangle's DPCM level too, hear it as it will play: a
+			// second mix then finds them where they are)
+			const int Lowered = Highest > 0 ? VolumeForDb(Lead, LevelDb(Lead, Highest) - std::min(Shortfall, Deepest)) : Highest;
+			const double Down = Highest > 0 ? LevelDb(Lead, Highest) - LevelDb(Lead, Lowered) : 0.0;
+			if (Shortfall >= CALM_MELODY_DOWN_FROM && Down > 0.0) {
+				MelodyShift = -Down;
+				for (size_t m = 0; m < LayerShift.size(); ++m)
+					LayerShift[m] += MelodyShift;
+				for (size_t i = 0; i < Spans.size(); ++i)
+					if (Spans[i].Role == ROLE_MELODY)
+						Shifts[i] = MelodyShift;
+				MelodyWhy = Format(" The chords play at 15 already and still fell %.1f dB short of a calm mix's place, so the melody "
+					"came down %.1f dB instead (the other parts with it)%s.", Shortfall, Down, Deepest < Shortfall - 0.05 ? Format(", as far as "
+					"a calm mix takes it (its loudest at %d or over)", CALM_MELODY_LEAST).c_str() : "");
 			}
 		}
 		for (size_t i = 0; i < Spans.size(); ++i) {
@@ -11191,6 +11238,38 @@ std::string MixTool(Session &S, const Json &Args)
 			if (Changed)
 				B = BalanceOf(pDraft.get());
 		}
+		// The melody brought down (calm, chords at 15): the triangle's DPCM level found again as the mix plays, its
+		// envelope's rounding and all, so a second mix keeps it (the level worked out from the shift alone came out half a
+		// dB off, which a second mix moved, and what_next asked for the mix again)
+		for (int Pass = 0; Pass < 2 && MelodyShift != 0.0 && !Band && TriangleDac >= 0 && B.Triangle >= 0 && B.TriangleRel > NO_LOUDNESS;
+			++Pass) {
+			const double Gain = std::pow(10.0, FaderDb(S.Channel(B.Triangle)) / 20.0);
+			const double Base = B.TriangleRel - 20.0 * std::log10(std::max(0.01, TrianglePinShare(Dac, Gain)));
+			int Best = Dac;
+			double BestMiss = 1e9;
+			for (int Level = 0; Level <= (Samples ? 0x40 : 0x7F); ++Level) {
+				const double Miss = std::fabs(Base + 20.0 * std::log10(std::max(0.01, TrianglePinShare(Level, Gain))) - Places.Bass);
+				if (Miss < BestMiss - 1e-9) {
+					BestMiss = Miss;
+					Best = Level;
+				}
+			}
+			if (Best == Dac)
+				break;
+			for (size_t i = 0; i < Spans.size(); ++i)
+				if (ByEar[i] && Spans[i].Role == ROLE_DRUMS)	// (the noise moves with it, as above)
+					Shifts[i] = std::min(0.0, Shifts[i] - 20.0 * std::log10(std::max(0.01, TriangleShare(Best)) /
+						std::max(0.01, TriangleShare(Dac))));
+			Dac = TriangleDac = Best;
+			Done.clear();
+			PansLost = 0;
+			pDraft.reset(new Draft(S));
+			Scale(*pDraft, &Done);
+			if (Width >= 0.0)
+				ApplyPans(*pDraft, &Done, PansLost);
+			WriteDac(*pDraft);
+			B = BalanceOf(pDraft.get());
+		}
 		double Least, Most;
 		Balance = BalanceText(S, Spans, B, Melody, Least, Most, Band);
 		// What lands half a dB or more off its place (at 15 or 1, or between two volumes' steps), a chord layer as one:
@@ -11262,6 +11341,7 @@ std::string MixTool(Session &S, const Json &Args)
 			NoStyle;
 	}
 	std::string Text = Commit(S, Changes, Start, false, "", What);
+	Text += MelodyWhy;
 	if (Heard)
 		Text += std::string(" As heard: as stems measure each part where it plays with the melody (envelopes, faders, pans and "
 			"Soft counted); ") + (Calm ? "style lively mixes a stage's band instead (the melody's loudest at 9, the bass about level "
@@ -12020,7 +12100,8 @@ int GrowChannel(Session &S, const Json &Args, int First, int End)
 }
 
 // A line of steps as write_notes takes it, a bar to a line with its number
-std::string GrownLine(const ChannelInfo &Info, const std::vector<GrowNote> &Notes, int FirstBar, int Bars, int StepsPerBar)
+std::string GrownLine(const ChannelInfo &Info, const std::vector<GrowNote> &Notes, int FirstBar, int Bars, int StepsPerBar,
+	const Key *pSpell)
 {
 	StepLine Line;
 	Line.FirstBar = FirstBar;
@@ -12035,7 +12116,7 @@ std::string GrownLine(const ChannelInfo &Info, const std::vector<GrowNote> &Note
 		StepLineNote N;
 		N.Step = Notes[i].Step;
 		N.Steps = Notes[i].Steps;
-		N.Pitch = StepPitch(Info, Notes[i].Pitch);
+		N.Pitch = StepPitch(Info, Notes[i].Pitch, pSpell);
 		Line.Notes.push_back(N);
 	}
 	return FormatStepLine(Line);
@@ -12240,7 +12321,7 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 					continue;
 				const int Index = Q.StepChord[static_cast<size_t>(s)];
 				if (Index >= 0 && !Q.Chords[static_cast<size_t>(Index)].HasPitchClass(Q.Motif[i].Pitch % 12)) {
-					Off.push_back(Format("%s at %s (%s)", StepPitch(Info, Q.Motif[i].Pitch).c_str(), S.Time.Position(First +
+					Off.push_back(Format("%s at %s (%s)", StepPitch(Info, Q.Motif[i].Pitch, &K).c_str(), S.Time.Position(First +
 						s * Grid.Rows).c_str(), ChordName(Q.Chords[static_cast<size_t>(Index)], K).c_str()));
 					break;
 				}
@@ -12260,8 +12341,8 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 				const GrowOther &O = Q.Others[o];
 				if (std::abs(Q.Motif[i].Pitch - O.Pitch) % 12 != 1 || std::min(Stop, O.End) - std::max(Row, O.Row) < Q.RubRows)
 					continue;
-				Rubbing.push_back(Format("%s at %s against %s on %s", StepPitch(Info, Q.Motif[i].Pitch).c_str(),
-					S.Time.Position(First + std::max(Row, O.Row)).c_str(), PitchText(S.Channel(Whose[o].first), Whose[o].second).c_str(),
+				Rubbing.push_back(Format("%s at %s against %s on %s", StepPitch(Info, Q.Motif[i].Pitch, &K).c_str(),
+					S.Time.Position(First + std::max(Row, O.Row)).c_str(), KeyedPitchText(S.Channel(Whose[o].first), Whose[o].second, &K).c_str(),
 					S.Channel(Whose[o].first).FullName().c_str()));
 				break;
 			}
@@ -12278,7 +12359,7 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 	const int Pick = IntArg(Args, "pick", 0, 0, static_cast<int>(Versions.size()));
 	std::vector<std::string> Lines;
 	for (size_t v = 0; v < Versions.size(); ++v)
-		Lines.push_back(GrownLine(Info, Versions[v].Notes, From, Bars, StepsPerBar));
+		Lines.push_back(GrownLine(Info, Versions[v].Notes, From, Bars, StepsPerBar, &K));
 	const std::string Over = Format("%s on %s, in %s, %s%s, over %s: %s", RangeText(From, To).c_str(), Info.FullName().c_str(),
 		KeyName(K).c_str(), KIND_NAMES[Kind], KindWhy.c_str(), Source.c_str(), ProgressionText(Chords, Spans, K).c_str());
 	if (Pick > 0) {
@@ -28637,6 +28718,9 @@ private:
 	int m_Use;					// track_use: Work's
 
 	const NextKind &Kind() const { return NextKindInfo(m_KindId); }
+	// The track's key for spelling the pitches of the steps given (KeyedPitchName: "Eb4" in Bb major, not "D#4"); null
+	// while it has none
+	const Key *Spell() const { return m_HasKey ? &m_Key : 0; }
 	bool Wanted(const std::string &Id) const { return m_Skip.count(Id) == 0; }
 	bool Looking() const { return m_Steps.empty() || m_All; }
 	bool Calm() const { return m_KindId == NEXT_CALM; }
@@ -29524,7 +29608,7 @@ bool WhatNext::StepsOf(const std::vector<TuneNote> &Tune, int FirstBar, int Bars
 		StepLineNote N;
 		N.Step = (Row - First) / Eighth;
 		N.Steps = Rows / Eighth;
-		N.Pitch = StepPitch(S.Channel(m_Melody), Tune[i].Pitch);	// "B3" rather than FamiTracker's "B-3"
+		N.Pitch = StepPitch(S.Channel(m_Melody), Tune[i].Pitch, Spell());	// "B3" rather than FamiTracker's "B-3", "Eb4" in Bb
 		Line.Notes.push_back(N);
 	}
 	if (!Fits)
@@ -29668,7 +29752,7 @@ std::vector<std::string> WhatNext::ContrastingHooks(int FirstBar, int Variant, c
 				Steps += InKey(p, K) ? 1 : 0;
 			Pitch = KeyStepsUp(Pitch, To > From ? -Steps : Steps, K);
 			Fits = Pitch >= Low && Pitch <= High;
-			Turned.Notes[i].Pitch = StepPitch(S.Channel(m_Melody), Pitch);
+			Turned.Notes[i].Pitch = StepPitch(S.Channel(m_Melody), Pitch, Spell());
 		}
 		const std::string Text = HookText(Turned);
 		if (Fits && Text != Own && std::find(Out.begin(), Out.end(), Text) == Out.end())
@@ -29727,7 +29811,7 @@ std::vector<std::string> WhatNext::ClimbingHooks(int FirstBar, int Variant, int 
 		if (Best < 0)
 			continue;
 		for (size_t i = 0; i < BestPitches.size(); ++i)
-			Line.Notes[i].Pitch = StepPitch(Info, BestPitches[i]);
+			Line.Notes[i].Pitch = StepPitch(Info, BestPitches[i], Spell());
 		const std::string Text = HookText(Line);
 		if (std::find(Out.begin(), Out.end(), Text) == Out.end())
 			Out.push_back(Text);
@@ -29764,7 +29848,7 @@ std::string WhatNext::SongHook(const FormPart &Part) const
 		StepLineNote Step;
 		Step.Step = (N.Row - First) / Eighth;
 		Step.Steps = Rows / Eighth;
-		Step.Pitch = StepPitch(S.Channel(m_Melody), N.Pitch);
+		Step.Pitch = StepPitch(S.Channel(m_Melody), N.Pitch, Spell());
 		Line.Notes.push_back(Step);
 	}
 	if (Line.Notes.size() < 4)
@@ -29897,7 +29981,7 @@ void WhatNext::MelodyStep()
 				Aimed = Climbing.size();
 				if (!Climbing.empty())
 					Aim = Format(" It climbs over the tune before it (whose highest note is %s), so %s is the song's high point.",
-						StepPitch(S.Channel(m_Melody), Over).c_str(), P.Name.c_str());
+						StepPitch(S.Channel(m_Melody), Over, Spell()).c_str(), P.Name.c_str());
 			}
 			const bool OwnPart = !IsClimaxName(P.Name) && P.Original < 0 && !Own.empty() && Source != P.Name;
 			if (OwnPart) {
@@ -30206,7 +30290,7 @@ void WhatNext::Parts()
 		const int At = TuneHome(m_HasKey ? m_Key : Key(0, MODE_MAJOR)) + 9;
 		const int Swing = Depth > 0 ? FitVibratoSwing(S.Channel(Lead), At, Depth, Design.VibratoRate, S.Song.Pal) : 0;
 		if (Swing > 0 && Swing < Depth * std::max(1, Design.VibratoRate / 4))
-			A.Set("vibrato_at", StepPitch(S.Channel(Lead), At));
+			A.Set("vibrato_at", StepPitch(S.Channel(Lead), At, Spell()));
 		Json Find = Json::MakeObject();
 		Find.Set("kind", "lead");
 		Find.Set("channel", ChannelName(Lead));
@@ -30705,7 +30789,7 @@ void WhatNext::BreakSound(const FormPart &Break, const FormPart &A)
 			Note.Steps = (n + 1 < Hook.size() ? (Hook[n + 1].Row - HookFirst) / Eighth : B.Steps) - Note.Step;
 			const int Pitch = Hook[n].Pitch + Lift + Up;
 			Fits = Note.Step < B.Steps && Note.Steps > 0 && Pitch >= Low && Pitch <= High;
-			Note.Pitch = StepPitch(Info, Pitch);
+			Note.Pitch = StepPitch(Info, Pitch, Spell());
 			Note.Volume = n == 0 ? 7 : -1;
 			Line.Notes.push_back(Note);
 		}
@@ -30728,7 +30812,7 @@ void WhatNext::BreakSound(const FormPart &Break, const FormPart &A)
 			if (Stand.empty() && !HasNotesIn(S, m_Melody, S.Time.BarStart(Bar), S.Time.BarEnd(Bar))) {
 				StepLine There = Line;
 				for (size_t n = 0; n < There.Notes.size(); ++n)
-					There.Notes[n].Pitch = StepPitch(S.Channel(m_Melody), Hook[n].Pitch + Up);
+					There.Notes[n].Pitch = StepPitch(S.Channel(m_Melody), Hook[n].Pitch + Up, Spell());
 				Dry.Set("channel", ChannelName(m_Melody));
 				Dry.Set("notes", FormatStepLine(There));
 				Stand = MelodySound();
