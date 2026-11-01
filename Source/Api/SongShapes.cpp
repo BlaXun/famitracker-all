@@ -1636,11 +1636,31 @@ const SongShape *LaidOutShape(const SectionList &Sections, const std::string &Tr
 	const SongShape *pExact = MatchSongShape(Sections, TrackName, Bpm);
 	if (pExact != 0 || !Reads)
 		return pExact;
-	// The shape whose parts' names the sections share most, in order (on a tie a calm one's night, else the one the
-	// track's name says)
 	const SongShape *pNamed = FindSongShape(TrackName);
 	const bool Calm = (pNamed != 0 && pNamed->Id == "night") || (Bpm > 0.0 && Bpm <= 90.0);
 	const std::vector<SongShape> &All = SongShapes();
+	// One of a shape's variants, part for part (a small loop's Intro, A, A', B, Break shares more names with a night's
+	// plain form than with its own, so the review took the Odds and Ends Shop for a night: fix-gen4-done)
+	const SongShape *pVariant = 0;
+	for (size_t s = 0; s < All.size(); ++s) {
+		const std::vector<SongShape> Variants = VariantsOf(All[s]);
+		for (size_t v = 1; v < Variants.size(); ++v) {
+			if (Variants[v].Parts.size() != Sections.size())
+				continue;
+			bool Same = true;
+			for (size_t i = 0; i < Sections.size() && Same; ++i)
+				Same = SameName(Sections[i].Name, Variants[v].Parts[i].Name);
+			// (not where the track's name names another shape: a town without its last part is the small loop's variant at
+			// twice its length)
+			if (Same && (pNamed == 0 || pNamed == &All[s]) && (pVariant == 0 || (Calm && All[s].Id == "night") ||
+				(!Calm && &All[s] == pNamed)))
+				pVariant = &All[s];
+		}
+	}
+	if (pVariant != 0)
+		return pVariant;
+	// The shape whose parts' names the sections share most, in order (on a tie a calm one's night, else the one the
+	// track's name says)
 	const SongShape *pBest = 0;
 	int Best = 1;
 	for (size_t s = 0; s < All.size(); ++s) {
