@@ -120,6 +120,7 @@ const AssistantToolKind TOOL_KINDS[] = {
 	{ "remove_unused_instruments", ASSISTANT_CHANGES }, { "transpose", ASSISTANT_CHANGES }, { "set_tempo", ASSISTANT_CHANGES },
 	{ "set_meter", ASSISTANT_CHANGES }, { "name_song", ASSISTANT_CHANGES }, { "mix", ASSISTANT_CHANGES },
 	{ "set_swing", ASSISTANT_CHANGES }, { "add_chords_and_bass", ASSISTANT_CHANGES }, { "add_drums", ASSISTANT_CHANGES },
+	{ "add_ambience", ASSISTANT_CHANGES },
 	{ "add_harmony", ASSISTANT_CHANGES }, { "add_counter_melody", ASSISTANT_CHANGES }, { "polish", ASSISTANT_CHANGES },
 	{ "add_echo", ASSISTANT_CHANGES }, { "set_pan", ASSISTANT_CHANGES }, { "add_vibrato", ASSISTANT_CHANGES },
 	{ "change_mood", ASSISTANT_CHANGES }, { "make_version", ASSISTANT_CHANGES }, { "make_jingle", ASSISTANT_CHANGES },

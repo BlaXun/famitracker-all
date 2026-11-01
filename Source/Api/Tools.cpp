@@ -21,6 +21,7 @@
 
 #include "Tools.h"
 #include "AgentLog.h"
+#include "Ambience.h"
 #include "Arrange.h"
 #include "Backups.h"
 #include "Assistant.h"
@@ -2085,10 +2086,13 @@ bool NameSaysCalm(const std::string &TrackName);	// VersionMood's calm (with the
 double FramesPerRow(const Session &S);
 
 // A hit of a drum kit on the noise channel: a sound that strikes (at its peak within three frames) and is gone within
-// half a second, or cut as short (Frames: how long the note lasts); a swell of wind or waves, or a held hiss, isn't one
+// half a second, or cut as short (Frames: how long the note lasts); a swell of wind or waves, or a held hiss, isn't one,
+// nor anything on an instrument of add_ambience's (IsAmbienceName)
 bool IsDrumHit(Session &S, const NoteInfo &N, int Frames)
 {
 	const InstrumentInfo *pInfo = FindInstrument(S.Song, N.Instrument);
+	if (pInfo != 0 && IsAmbienceName(pInfo->Name))
+		return false;	// add_ambience's rain drops and fire's crackle tick, but they're no drum kit
 	const std::vector<int> Envelope = HeldEnvelope(pInfo, 64);
 	const int Peak = *std::max_element(Envelope.begin(), Envelope.end());
 	int Attack = 0;
@@ -8986,6 +8990,21 @@ int MixRole(Session &S, int Channel, int Melody, int First, int End)
 	return ROLE_LINE;
 }
 
+// A channel that plays ambience in [First, End): the noise without a drum hit there, an add_ambience layer (its
+// instruments are named so, IsAmbienceName) or the swells of waves and wind the soundtrack wrote by hand (Bobber on the
+// Bay's), as MixRole hears it. The review, measure_mix and listen name it so, and leave it out of the drums and the parts
+bool PlaysAmbience(Session &S, int Channel, int First, int End)
+{
+	if (S.Channel(Channel).Kind != KIND_NOISE || MixRole(S, Channel, -1, First, End) != ROLE_AMBIENCE)
+		return false;
+	// (a note on no instrument plays at a level of 15 throughout, which says nothing of what it's meant to be)
+	const std::vector<NoteInfo> &Notes = S.Notes(Channel);
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row < End && Notes[i].Row + std::max(1, Notes[i].Rows) > First && FindInstrument(S.Song, Notes[i].Instrument) == 0)
+			return false;
+	return true;
+}
+
 const char *RoleName(int Role)
 {
 	switch (Role) {
@@ -11700,6 +11719,145 @@ std::string AddDrumsTool(Session &S, const Json &Args)
 	if (O.Groove == GROOVE_LIVELY && O.FillEvery > 0)
 		What += O.Crash ? " (a hi-hat roll or soft toms, in turn, and a soft splash after)" : " (a hi-hat roll or soft toms, in turn)";
 	What += ", " + RangeText(From, To);
+	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What), Warnings);
+}
+
+// add_ambience (Ambience.h): a quiet layer of the place's sounds on the noise channel, the sea's waves, rain, wind, a
+// stream or a fire, in step with the song's bars: its cycles start afresh where the loop starts, so the loop sounds as
+// the song first did. The kind from kind, else from the words about the place or the track's name ("Night Harbor":
+// waves). The noise must be free of drums in its bars (its old ambience is replaced). Its level: AMBIENCE_UNDER_DB under
+// the melody's usual level as PlayedDb hears each sound's shape, unless volume gives it
+std::string AddAmbienceTool(Session &S, const Json &Args)
+{
+	const bool AsClip = BoolArg(Args, "as_clip", false);
+	int Kind = -1;
+	std::string Word;
+	const std::string Asked = Trim(StringArg(Args, "kind"));
+	if (!Asked.empty() && !ParseAmbienceKind(Asked, Kind))
+		throw Problem("kind: " + AmbienceKindNames() + " (or a word for one, like sea, harbor, drizzle, breeze, river or campfire).");
+	const std::string About = Trim(StringArg(Args, "about"));
+	if (Kind < 0 && !About.empty())
+		Kind = AmbienceOfWords(About, &Word);
+	if (Kind < 0)
+		Kind = AmbienceOfWords(S.Song.TrackName, &Word);
+	if (Kind < 0)
+		throw Problem("Which ambience? Give kind (" + AmbienceKindNames() + "): " + (About.empty() ? std::string("the track's name doesn't "
+			"say") : "neither about nor the track's name says") + ".");
+	int Channel = -1;
+	if (Arg(Args, "channel") != 0) {
+		Channel = ChannelArg(S, Args, "channel");
+		if (S.Channel(Channel).Kind != KIND_NOISE)
+			throw Problem("Ambience plays on the noise channel.");
+	}
+	for (int c = 0; c < S.ChannelCount() && Channel < 0; ++c)
+		if (S.Channel(c).Kind == KIND_NOISE)
+			Channel = c;
+	if (Channel < 0)
+		throw Problem("The song has no noise channel.");
+	int From = 1, To = S.Time.BarCount();
+	if (RangeGiven(Args))
+		BarRange(S, Args, From, To);
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(To));
+	// The noise to itself: its drums stay (an ambience over them would cut every hit short)
+	const std::vector<NoteInfo> &Old = S.Notes(Channel);
+	bool Replaces = false;
+	for (size_t i = 0; i < Old.size(); ++i) {
+		if (Old[i].Row + std::max(1, Old[i].Rows) <= First || Old[i].Row >= End)
+			continue;
+		const InstrumentInfo *pInfo = FindInstrument(S.Song, Old[i].Instrument);
+		if (pInfo == 0 || !IsAmbienceName(pInfo->Name))
+			throw Problem(S.Channel(Channel).FullName() + " plays drums or other notes in " + RangeText(From, To) + ", and the "
+				"ambience needs it to itself: give from_bar and to_bar where it rests, or leave the ambience out.");
+		Replaces = true;
+	}
+	// Its cycles: from the first bar, and afresh from the loop's start
+	std::vector<std::pair<int, int> > Stretches;
+	const int Loop = Flow(S).LoopRow(S.Time.PatternLength);
+	if (Loop > First && Loop < End) {
+		Stretches.push_back(std::make_pair(First, Loop));
+		Stretches.push_back(std::make_pair(Loop, End));
+	}
+	else
+		Stretches.push_back(std::make_pair(First, End));
+	unsigned int Seed = S.Song.Seed * 2654435761u + 0x1234567u;
+	for (size_t i = 0; i < S.Song.TrackName.size(); ++i)
+		Seed = Seed * 31u + static_cast<unsigned char>(S.Song.TrackName[i]);
+	const AmbiencePlan Plan = PlanAmbience(Kind, Stretches, S.Time.RowsPerBar, FramesPerRow(S), S.Song.FrameRate, Seed);
+	std::vector<int> Instruments;
+	std::string Added;
+	for (size_t i = 0; i < Plan.Sounds.size(); ++i) {
+		const size_t Before = S.Song.Instruments.size();
+		std::string Error;
+		const int Index = S.Host().AddInstrument(Plan.Sounds[i], "2A03", false, Error);
+		if (Index < 0)
+			throw Problem(Error.empty() ? "The ambience's instrument couldn't be added." : Error);
+		S.Refresh();
+		if (S.Song.Instruments.size() > Before)
+			Added += (Added.empty() ? "" : ", ") + InstrumentLabel(S.Song, Index);
+		Instruments.push_back(Index);
+	}
+	// Its level against the melody's, each sound heard over its shape (a wave's swell and its sinking away together)
+	const ChannelInfo &Noise = S.Channel(Channel);
+	const int Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+	const double Tune = Melody >= 0 ? UsualDb(S, Melody, 0, S.Time.TotalRows()) : 20.0 * std::log10(9.0 / 15.0);
+	auto Heard = [&](int Volume) {
+		double Power = 0.0, Frames = 0.0;
+		for (size_t i = 0; i < Instruments.size(); ++i) {
+			const int Length = Kind == AMBIENCE_WAVES ? (i == 0 ? 72 : 150) : Plan.SoundFrames;
+			Power += Length * std::pow(10.0, PlayedDb(S, Noise, Instruments[i], Volume, Length) / 10.0);
+			Frames += Length;
+		}
+		return FaderDb(Noise) + 10.0 * std::log10(std::max(1e-12, Power / std::max(1.0, Frames)));
+	};
+	int Volume = IntArg(Args, "volume", 0, 1, 15);
+	if (Volume == 0) {
+		double Miss = 1e9;
+		for (int v = 1; v <= 12; ++v) {
+			const double Off = std::fabs(Heard(v) - (Tune - AMBIENCE_UNDER_DB));
+			if (Off < Miss - 1e-9) {
+				Miss = Off;
+				Volume = v;
+			}
+		}
+	}
+	std::vector<PartNote> Notes;
+	for (size_t i = 0; i < Plan.Notes.size(); ++i) {
+		const AmbienceNote &A = Plan.Notes[i];
+		PartNote N;
+		N.Row = A.Row;
+		N.Rows = A.Rows;
+		N.Pitch = A.Pitch;
+		N.Instrument = Instruments[static_cast<size_t>(A.Sound)];
+		N.Volume = std::max(1, std::min(15, static_cast<int>(std::floor(Volume * A.Share + 0.5))));
+		Notes.push_back(N);
+	}
+	std::vector<std::string> Warnings;
+	Change C;
+	C.Channel = Channel;
+	BuildPart(S.Cells(Channel), First, End, Notes, OptionsFor(S, Channel, Direct(S, AsClip)), C.Cells, Warnings);
+	std::vector<Change> Changes(1, C);
+	const AmbienceKind &K = AmbienceKindInfo(Kind);
+	std::string What = std::string("ambience: ") + K.What + (Word.empty() || Word == K.Name ? std::string() : " (for \"" + Word + "\")") +
+		", on " + Noise.FullName() + ", " + RangeText(From, To);
+	const std::string Every = Plan.CycleBars == 1 ? std::string("every bar") : Format("every %d bars", Plan.CycleBars);
+	if (Kind == AMBIENCE_WAVES) {
+		int Waves = 0;
+		for (size_t i = 0; i < Plan.Notes.size(); ++i)
+			Waves += Plan.Notes[i].Sound == 0 ? 1 : 0;
+		What += Format(", %s, %s %s", Plural(Waves, "wave", "waves").c_str(), Plan.PerCycle >= 2 ? Format("%d",
+			Plan.PerCycle).c_str() : "one", Every.c_str());
+	}
+	else
+		What += ", a note " + Every;
+	if (Stretches.size() > 1)
+		What += Format(" (starting afresh at the loop, bar %d)", S.Time.BarOf(Loop));
+	What += Format(", at volume %d: about %s dB under the melody as heard", Volume, FormatNumber(std::floor((Tune - Heard(Volume)) *
+		10.0 + 0.5) / 10.0).c_str());
+	if (!Added.empty())
+		What += "; its instruments " + Added + " are named Ambience, so the checks, the review and the mix take it as ambience, "
+			"not drums or a part";
+	if (Replaces)
+		Warnings.push_back("The ambience there before was replaced.");
 	return WithRemarks(S, Commit(S, Changes, First, AsClip, StringArg(Args, "clip_name"), What), Warnings);
 }
 
@@ -16900,7 +17058,7 @@ std::string ReviewTool(Session &S, const Json &Asked)
 		throw Problem(Format("Nothing plays a melody in %s yet. Write one with write_notes (or ask for a backing with "
 			"add_chords_and_bass and chords) first.", RangeText(From, To).c_str()));
 	const std::vector<NoteInfo> Tune = NotesIn(S.Notes(Melody), First, End);
-	int Bass = -1, Drums = -1, Samples = -1;
+	int Bass = -1, Drums = -1, Samples = -1, Ambience = -1;
 	std::vector<int> Chords, Voices, Echoes, Doubles, Playing, BassDoubles;
 	std::vector<std::string> Free;
 	bool FreeMelodic = false;	// a channel a second line could take
@@ -16918,6 +17076,10 @@ std::string ReviewTool(Session &S, const Json &Asked)
 			if (Info.Kind != KIND_DPCM)
 				Free.push_back(Info.FullName());
 			FreeMelodic = FreeMelodic || IsMelodic(Info);
+			continue;
+		}
+		if (PlaysAmbience(S, c, First, End)) {
+			Ambience = c;	// the place's sound under the music: no drums, nor a part with dynamics of its own
 			continue;
 		}
 		Playing.push_back(c);
@@ -17003,6 +17165,8 @@ std::string ReviewTool(Session &S, const Json &Asked)
 		Parts += "; drums on " + S.Channel(Drums).FullName() + (Samples >= 0 ? " with samples on " + S.Channel(Samples).FullName() : "");
 	else if (Samples >= 0)
 		Parts += "; samples on " + S.Channel(Samples).FullName();
+	if (Ambience >= 0)
+		Parts += "; ambience on " + S.Channel(Ambience).FullName();
 	if (!Voices.empty())
 		Parts += "; another line on " + Names(Voices);
 	if (!Echoes.empty())
@@ -25173,7 +25337,11 @@ std::string MeasureMixAs(Session &S, const Json &Args)
 			Part.Channels.push_back(c);
 			Part.Name = ShortChannelName(S, c);
 			const ChannelInfo &Info = S.Channel(c);
-			if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM)
+			if (PlaysAmbience(S, c, First, End)) {
+				Part.Name += " (ambience)";
+				Part.Role = ROLE_AMBIENCE;
+			}
+			else if (Info.Kind == KIND_NOISE || Info.Kind == KIND_DPCM)
 				Part.Role = ROLE_DRUMS;
 			else if (FollowDelay(S, c, Melody, First, End) > 0) {
 				Part.Name += " (echo)";
@@ -26095,6 +26263,7 @@ ListenReport ListenToTrack(Session &S, const Json &Args)
 		Part.Rings = S.Channel(c).MixSpace > 0;
 		Part.Restarts = (S.Channel(c).Chip == "2A03" || S.Channel(c).Chip == "MMC5") && S.Channel(c).Kind == KIND_PULSE;
 		Part.Melody = c == R.Melody;
+		Part.Ambience = PlaysAmbience(S, c, First, End);
 		Part.Samples.resize(Left.size());
 		for (size_t n = 0; n < Left.size(); ++n)
 			Part.Samples[n] = 0.5f * (Left[n] + (n < Right.size() ? Right[n] : Left[n]));
@@ -29408,6 +29577,7 @@ private:
 	void BreakSound(const FormPart &Break, const FormPart &A);
 	void Tips();
 	void Echo();
+	void Ambience();
 	void Polish();
 	void Mix();
 	Json MixArgs() const;
@@ -29515,7 +29685,8 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 		throw Problem("skip: a list of the steps to leave out, like [\"drums\", \"echo\"].");
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
 	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
-		"variation", "break", "intro", "loop", "tips", "colors", "echo", "listen", "polish", "mix", "seam", "save", "export" };
+		"variation", "break", "intro", "loop", "tips", "colors", "echo", "ambience", "listen", "polish", "mix", "seam", "save",
+		"export" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
 		if (Word == "counter" || Word == "countermelody" || Word == "harmony" || Word == "secondline")
@@ -29530,6 +29701,8 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 			Word = "export";
 		else if (Word == "colours" || Word == "color")
 			Word = "colors";
+		else if (Word == "ambient" || Word == "atmosphere" || Word == "waves" || Word == "sounds")
+			Word = "ambience";
 		else if (Word == "clicks")
 			Word = "click";
 		else if (Word == "vanish")
@@ -32178,6 +32351,40 @@ void WhatNext::Echo()
 		(Calm() ? ", as a calm song wants" : "") + "; it comes last of the parts, since it copies the melody's notes as they are now.");
 }
 
+// The place's sound under the music (add_ambience): when the words about the place or the track's name name one (a
+// harbor's waves, rain, wind, a stream, a fire) and the noise channel is free, for the kinds it suits (calm, cozy,
+// mysterious, floating, melancholic, atmospheric; never a stage, a fight or a festival), once the form has its melody, so
+// the mix and polish after it hear it. No milestone: a song without one is done; the noise with notes (drums, or the
+// ambience made) asks nothing
+void WhatNext::Ambience()
+{
+	static const int KINDS[] = { NEXT_CALM, NEXT_COZY, NEXT_MYSTERIOUS, NEXT_FLOATING, NEXT_MELANCHOLIC, NEXT_ATMOSPHERIC };
+	if (!Wanted("ambience") || !m_HasMelody || m_Unmet.count("melody") != 0 || m_Unmet.count("form") != 0 ||
+		std::find(KINDS, KINDS + sizeof(KINDS) / sizeof(KINDS[0]), m_KindId) == KINDS + sizeof(KINDS) / sizeof(KINDS[0]))
+		return;
+	std::string Word;
+	bool FromName = false;
+	int Kind = AmbienceOfWords(m_About, &Word);
+	if (Kind < 0) {
+		Kind = AmbienceOfWords(S.Song.TrackName, &Word);
+		FromName = true;
+	}
+	if (Kind < 0)
+		return;
+	int Noise = -1;
+	for (int c = 0; c < S.ChannelCount() && Noise < 0; ++c)
+		if (S.Channel(c).Kind == KIND_NOISE)
+			Noise = c;
+	if (Noise < 0 || !S.Notes(Noise).empty())
+		return;
+	Json A = Json::MakeObject();
+	A.Set("kind", AmbienceKindInfo(Kind).Name);
+	Step("ambience", "add_ambience", A, Format("The %s names a place with a sound of its own (\"%s\"): %s, quietly under the music "
+		"on the free %s, in step with its bars and its loop, as the soundtrack's harbor songs had their waves. skip "
+		"\"ambience\" leaves it out.", FromName ? "track's name" : "words about the place", Word.c_str(),
+		AmbienceKindInfo(Kind).What, ChannelName(Noise).c_str()));
+}
+
 // The parts the review hears at one volume, which polish's accents shape (8 notes or more; not the triangle, the
 // samples or the chords), by name
 Json WhatNext::FlatParts() const
@@ -32509,6 +32716,8 @@ void WhatNext::Work()
 		Echo();		// cheap: its milestone counts even when a step came before it
 		if (Looking())
 			Highlight();
+		if (Looking())
+			Ambience();
 		if (Looking())
 			Polish();
 		if (Looking())
@@ -32843,6 +33052,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 	}
 	if (Id == "echo")
 		return "Add an echo of the melody";
+	if (Id == "ambience")
+		return "Add the place's sound under the music, quietly";
 	if (Id == "colors")
 		return Where("Give the chords colors that fit the melody", false);
 	if (Id == "listen")
@@ -33838,6 +34049,25 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 				.Add("channel", ChannelProp("The noise channel (default: the song's)."))
 				.Add("from_bar", BarProp("First bar. Default: where the song's parts start."))
 				.Add("to_bar", BarProp("Last bar. Default: where they end."))
+				.SectionChoice()
+				.ClipChoice(),
+			false, true);
+
+		AddTool("add_ambience", "Add ambience",
+			"Adds a quiet layer of the place's sounds on the noise channel, inside the music: the sea's waves (a noise swell "
+			"sinking away every few seconds, as the soundtrack's harbor songs had them), rain (a soft hiss with drops ticking), "
+			"wind (slow gusts), a stream (a light, rippling hiss) or a fire (a low roar with crackles). It keeps in step with "
+			"the bars, starts its cycles afresh where the loop starts so the loop is seamless, and plays about 9 dB under the "
+			"melody as heard. Its instruments are named Ambience, so check_song, the review, listen and the mix take it as "
+			"ambience, not drums or a part. The noise must be free of drums in its bars. Kinds: " + AmbienceKindNames() + ".",
+			Schema()
+				.Add("kind", Prop("string", "waves, rain, wind, stream or fire, or a word for one (sea, harbor, drizzle, breeze, "
+					"river, campfire). Default: from about, else the track's name."))
+				.Add("about", Prop("string", "Words about the place (\"a quiet harbor at night\"), for the kind."))
+				.Add("volume", Prop("integer", "Its volume, 1-15 (default: about 9 dB under the melody as heard)."))
+				.Add("channel", ChannelProp("The noise channel (default: the song's)."))
+				.Add("from_bar", BarProp("First bar. Default: 1."))
+				.Add("to_bar", BarProp("Last bar. Default: the song's last."))
 				.SectionChoice()
 				.ClipChoice(),
 			false, true);
@@ -35349,6 +35579,7 @@ ToolResult ToolSet::CallTool(const std::string &Name, const Json &Arguments, con
 		else if (Name == "mix") Result.Text = MixTool(S, Args);
 		else if (Name == "add_chords_and_bass") Result.Text = AddBackingTool(S, Args);
 		else if (Name == "add_drums") Result.Text = AddDrumsTool(S, Args);
+		else if (Name == "add_ambience") Result.Text = AddAmbienceTool(S, Args);
 		else if (Name == "add_harmony") Result.Text = AddHarmonyTool(S, Args);
 		else if (Name == "add_counter_melody") Result.Text = AddCounterMelodyTool(S, Args);
 		else if (Name == "grow_melody") Result.Text = GrowMelodyTool(S, Args);
@@ -35619,7 +35850,7 @@ const std::vector<std::string> &ToolSet::CoreTools()
 {
 	static const char *const NAMES[] = { "get_song", "what_next", "read_notes", "write_notes", "place_clip", "add_instrument",
 		"design_instrument", "find_sound", "reference_sound", "set_instrument", "add_chords_and_bass", "grow_melody", "add_drums",
-		"add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
+		"add_ambience", "add_harmony", "add_echo", "vary_part", "copy_bars", "insert_bars", "name_section", "song_shape", "set_key", "set_tempo", "set_swing", "polish", "mix",
 		"check_song", "review_arrangement", "check_loop", "fix_loop", "set_loop", "play", "stop", "save_song", "export_for_game",
 		"finish_song", "get_recipe", "explain", "listen", "write_log", "read_user_notes", "create_backup", "list_backups",
 		"restore_backup", "new_song", "open_song", "set_expansion" };

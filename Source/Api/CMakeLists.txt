@@ -90,6 +90,7 @@ add_library(ftapi STATIC
 	GameAudio.cpp
 	Jingles.cpp
 	SoundEffects.cpp
+	Ambience.cpp
 	Effects.cpp
 	Glossary.cpp
 	FdsSounds.cpp

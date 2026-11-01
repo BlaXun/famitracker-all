@@ -106,14 +106,14 @@ before.
 
 Local models (a Qwen running in llama.cpp, say) do better with fewer tools
 and shorter instructions than the 60 or so at `/mcp`, and they follow one
-clear step better than a list of eight tips. `/mcp/core` serves 46 of them:
+clear step better than a list of eight tips. `/mcp/core` serves 47 of them:
 `what_next`, the tools its steps call, `explain`, the agent log's two and the backups' three. Starting: `new_song`,
 `open_song` and `set_expansion` (a song and its chips). Reading and writing: `get_song`,
 `read_notes`, `write_notes`, `place_clip` (ideas hummed into the phone or the
 microphone are clips); sounds: `add_instrument`, `design_instrument`,
 `find_sound`, `reference_sound`, `set_instrument`; parts:
 `add_chords_and_bass`, `grow_melody` (a hook grown into phrases, in versions to
-pick from), `add_drums`, `add_harmony`, `add_echo`; the form:
+pick from), `add_drums`, `add_ambience`, `add_harmony`, `add_echo`; the form:
 `vary_part`, `copy_bars`, `insert_bars`, `name_section`, `song_shape`, `set_loop`; the
 frame: `set_key`, `set_tempo`, `set_swing`; finishing: `polish`, `mix`,
 `check_song`, `review_arrangement`, `check_loop`, `fix_loop`, `listen` (the
@@ -680,6 +680,11 @@ is the recipes':
    bars); `review_arrangement` tips the same ("The texture never changes"),
    since every song the user keeps brings a part or a sound in after its
    first part.
+   are. And, for a calm, cozy, mysterious, floating, melancholic or
+   atmospheric song whose words in `about` (or the track's name) name a
+   place with a sound of its own (a harbor, the sea, rain, wind, a river, a
+   campfire) and whose noise channel is free, that sound under the music
+   (`add_ambience`, skip word `ambience`; see [Ambience](#ambience)).
 7. The last steps, once the parts are written: `polish` (on a lively stage
    with its accents), then the mix in the kind's style when another mix
    would change the song, the loop's seam (`fix_loop`), a `listen` and the
@@ -1256,6 +1261,7 @@ before a batch of changes.
 | `set_pan` | Places a channel's notes in some bars between the speakers: left, right, center, a place between, `alternate` (note by note left and right, by `amount`) or `spread` (from left to right across the bars); the note after them plays where it did. It warns when the melody, the bass or the drums go far to one side. See [Stereo](#stereo) (direct changes only, or as a clip; undoable) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style under the melody's lowest note and over the bass, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes. Its key becomes the track's key in the same change (as Start from a groove makes it), unless the track has one chosen or notes in another key already, so a melody grown on it after goes by that key |
+| `add_ambience` | A quiet layer of the place's sound on the noise channel, inside the music: `kind` waves, rain, wind, stream or fire (or a word for one; default from `about`, else the track's name), in step with the bars and starting afresh at the loop, about 9 dB under the melody unless `volume` says; the noise must be free of drums in its bars (`from_bar`, `to_bar`). See [Ambience](#ambience) |
 | `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28). The `lively` groove is for a gentle place, not too upbeat (a stage's beat is `basic` with `kit` samples): soft closed hi-hats on the eighths (4-6, a sixteenth pair now and then, more when busy), an open hi-hat every other bar (7), a soft kick on 1 and the "and" of 2 or 3 (10 and 8), no snare, small fills (a hi-hat roll or soft toms) and a soft splash after; with `kit` samples the kick is sampled. `intensity` light thins the kick and the snare (the kick on 1 and 3, one soft backbeat a bar) and keeps the hi-hats |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one. Over a chord from outside the key (a borrowed bVI or bVII, a secondary dominant) the voice takes the scale that chord sounds in: under Ebadd9 in G major G aeolian's notes, under F G mixolydian's, never an Eb7's Db or an F7's Eb. Of the chords the other parts play, a note outside the key that no part plays isn't the chord's (an E bass under C and E is heard as an E augmented, whose G# nobody plays) |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line holds a note a bar, rests where the melody does and answers only in rests of two beats or more, briefly (under a melody with no such rest the reply says there was no room to answer); `rests` (fill, the default, answer or leave) chooses that directly |
@@ -2935,6 +2941,47 @@ Other versions (rain, underwater, a dungeon) change only what you ask for.
 
 Adding a track can't be undone with Ctrl+Z in FamiTracker; remove a version
 you don't want in **Module > Module properties**.
+
+## Ambience
+
+A place with a sound of its own (a harbor at night, a rainy street, a windy
+cliff, a riverbank, a campfire) can have it inside its music: `add_ambience`
+writes a quiet layer on the noise channel, under the tune, the way the
+soundtrack's harbor songs had their waves (Bobber on the Bay: a noise note
+swelling in over a second and a half, then a darker one sinking away over
+two, every few seconds, at about 8-9 dB under the whistle).
+
+| Kind | How it's made | Words that ask for it |
+|---|---|---|
+| waves | a swell at noise pitch 7-9 for 1.2 s, then one two steps darker sinking away over 2.5 s; one a bar (a bigger and a smaller one in turn) at a slow tempo, else one every 2 or 4 bars, so a wave comes every 3-7 s | sea, ocean, harbor, bay, shore, beach, coast, tide, dock, pier, boats |
+| rain | a soft hiss (pitch 12) with a drop ticking about three times a second, a little brighter; a note a bar | rain, drizzle, drips, drops, puddles |
+| wind | dark noise (pitch 5) in two or three slow gusts a cycle, a little brighter as each blows, back to its calm at the cycle's end; a cycle of as many bars as fit 4 s | wind, breeze, gusts, gale, blizzard, howling |
+| stream | a light hiss (pitch 10) rippling a few frames at a time; a note a bar | stream, river, brook, creek, waterfall, rapids |
+| fire | a low roar (pitch 3) flickering, with a crackle popping out about twice a second; a note a bar | fire, campfire, hearth, bonfire, flames, torch, embers |
+
+Each sound is an instrument whose sequences shape it (named "Ambience
+waves in" and so on, the plain noise, never the metallic), and its notes
+start on the song's bars: from the first bar, and afresh where the loop
+starts, so the loop sounds as the song did the first time and its seam is
+clean. It plays about 9 dB under the melody as the tools hear it (each
+sound's shape counted against the melody's usual level; `volume` sets it
+instead). `kind` names it, or `about` (words about the place), else the
+track's name ("Night Harbor": waves). It needs the noise channel to itself
+in its bars: over drums it refuses (give `from_bar` and `to_bar` where the
+drums rest). Called again it replaces the ambience there.
+
+The checks know it: `check_song` and the review take no drum kit or part
+from it (the review lists it as "ambience on 2A03 Noise"), `listen` doesn't
+count its quiet swells as notes hardly heard, its long sound as a drone, or
+its hiss as covering the melody or making the mix harsh, `mix` leaves its
+level as written, and `measure_mix` lists it as "Noise (ambience)". A noise
+channel that plays swells and no drum hits, as the soundtrack's own harbor
+songs did by hand, counts as ambience the same way.
+
+`what_next` offers it after the echo for a calm, cozy, mysterious,
+floating, melancholic or atmospheric song when the words in `about` or the
+track's name name such a place and the noise is free (a song with drums on
+it gets none), never for a stage or a fight; `skip` `ambience` leaves it out.
 
 ## Jingles
 

@@ -854,12 +854,18 @@ public:
 		m_Mono.resize(S.Left.size());
 		for (size_t n = 0; n < S.Left.size(); ++n)
 			m_Mono[n] = 0.5f * (S.Left[n] + (n < S.Right.size() ? S.Right[n] : S.Left[n]));
+		// The music without its ambience, for the mix's checks of the music: harsh, muddy, the melody covered
+		m_Music = m_Mono;
+		for (size_t p = 0; p < S.Parts.size(); ++p)
+			for (size_t n = 0; S.Parts[p].Ambience && n < m_Music.size() && n < S.Parts[p].Samples.size(); ++n)
+				m_Music[n] -= S.Parts[p].Samples[n];
 	}
 	std::vector<ListenFinding> Listen(ListenStats *pStats);
 
 private:
 	const ListenSong &S;
 	std::vector<float> m_Mono;						// the mix, both sides averaged
+	std::vector<float> m_Music;						// the mix less its ambience (ListenPart::Ambience)
 	std::vector<std::vector<Track> > m_Tracks;		// per part, per note
 	std::vector<std::vector<int> > m_Clicks;		// per part, per note: the clicks heard inside it
 	std::vector<double> m_PartDb;					// each part's usual note, its loudest 10 ms in dB
@@ -1247,6 +1253,8 @@ void Ears::Drones()
 {
 	for (size_t p = 0; p < S.Parts.size(); ++p) {
 		const ListenPart &P = S.Parts[p];
+		if (P.Ambience)
+			continue;
 		const long long Size = static_cast<long long>(P.Samples.size());
 		std::vector<int> Notes;
 		std::vector<double> Unders, Lasts;
@@ -1298,7 +1306,7 @@ void Ears::Unheard()
 {
 	for (size_t p = 0; p < S.Parts.size(); ++p) {
 		const ListenPart &P = S.Parts[p];
-		if (m_PartDb[p] <= -150.0)
+		if (m_PartDb[p] <= -150.0 || P.Ambience)
 			continue;
 		std::vector<int> Notes;
 		for (size_t i = 0; i < P.Notes.size(); ++i) {
@@ -1393,7 +1401,7 @@ void Ears::Balance()
 	// Each bar's shares, once
 	std::vector<double> HarshShare(S.Bars.size() - 1, -200.0), MudShare(S.Bars.size() - 1, -200.0);
 	for (size_t b = 0; b + 1 < S.Bars.size(); ++b) {
-		const std::vector<double> Power = Spectrum(m_Mono, 0, S.Bars[b], S.Bars[b + 1]);
+		const std::vector<double> Power = Spectrum(m_Music, 0, S.Bars[b], S.Bars[b + 1]);
 		const double All = BandPower(Power, S.Rate, BAND_LOW, BAND_TOP);
 		if (All <= 1e-9)
 			continue;
@@ -1461,7 +1469,7 @@ void Ears::Covered()
 	if (Melody < 0 || S.Bars.size() < 2)
 		return;
 	const ListenPart &M = S.Parts[static_cast<size_t>(Melody)];
-	const std::vector<float> &Mono = m_Mono;
+	const std::vector<float> &Mono = m_Music;
 	std::vector<size_t> Bars;
 	std::vector<double> Overs;
 	for (size_t b = 0; b + 1 < S.Bars.size(); ++b) {

@@ -22,6 +22,7 @@
 // Tests for the Claude Code connection's core: JSON, HTTP framing, the MCP
 // protocol, the musical helpers and every tool, against a song in memory.
 
+#include "../Ambience.h"
 #include "../Arrange.h"
 #include "../Backups.h"
 #include "../Bridge.h"
@@ -1161,6 +1162,10 @@ public:
 			Sends = Sends || (!Silent && Mix.Space(Info.Channels[c].ChanId) > 0);
 		}
 		unsigned int Noise = 1;
+		// An ambience layer's notes (add_ambience: their instruments named so) play their volume sequence, a frame at a time
+		// as FamiTracker does, since their level is all in it (a wave swelling in from 1); the other notes keep the column's
+		std::vector<const InstrumentInfo *> Ambient(Rows.size(), static_cast<const InstrumentInfo *>(0));
+		std::vector<long long> AmbientStart(Rows.size(), 0);
 		for (size_t i = 0; i < Timed.size() && static_cast<long long>(Samples.size()) < Total; ++i) {
 			Marks.push_back(std::make_pair(Timed[i].Row, static_cast<long long>(Samples.size())));
 			for (size_t c = 0; c < Rows.size(); ++c) {
@@ -1169,6 +1174,12 @@ public:
 					Pitch[c] = C.Pitch();
 				else if (C.IsEnd())
 					Pitch[c] = -1;
+				if (C.HasNote()) {
+					AmbientStart[c] = static_cast<long long>(Samples.size());
+					for (size_t n = 0; n < Info.Instruments.size() && C.Instrument != NO_INSTRUMENT; ++n)
+						if (Info.Instruments[n].Index == C.Instrument)
+							Ambient[c] = IsAmbienceName(Info.Instruments[n].Name) ? &Info.Instruments[n] : 0;
+				}
 				if (C.Volume != NO_VOLUME)
 					Volume[c] = C.Volume;
 				for (int k = 0; k < Info.Channels[c].EffectColumns; ++k)
@@ -1223,6 +1234,16 @@ public:
 					if (Info.Channels[c].Kind == KIND_NOISE) {
 						Noise = (Noise >> 1) | (((Noise ^ (Noise >> 1)) & 1u) << 14);
 						Value = (Noise & 1u ? 0.05 : -0.05) * Volume[c] / 15.0;
+						const InstrumentInfo *pAmbient = Ambient[c];
+						if (pAmbient != 0 && !pAmbient->Volume.empty()) {
+							const long long Items = static_cast<long long>(pAmbient->Volume.size());
+							long long Frame = (static_cast<long long>(Samples.size()) - AmbientStart[c]) * Info.FrameRate / SampleRate;
+							if (Frame >= Items)
+								Frame = pAmbient->VolumeLoop >= 0 ? pAmbient->VolumeLoop + (Frame - Items) % std::max(1LL, Items -
+									pAmbient->VolumeLoop) : Items - 1;
+							Value *= std::max(0, std::min(15, Volume[c] * pAmbient->Volume[static_cast<size_t>(Frame)] / 15)) /
+								static_cast<double>(std::max(1, Volume[c]));
+						}
 					}
 					else {
 						double Frequency = 440.0 * std::pow(2.0, (Pitch[c] - 57) / 12.0);
@@ -5442,9 +5463,10 @@ void TestNetwork()
 
 	// The small set of tools for local models
 	const std::vector<std::string> &Core = ToolSet::CoreTools();
-	CHECK(Core.size() >= 15 && Core.size() <= 46);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
+	CHECK(Core.size() >= 15 && Core.size() <= 47);	// 34 with what_next, the tools its steps call and grow_melody (2026-10-25), 36 with
 	// song_shape and 37 with explain (2026-10-26), 40 with the agent log's two, 43 with the backups' three (2026-10-31)
-	CHECK_EQ(Core.size(), 46u);	// 46 with new_song, open_song and set_expansion (fix-core-set)
+	CHECK_EQ(Core.size(), 47u);	// 46 with new_song, open_song and set_expansion (fix-core-set), 47 with add_ambience
+	// (feat-ambience: what_next's harbor waves on the small set)
 	for (size_t i = 0; i < Core.size(); ++i)
 		Check(Tools.Has(Core[i]) && ToolSet::IsCoreTool(Core[i]), Core[i].c_str(), __LINE__);
 	CHECK(!ToolSet::IsCoreTool("make_jingle") && !ToolSet::IsCoreTool("send_file") && !ToolSet::IsCoreTool("nope"));
@@ -29927,7 +29949,139 @@ void TestGen4Done()
 			FollowWhatNext(Song, U.Asked, 70, Finished, __LINE__, U.Core);
 			Check(Finished, What.c_str(), __LINE__);
 			CheckDoneReview(Song, What, __LINE__);
+			// The harbor's waves under the music (feat-ambience); the others' words name no such sound (the tower's wind
+			// howls over a fight, which takes none)
+			bool Ambient = false;
+			for (size_t n = 0; n < Song.Info.Instruments.size(); ++n)
+				Ambient = Ambient || IsAmbienceName(Song.Info.Instruments[n].Name);
+			Check(Ambient == (std::string(U.Name) == "Night Harbor"), What.c_str(), __LINE__);
 		}
+}
+
+// Ambience inside a music track (feat-ambience): add_ambience's kinds on the noise channel, under the music, in step
+// with its bars and its loop, and check_song, the review, listen and measure_mix taking it as ambience; what_next offers it
+// for a harbor at night (and TestGen4Done checks that its other walks add none)
+void TestAmbience()
+{
+	// The words
+	CHECK_EQ(AmbienceOfWords("a quiet harbor at night, boats creaking, lanterns on the water"), static_cast<int>(AMBIENCE_WAVES));
+	CHECK_EQ(AmbienceOfWords("Brook"), static_cast<int>(AMBIENCE_STREAM));
+	CHECK_EQ(AmbienceOfWords("rain on the old mill"), static_cast<int>(AMBIENCE_RAIN));
+	CHECK_EQ(AmbienceOfWords("a windy cliff"), static_cast<int>(AMBIENCE_WIND));
+	CHECK_EQ(AmbienceOfWords("by the campfire"), static_cast<int>(AMBIENCE_FIRE));
+	CHECK_EQ(AmbienceOfWords("Hearthfrost by Night"), -1);	// whole words only
+	CHECK_EQ(AmbienceOfWords("a dim cave with glowing crystals"), -1);
+	CHECK(IsAmbienceName("Ambience waves in") && !IsAmbienceName("Hi-hat"));
+
+	// The harbor at night: its walk adds the waves, ends done and the review has nothing to add
+	FakeSong Song(1);
+	NewSong(Song);
+	Song.Info.TrackName = Song.Tracks[0].Name = "Night Harbor";
+	Song.Info.Seed = 3304668381u;
+	CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+	bool Finished = false;
+	const std::vector<std::string> Made = FollowWhatNext(Song, "{\"kind\": \"calm\", \"about\": \"a quiet harbor at night, boats "
+		"creaking, lanterns on the water\"}", 70, Finished, __LINE__, true);
+	CHECK(Finished);
+	CheckDoneReview(Song, "Night Harbor with waves", __LINE__);
+	int Asked = 0;
+	for (size_t i = 0; i < Made.size(); ++i)
+		Asked += Made[i] == "add_ambience {\"kind\":\"waves\"}" ? 1 : 0;
+	CHECK_EQ(Asked, 1);
+	int Noise = -1;
+	for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
+		if (Song.Info.Channels[c].Kind == KIND_NOISE)
+			Noise = static_cast<int>(c);
+	CHECK(Noise >= 0);
+	if (Noise < 0)
+		return;
+	auto InstrumentName = [](const FakeSong &F, int Index) {
+		for (size_t n = 0; n < F.Info.Instruments.size(); ++n)
+			if (F.Info.Instruments[n].Index == Index)
+				return F.Info.Instruments[n].Name;
+		return std::string();
+	};
+	const char *const KINDS[] = { "waves", "rain", "wind", "stream", "fire" };
+	for (const char *Kind : KINDS) {
+		FakeSong Copy = Song;
+		const ToolResult Did = Run(Copy, "add_ambience", std::string("{\"kind\": \"") + Kind + "\"}");
+		Check(!Did.IsError, Did.Text.c_str(), __LINE__);
+		Check(Contains(Did.Text, "dB under the melody as heard"), Did.Text.c_str(), __LINE__);
+		// Every note on an Ambience instrument, starting afresh where the loop starts: the loop's first bar as the song's first
+		const std::vector<Cell> &Rows = Copy.Rows[static_cast<size_t>(Noise)];
+		std::vector<int> Columns;
+		for (size_t c = 0; c < Copy.Rows.size(); ++c)
+			Columns.push_back(Copy.Info.Channels[c].EffectColumns);
+		const int LoopRow = FollowSong(Copy.Rows, Columns, Copy.Info.PatternLength, static_cast<int>(Copy.Rows[0].size()) /
+			Copy.Info.PatternLength).LoopRow(Copy.Info.PatternLength);
+		CHECK(LoopRow > 0);
+		int Count = 0;
+		bool AllAmbient = true;
+		for (size_t r = 0; r < Rows.size(); ++r)
+			if (Rows[r].HasNote()) {
+				++Count;
+				AllAmbient = AllAmbient && IsAmbienceName(InstrumentName(Copy, Rows[r].Instrument));
+			}
+		Check(Count >= 20 && AllAmbient, Kind, __LINE__);
+		Check(LoopRow > 0 && Rows[0].HasNote() && Rows[static_cast<size_t>(LoopRow)].HasNote() && Rows[0].Instrument ==
+			Rows[static_cast<size_t>(LoopRow)].Instrument, Kind, __LINE__);
+		// Under the music, as rendered: measure_mix lists it as ambience, well under the melody
+		const std::string Measured = Run(Copy, "measure_mix", "{}").Text;
+		const size_t At = Measured.find("Noise (ambience): ");
+		Check(At != std::string::npos, (std::string(Kind) + ": " + Measured).c_str(), __LINE__);
+		if (At != std::string::npos) {
+			const size_t Over = Measured.find("the melody ", At);
+			const double Db = Over == std::string::npos ? 0.0 : std::atof(Measured.c_str() + Over + 11);
+			Check(Db >= 6.0 && Db <= 16.0, (std::string(Kind) + ": " + Measured.substr(At, 120)).c_str(), __LINE__);
+		}
+		// No check takes it for drums, a part, a clash or noise in the mix, and the loop's seam is clean
+		const std::string Checked = Run(Copy, "check_song", "{}").Text;
+		Check(Contains(Checked, "Nothing stands out."), (std::string(Kind) + ": " + Checked).c_str(), __LINE__);
+		const std::string Review = Run(Copy, "review_arrangement", "{}").Text;
+		Check(Contains(Review, "ambience on 2A03 Noise") && !Contains(Review, "drums on") && !Contains(Review, "Drums:") &&
+			!Contains(Review, "at one volume on 2A03 Noise"), (std::string(Kind) + ": " + Review).c_str(), __LINE__);
+		CheckDoneReview(Copy, std::string("Night Harbor with ") + Kind, __LINE__);
+		const std::string Heard = Run(Copy, "listen", "{}").Text;
+		Check(!Contains(Heard, "Noise"), (std::string(Kind) + ": " + Heard).c_str(), __LINE__);
+		const std::string Loop = Run(Copy, "check_loop", "{}").Text;
+		Check(!Contains(Loop, "Noise"), (std::string(Kind) + ": " + Loop).c_str(), __LINE__);
+		// what_next asks nothing more of it
+		const WhatNextAnswer N = ReadWhatNext(Run(Copy, "what_next", "{\"kind\": \"calm\", \"about\": \"a quiet harbor at night\"}").Text);
+		Check(N.Tool != "add_ambience" && N.Tool != "mix" && N.Tool != "polish", N.Line.c_str(), __LINE__);
+		// Twice: the same notes, no instrument added again
+		const size_t Instruments = Copy.Info.Instruments.size();
+		const std::vector<Cell> Before = Rows;
+		CHECK(!Run(Copy, "add_ambience", std::string("{\"kind\": \"") + Kind + "\"}").IsError);
+		CHECK(Copy.Info.Instruments.size() == Instruments);
+		bool Same = true;
+		for (size_t r = 0; r < Before.size(); ++r)
+			Same = Same && Before[r].HasNote() == Copy.Rows[static_cast<size_t>(Noise)][r].HasNote();
+		Check(Same, Kind, __LINE__);
+	}
+	// A kind from the track's name; none named, or drums on the noise: refused, nothing changed
+	{
+		FakeSong Copy = Song;
+		const ToolResult Did = Run(Copy, "add_ambience", "{}");
+		Check(!Did.IsError && Contains(Did.Text, "sea's waves"), Did.Text.c_str(), __LINE__);
+		Copy.Info.TrackName = Copy.Tracks[0].Name = "Lantern Row";
+		CHECK(Run(Copy, "add_ambience", "{\"kind\": \"thunderstorm of doom\"}").IsError);
+		CHECK(!Run(Copy, "add_ambience", "{\"about\": \"rain on the roof\"}").IsError);
+		CHECK(!Run(Copy, "add_drums", "{\"from_bar\": 5, \"to_bar\": 12}").IsError);
+		const ToolResult Refused = Run(Copy, "add_ambience", "{\"kind\": \"waves\"}");
+		Check(Refused.IsError && Contains(Refused.Text, "needs it to itself"), Refused.Text.c_str(), __LINE__);
+		CHECK(!Run(Copy, "add_ambience", "{\"kind\": \"waves\", \"from_bar\": 13, \"to_bar\": 40}").IsError);
+		CHECK(Run(Copy, "what_next", "{\"kind\": \"calm\", \"about\": \"rain\", \"skip\": [\"ambience\"]}").Text.find("add_ambience") ==
+			std::string::npos);
+	}
+	// Not for a stage, a fight: the lively kind leaves a harbor's waves out
+	{
+		FakeSong Lively(1);
+		NewSong(Lively);
+		Lively.Info.TrackName = Lively.Tracks[0].Name = "Harbor Run";
+		FollowWhatNext(Lively, "{\"kind\": \"lively\", \"about\": \"a harbor by day\"}", 70, Finished, __LINE__);
+		for (size_t n = 0; n < Lively.Info.Instruments.size(); ++n)
+			Check(!IsAmbienceName(Lively.Info.Instruments[n].Name), Lively.Info.Instruments[n].Name.c_str(), __LINE__);
+	}
 }
 
 int main()
@@ -30221,6 +30375,7 @@ int main()
 	TestKindShapes();
 	TestLeadVibratoFits();
 	TestGen4Balance();
+	TestAmbience();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

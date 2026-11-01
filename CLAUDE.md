@@ -2739,6 +2739,42 @@ anticipation whose early half beat rubs the chord before (a walk's A''
 clashed so once its tune changed). `TestHooks` covers them, and the walks'
 `CLEAN` lists hold `monotone` at 0.
 
+Ambience inside a track (from `feat-ambience`): `add_ambience`
+(`AddAmbienceTool` after `AddDrumsTool` in `Tools.cpp`) writes a quiet layer
+of the place's sound on the noise channel, planned by `PlanAmbience` in
+`Source/Api/Ambience.cpp` (portable): waves (Bobber on the Bay's technique,
+copied: a swell at noise pitch 7-9 over 72 frames, then a note two steps
+darker sinking away over 150, a wave every 3.2 s or more on whole bars, a
+bigger and a smaller in turn), rain, a stream and a fire (a looping texture
+of 240 frames, a note a bar) and wind (a gust curve as long as its cycle of
+whole bars, back to its calm at the end). Its sequences reach 15, so the
+volume column is the level: `AMBIENCE_UNDER_DB` (9) under the melody's
+`UsualDb`, each sound heard over its shape with `PlayedDb` (Bobber's waves
+sit 8-9 dB under its whistle). Its cycles start from the first bar and
+afresh at the loop's row, so the loop's first bar is the song's. The kind
+comes from `kind`, `about` or the track's name (`AmbienceOfWords`, whole
+words). It refuses a noise channel with other notes in its bars. Every
+instrument is named "Ambience ..." (`IsAmbienceName`): `IsDrumHit` takes
+none of them for a drum hit, so `MixRole` gives the channel `ROLE_AMBIENCE`
+(mix leaves it as written), and `PlaysAmbience` (after `MixRole`; the noise
+with no drum hit, the soundtrack's hand-made swells too) puts it in the
+review as "ambience on" (out of `Playing`, the drums and the dynamics), in
+`measure_mix` as "Noise (ambience)" and in `listen` as
+`ListenPart::Ambience`: `Drones` and `Unheard` skip it, and `Covered` and
+`Balance` hear `m_Music`, the mix less its ambience. `what_next` asks for it
+in `WhatNext::Ambience` (after `Echo`, step id and skip word `ambience`,
+stage depth in `NextSteps.cpp`, no milestone) for calm, cozy, mysterious,
+floating, melancholic and atmospheric songs whose `about` or track name
+name one, while the noise has no notes. It's in `CoreTools` (47).
+FakeSong plays an ambience note's volume sequence (its other notes keep the
+column's level). `TestAmbience` (each kind on the harbor's song: whole-bar
+cycles from the loop, measured 6-16 dB under the melody, check_song,
+review, listen and check_loop clean, what_next done; refused over drums; a
+lively harbor walk adds none) and `TestGen4Done` (the harbor's walks add
+waves, the others none) cover it. Not done: birds on a free pulse (a pitched
+part the clash and key checks would hear), and sharing the noise with drums
+(only in bars where they rest).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
