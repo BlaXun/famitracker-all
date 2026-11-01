@@ -76,6 +76,10 @@ const SoundEffectKind *FindSoundEffect(const std::string &Name);	// by name or a
 // lantern", "jumping out of water". The longest run of the words that names a kind, then a surface and a style among the
 // others (Surface, Style; -1 when none is said). 0 when no run names one
 const SoundEffectKind *FindSoundEffectIn(const std::string &Text, std::string &Surface, int &Style);
+// How much under the other sounds of its use a kind's file wants exporting, in dB (0 for most): a bed of wind or a howl
+// under the other ambience, a crunch on snow under the other footsteps, which the user heard as too loud at the same
+// loudness (fix-sfx-ear); make_sound_effect's reply gives the loudness to export it at
+double SoundLevelOffset(const SoundEffectKind &Kind, const SoundKindOptions &Options);
 std::string SoundEffectNames();									// "jump, land, coin, ..."
 // The kind made with its options (MakeWith, else Make)
 transcribe::SoundEffect MakeSoundKind(const SoundEffectKind &Kind, const SoundKindOptions &Options);
@@ -210,6 +214,16 @@ int MaxOneShotTicks(int MaxFrames, int PatternLength);
 // as divide its length, so its pieces are alike and share an instrument. A
 // piece silent throughout is left out: the one before it ends in silence.
 std::vector<transcribe::SfxLayer> SoundPieces(const transcribe::SfxLayer &Layer, int Period = 0);
+// A layer as the notes it sounds in (fix-sfx-ear): cut where it falls silent and where a pitch held SFX_HELD_PITCH_TICKS
+// or more gives way to another held as long (a wave's swell to its sink), each piece at most MaxSoundTicks(true) ticks
+// (longer stretches in equal pieces), the silences left out. Alike pieces (at another pitch, or a lower volume column:
+// SfxColumnVolume) share an instrument, so a sound of many alike events (bubbles, drops) plays one; WriteSoundEffect
+// cuts a layer so where that needs fewer instruments than SoundPieces
+const int SFX_HELD_PITCH_TICKS = 8;
+std::vector<transcribe::SfxLayer> SoundEvents(const transcribe::SfxLayer &Layer);
+// A sequence's volume under a volume column, as 0.4.6's CalculateVolume plays it (Volume * Column / 15, at least 1 when
+// both are above 0)
+int SfxColumnVolume(int Volume, int Column);
 // A kind that loops, Seconds long (at 60 ticks a second, as the kinds are
 // made) with the changes made (ChangeSoundEffect; its length the one asked,
 // a variant's own stretch counted in): one with random parts (MakeLong:

@@ -20741,12 +20741,6 @@ PresetSequence SoundSequence(int Type, const std::vector<int> &Items, int Settin
 	return S;
 }
 
-bool SameSfxInstrument(const transcribe::SfxInstrument &a, const transcribe::SfxInstrument &b)
-{
-	return a.note == b.note && a.volume == b.volume && a.arpeggio == b.arpeggio && a.fixedArpeggio == b.fixedArpeggio &&
-		a.pitch == b.pitch && a.duty == b.duty;
-}
-
 // Writes a sound effect as a track of its own at speed 1, a row a tick: a
 // 2A03 instrument for each layer whose sequences shape it, its note where the
 // layer starts, a halt where it ends and C00 once the sound has been silent
@@ -20756,7 +20750,7 @@ bool SameSfxInstrument(const transcribe::SfxInstrument &a, const transcribe::Sfx
 // long sharing an instrument), each with its note where it starts. Its number
 // from 0; Parts says which channels play what.
 int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const std::string &Name, std::string &Parts, bool Loop = false,
-	int Period = 0, int Replace = -1)
+	int Period = 0, int Replace = -1, int *pUses = 0)
 {
 	if (Effect.layers.empty() || Effect.length() <= 0)
 		throw Problem("The sound effect is empty.");
@@ -20826,25 +20820,73 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 		size_t Layer;
 		int Start;
 		size_t Shape;	// its instrument's, in Shapes
+		int Note;		// its own note (an alike piece at another pitch plays its shape's instrument)
+		int Column;		// its volume column (15: the shape's own levels)
 	};
 	std::vector<SfxPiece> Pieces;
 	std::vector<transcribe::SfxInstrument> Shapes;
 	std::vector<size_t> ShapeLayer;
-	std::vector<int> Made(Effect.layers.size(), 0);	// instruments each layer plays
+	std::vector<bool> AsEvents(Effect.layers.size(), false);	// a layer cut as the notes it sounds in (SoundEvents)
+	// A piece plays a shape's instrument when its sequences are the shape's at its own note, its volume the shape's under a
+	// column (fix-sfx-ear: 29 sounds filled FamiTracker's 64 instruments), on a channel of the same kind
+	auto Alike = [&](size_t k, size_t l, const transcribe::SfxInstrument &Shape, int &Column) {
+		const transcribe::SfxInstrument &Base = Shapes[k];
+		if (Effect.layers[ShapeLayer[k]].channel != Effect.layers[l].channel || Base.arpeggio != Shape.arpeggio ||
+			Base.fixedArpeggio != Shape.fixedArpeggio || Base.pitch != Shape.pitch || Base.duty != Shape.duty ||
+			Base.volume.size() != Shape.volume.size())
+			return false;
+		for (int c = 15; c >= 1; --c) {
+			bool Same = true;
+			for (size_t t = 0; t < Base.volume.size() && Same; ++t)
+				Same = SfxColumnVolume(Base.volume[t], c) == Shape.volume[t];
+			if (Same) {
+				Column = c;
+				return true;
+			}
+		}
+		return false;
+	};
 	for (size_t l = 0; l < Effect.layers.size(); ++l) {
-		const std::vector<transcribe::SfxLayer> Cut = SoundPieces(Effect.layers[l], Period);
+		// Cut as pieces of an instrument's length, or as the notes it sounds in where that needs fewer instruments
+		const std::vector<transcribe::SfxLayer> Cuts[2] = { SoundPieces(Effect.layers[l], Period), SoundEvents(Effect.layers[l]) };
+		size_t Fewest = 0, Least = 0;
+		for (size_t w = 0; w < 2; ++w) {
+			const size_t Before = Shapes.size();
+			for (size_t p = 0; p < Cuts[w].size(); ++p) {
+				const transcribe::SfxInstrument Shape = transcribe::ToInstrument(Cuts[w][p], Pal);
+				int Column = 15;
+				size_t Found = Shapes.size();
+				for (size_t k = 0; k < Shapes.size() && Found == Shapes.size(); ++k)
+					if (Alike(k, l, Shape, Column))
+						Found = k;
+				if (Found == Shapes.size()) {
+					Shapes.push_back(Shape);
+					ShapeLayer.push_back(l);
+				}
+			}
+			const size_t New = Shapes.size() - Before;
+			Shapes.resize(Before);
+			ShapeLayer.resize(Before);
+			if (w == 0 || New < Least) {
+				Fewest = w;
+				Least = New;
+			}
+		}
+		AsEvents[l] = Fewest == 1;
+		const std::vector<transcribe::SfxLayer> &Cut = Cuts[Fewest];
 		for (size_t p = 0; p < Cut.size(); ++p) {
 			const transcribe::SfxInstrument Shape = transcribe::ToInstrument(Cut[p], Pal);
+			int Column = 15;
 			size_t Found = Shapes.size();
 			for (size_t k = 0; k < Shapes.size() && Found == Shapes.size(); ++k)
-				if (ShapeLayer[k] == l && SameSfxInstrument(Shapes[k], Shape))
+				if (Alike(k, l, Shape, Column))
 					Found = k;
 			if (Found == Shapes.size()) {
 				Shapes.push_back(Shape);
 				ShapeLayer.push_back(l);
-				++Made[l];
+				Column = 15;
 			}
-			const SfxPiece Piece = { l, Cut[p].start, Found };
+			const SfxPiece Piece = { l, Cut[p].start, Found, Shape.note, Column };
 			Pieces.push_back(Piece);
 		}
 	}
@@ -20882,6 +20924,10 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 		S.Refresh();
 		Instruments[k] = Instrument;
 	}
+	std::vector<bool> Columned(static_cast<size_t>(S.ChannelCount()), false);	// a channel some piece plays under a column
+	for (size_t p = 0; p < Pieces.size(); ++p)
+		if (Pieces[p].Column != 15)
+			Columned[static_cast<size_t>(Used[Pieces[p].Layer])] = true;
 	for (size_t p = 0; p < Pieces.size(); ++p) {
 		const SfxPiece &Piece = Pieces[p];
 		std::vector<Cell> &Cells = Channels[static_cast<size_t>(Used[Piece.Layer])];
@@ -20889,8 +20935,10 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 		if (Start >= Cells.size())
 			continue;
 		const transcribe::SfxInstrument &Shape = Shapes[Piece.Shape];
-		Cells[Start].SetPitch(Shape.note);
+		Cells[Start].SetPitch(Piece.Note);
 		Cells[Start].Instrument = static_cast<unsigned char>(Instruments[Piece.Shape]);
+		if (Columned[static_cast<size_t>(Used[Piece.Layer])])	// the column lasts until the next, so every piece of the channel gets its own
+			Cells[Start].Volume = static_cast<unsigned char>(Piece.Column);
 		if (Effect.layers[Piece.Layer].pan >= 0)	// where it plays between the speakers, on each piece (8xx lasts until the next)
 			AddEffect(Cells[Start], EFF_PAN, Effect.layers[Piece.Layer].pan, S.Channel(Used[Piece.Layer]).EffectColumns);
 		const size_t End = Start + Shape.volume.size() - 1;	// where its volume reaches 0; a piece's next one starts there
@@ -20898,22 +20946,32 @@ int WriteSoundEffect(Session &S, const transcribe::SoundEffect &Effect, const st
 			Cells[End].Note = NOTE_HALT;
 	}
 	for (size_t l = 0; l < Effect.layers.size(); ++l) {
-		size_t First = Shapes.size(), Last = 0;
-		for (size_t k = 0; k < Shapes.size(); ++k)
-			if (ShapeLayer[k] == l) {
-				First = std::min(First, k);
-				Last = k;
+		std::vector<size_t> Plays;	// the shapes its pieces play, in turn
+		int Notes = 0;
+		for (size_t p = 0; p < Pieces.size(); ++p)
+			if (Pieces[p].Layer == l) {
+				++Notes;
+				if (std::find(Plays.begin(), Plays.end(), Pieces[p].Shape) == Plays.end())
+					Plays.push_back(Pieces[p].Shape);
 			}
-		if (First == Shapes.size())
+		if (Plays.empty())
 			continue;	// silent all through
 		const std::string Channel = S.Channel(Used[l]).FullName();
-		if (Made[l] == 1)
-			Parts += Format("%s%s with %s", Parts.empty() ? "" : ", ", Channel.c_str(), InstrumentLabel(S.Song, Instruments[First]).c_str());
+		const std::string First = InstrumentLabel(S.Song, Instruments[Plays.front()]), Last = InstrumentLabel(S.Song,
+			Instruments[Plays.back()]);
+		if (AsEvents[l] && Notes > 1)
+			Parts += Format("%s%s with %s, %s", Parts.empty() ? "" : ", ", Channel.c_str(), Plays.size() == 1 ? First.c_str() :
+				Format("%d instruments (%s to %s)", static_cast<int>(Plays.size()), First.c_str(), Last.c_str()).c_str(),
+				Plural(Notes, "note", "notes").c_str());
+		else if (Plays.size() == 1)
+			Parts += Format("%s%s with %s", Parts.empty() ? "" : ", ", Channel.c_str(), First.c_str());
 		else
 			Parts += Format("%s%s with %d instruments in turn (%s to %s, a piece of %s or less each)", Parts.empty() ? "" : ", ",
-				Channel.c_str(), Made[l], InstrumentLabel(S.Song, Instruments[First]).c_str(), InstrumentLabel(S.Song,
-				Instruments[Last]).c_str(), SecondsText(MaxSoundTicks(true) / Rate).c_str());
+				Channel.c_str(), static_cast<int>(Plays.size()), First.c_str(), Last.c_str(), SecondsText(MaxSoundTicks(true) /
+				Rate).c_str());
 	}
+	if (pUses != 0)
+		*pUses = static_cast<int>(Shapes.size());
 	if (Loop)
 		AddEffect(Channels[static_cast<size_t>(Used[0])][static_cast<size_t>(Rows - 1)], EFF_JUMP, 0, S.Channel(Used[0]).EffectColumns);
 	else
@@ -21122,10 +21180,13 @@ std::string SoundEffectName(Session &S, const Json &Args, const std::string &Bas
 }
 
 // The reply's word on a sound written in place of another, and on the room left for instruments
-std::string SoundRoomText(Session &S, int Replace, int Removed)
+// Uses: the instruments the sound plays (fix-sfx-ear: 29 sounds filled FamiTracker's 64), -1 to leave it unsaid
+std::string SoundRoomText(Session &S, int Replace, int Removed, int Uses = -1)
 {
 	S.Refresh();
 	std::string Text;
+	if (Uses > 0)
+		Text += Format(" It uses %s.", Plural(Uses, "instrument", "instruments").c_str());
 	if (Replace >= 0)
 		Text = Format(" It replaced track %d's old sound in place%s.", Replace + 1, Removed > 0 ? Format(", and the %s only that sound "
 			"played were removed (FamiTracker can't undo that)", Plural(Removed, "instrument", "instruments").c_str()).c_str() : "");
@@ -21380,7 +21441,8 @@ std::string DesignedSoundEffect(Session &S, const Json &Args)
 	const int Replace = ReplaceSoundTrack(S, Args, Removed);
 	const std::string Name = SoundEffectName(S, Args, "SFX Sound", Replace);
 	std::string Parts;
-	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop, 0, Replace);
+	int Uses = -1;
+	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop, 0, Replace, &Uses);
 	std::string Described;
 	for (size_t i = 0; i < Layers.size(); ++i)
 		Described += Format("\n%d. %s", static_cast<int>(i) + 1, DescribeLayerDesign(Layers[i]).c_str());
@@ -21405,7 +21467,7 @@ std::string DesignedSoundEffect(Session &S, const Json &Args)
 		Effect.length() / static_cast<double>(std::max(1, S.Song.FrameRate)), Parts.c_str(), Changed.c_str(), Described.c_str(),
 		SoundPlayText(Name, Loop).c_str(), Steady ? " A steady layer ends with a short fade over its last two ticks (to 70% and "
 		"40%), which keeps notes apart; held layers run on into the next without it." : "", TriangleWarning(Layers).c_str(),
-		SoundRoomText(S, Replace, Removed).c_str(), Replace >= 0 ? "" : "FamiTracker can't undo adding a track: the user removes one "
+		SoundRoomText(S, Replace, Removed, Uses).c_str(), Replace >= 0 ? "" : "FamiTracker can't undo adding a track: the user removes one "
 		"in Module > Module properties."));
 }
 
@@ -21498,7 +21560,8 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 	const std::string Name = SoundEffectName(S, Args, "SFX " + Title, Replace);
 
 	std::string Parts;
-	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop, Period, Replace);
+	int Uses = -1;
+	const int Track = WriteSoundEffect(S, Effect, Name, Parts, Loop, Period, Replace, &Uses);
 	std::string Changed;
 	if (Lowercase(Trim(Kind)) != pKind->Name && Squeezed(Kind) != Squeezed(pKind->Name))
 		Changed += Format(" Read \"%s\" as the %s sound%s%s.", Kind.c_str(), pKind->Name.c_str(), Options.Surface.empty() ? "" :
@@ -21515,6 +21578,13 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 			"narrowed by half, attacks softened" : "sweeps widened half again");
 	if (Shortened)
 		Changed += ShortenedText(S, Loop);
+	// Its file under the others of its use (fix-sfx-ear): heard as too loud at the same loudness
+	const double Under = SoundLevelOffset(*pKind, Options);
+	if (Under < 0.0)
+		Changed += Loop ? Format(" Export it at loudness %g, the quiet end of ambience (-24 to -28), %g dB under the other loops: a bed of "
+			"air sounds louder than it measures beside them.", -24.0 + Under, -Under) : Format(" Export it %g dB under the other sounds of "
+			"its kind (loudness %g beside their -18, %g beside -24): it sounds louder than it measures beside them.", -Under, -18.0 + Under,
+			-24.0 + Under);
 	return WithRemarks(S, Format("%s track %d \"%s\": the %s sound (%s), %s long, on %s.%s %s Its "
 		"instruments' sequences shape it, so the user can change it in FamiTracker's instrument editor. FamiTracker shows the "
 		"track now: play it for the user. For other takes, make another with variant 2, 3..., semitones, length_percent, "
@@ -21522,7 +21592,7 @@ std::string MakeSoundEffectTool(Session &S, const Json &Args)
 		"place.%s%s", Replace >= 0 ? "Wrote" : "Made",
 		Track + 1, Name.c_str(), pKind->Name.c_str(), pKind->Use.c_str(), Format("%.2f s", Effect.length() / static_cast<double>(
 		std::max(1, S.Song.FrameRate))).c_str(), Parts.c_str(), Changed.c_str(), SoundPlayText(Name, Loop).c_str(),
-		SoundRoomText(S, Replace, Removed).c_str(), Replace >= 0 ? "" : " FamiTracker can't undo adding a track: the user removes one "
+		SoundRoomText(S, Replace, Removed, Uses).c_str(), Replace >= 0 ? "" : " FamiTracker can't undo adding a track: the user removes one "
 		"in Module > Module properties."));
 }
 

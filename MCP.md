@@ -3102,24 +3102,31 @@ shimmering duty), not a famous game's coin.
 | wind, rain, fire | ambience: a heavy wind blowing in gusts, rain pattering, a fire crackling (these loop) |
 | thunder, birds, chirp, wings | a crack of thunder rolling away, birds chirping (`count`: 1-4 birds; loop for birdsong), one bird's single chirp, a bird flying off ("bird flying away") |
 | engine, alarm, heartbeat | an engine idling, a siren, a heartbeat for low health (these loop) |
-| gust, howl | one gust of wind swelling in and falling away (plays once; wind loops), a howling wind with a low moan wandering over the rush (loops; also "wind in a cave") |
-| waves, lapping | waves on a shore drawing in, breaking and washing back, never quite silent; small waves lapping at a dock or a lake's edge (these loop) |
-| creak, chain | a door creaking open (a door knock is door), a lantern swinging on a squeaking chain (loops) |
-| owl, drip, bubbles | an owl's soft hoots, a water drop's plip with a faint cave echo (loop: dripping, `count` drops in four seconds), bubbles rising underwater (`count`; loop for underwater ambience) |
+| gust, howl | one gust of wind swelling in and falling away (plays once; wind loops), a howling wind, all breath: long, slow gusts rising brighter as each one howls (loops; also "wind in a cave") |
+| waves, lapping | waves on a shore as `add_ambience` draws them, each swelling in at one noise pitch and sinking away darker, a bigger and a smaller in turn; small waves lapping at a dock or a lake's edge, quicker and softer (these loop) |
+| creak, chain | a door creaking open slowly, a dry, low wooden groan (a door knock is door), a lantern swinging on a squeaking chain (loops) |
+| owl, drip, bubbles | an owl's soft hoots, a water drop's plip with a faint cave echo (loop: dripping, `count` drops in four seconds), bubbles rising underwater (`count`, four of its own; loop: a bubble now and then, `count` in four seconds, no noise under them) |
 | splash, emerge | jumping into water, coming out of it (a rush, water streaming off, a few drops) |
-| cave, outfit, reward | entering a cave (a low swell, a deep moan, a drop echoing far off), changing an outfit (a cloth swish and a sparkle), "you got something awesome" for a lucky box or an item get (a run up landing on a high note that rings, with a harmony and a low drop) |
+| cave, outfit, reward | entering a cave (the open air outside fading into a low, hollow hush, one drop far off and its echo), changing an outfit (a cloth swish and a sparkle), "you got something awesome" for a lucky box or an item get (a run up landing on a high note that rings, with a harmony and a low drop) |
 
 The kinds for nature and places were made in the style and at the level of
 the others, which the user preferred to more elaborate designs from the
 layers; the reward is the designed item get the user chose. `footstep`
 takes a `surface`: dirt (its own soft tap), wood (a hollow tok on the
-triangle under a click), grass (a soft, high brush), stone (a short bright
-click), snow and sand (soft crunches), water (a splashy step), metal (a
-clank on the noise's metallic mode), and a `count` of steps. `kind` takes a
+triangle under a click), grass (a soft, high brush), stone (a hard, bright
+click), snow and sand (soft crunches; snow's dark and short, its file wanted 3 dB under the other steps), water (a splashy step), metal (a
+short bright ring, a "bling"), and a `count` of steps. `kind` takes a
 few words too: "footsteps on grass", "a squeaking chain with a lantern",
 "jumping out of water", "realistic wind" (the longest run of words naming a
 kind, then a surface and a style among the others; the reply says how it
 read them).
+
+A sound's alike notes share an instrument (the same shape at another pitch,
+or at a lower volume column: every wave, every bubble), and the reply says
+how many instruments the sound uses in all, since FamiTracker holds 64 for
+the whole module. Wind and howl say to export them at -28 LUFS, the quiet
+end of ambience, and snow steps 3 dB under the other steps: the user heard
+them as too loud at the same loudness.
 
 `style` realistic (or grounded) makes a sound less cartoonish: pitch sweeps
 of more than half an octave narrowed by half, attacks of sounds four ticks

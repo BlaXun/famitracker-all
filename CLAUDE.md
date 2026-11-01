@@ -2978,6 +2978,43 @@ fields with no findings and a `sound` object. A cue's review gives the
 length to its halt (`HaltBar`). `VariantText` says another duty only for a
 sound with a pulse (`HasPulse`). `TestSfxKinds` covers them.
 
+The user's ear on the sound effects (from `fix-sfx-ear`): of 29 sounds the
+user liked birds, chirp, owl, drip and its loop, splash, emerge, outfit,
+reward, rain, fire and the wood and grass steps (gust "okayish", left);
+those make the same layers as before. Changed in `SoundEffects.cpp`: waves
+and lapping ("a bit weird": the noise gliding) are `Surf` drawn as
+`add_ambience` draws its waves (a swell held at one noise pitch, a sink two
+steps darker, a bigger and a smaller in turn, the smaller the bigger's shape
+under a volume column, `SfxColumnVolume`); the creak ("too goofy": a climb
+of 7 semitones with a vibrato) a slow, low groan on a thin pulse whose
+grains are in its volume, drifting a semitone or two; the howl ("that goofy
+note") the noise alone, rising brighter with each slow gust; bubbles ("too
+many, too active") four (`BUBBLE_COUNT`), each a bloop up in whole
+semitones at its own pitch and column (`Bloop`), the loop a few in four
+seconds (`BUBBLES_IN_FOUR_SECONDS`) at uneven times, without the murmur of
+noise ("noise in the background which is weird"); the chain without the
+clink after each squeak (a tick of the metallic noise heard as "one blip
+note"); the cave ("dunno what that is") the open air outside fading as it
+darkens into a hollow hush, one drop far off and its echo; the stone step a
+harder, brighter click; the snow step ("too loud") darker and shorter; the
+metal step ("sounds like the player is shocked on every step": the
+metallic noise's buzz) a high pulse ring dying in 0.2 s over a tick of
+bright noise; the wind at volume 6 (10 played 5-7 dB over the other loops).
+At the same loudness a file can't be quieter, so `SoundLevelOffset` gives
+wind and howl -4 dB and snow steps -3, and make_sound_effect's reply says
+the loudness to export them at (-28 for a bed of air). Instruments (29
+sounds filled the 64): `WriteSoundEffect` matches a piece to an instrument
+of any layer on the same kind of channel at the piece's own note and under
+a volume column (`Alike`; a channel with any piece under a column gets its
+column on every note, since the column lasts), and cuts each layer either
+as `SoundPieces` or as the notes it sounds in (`SoundEvents`: at silences
+and where a pitch held `SFX_HELD_PITCH_TICKS` gives way to another),
+whichever needs fewer instruments; the reply says how many the sound uses
+(`SoundRoomText`'s `Uses`): an 8 s waves loop 2, bubbles 1. Glides
+between semitones give each pitch its own pitch sequence, so shapes meant
+to share keep whole semitones. `TestSfxEar` and `TestSfxEarWritten` (each
+channel as the cells and instruments play it, the sound as made) cover it.
+
 Finishing fixes (from `fix-r4-finish`): doubles in tune across chips.
 `DoubledFines` (before `EchoFines` in `Tools.cpp`) gives each note of a part
 that sounds another part's pitch, or octaves of it, for half the note or

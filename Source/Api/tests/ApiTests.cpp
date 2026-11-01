@@ -30719,17 +30719,14 @@ void TestSfxKinds()
 	On.Count = 3;
 	const transcribe::SoundEffect Walk = MakeSoundKind(*FindSoundEffect("footstep"), On);
 	CHECK(Walk.layers.size() == 1 && Bursts(Walk.layers[0]) == 3);
-	// One gust swells and falls away; a howl moans over the noise; waves never fall silent and loop on
+	// One gust swells and falls away; a howl is breath on the noise alone (fix-sfx-ear); waves loop on in whole waves
 	const transcribe::Audio GustSound = transcribe::RenderEffect(FindSoundEffect("gust")->Make(), 44100, false);
 	const std::vector<double> GustLevel = Loudness(GustSound, 0.0, 0.1, 16);
 	CHECK(GustLevel[6] > 3.0 * GustLevel[0] && GustLevel[6] > 2.0 * GustLevel[15]);
 	const transcribe::SoundEffect Howl = FindSoundEffect("howl")->Make();
-	const transcribe::SfxLayer *Moan = LayerOn(Howl, SfxChannel::Pulse);
-	CHECK(Moan != 0 && LayerOn(Howl, SfxChannel::Noise) != 0);
-	CHECK(*std::max_element(Moan->pitch.begin(), Moan->pitch.end()) - *std::min_element(Moan->pitch.begin(), Moan->pitch.end()) > 4.0);
+	CHECK(LayerOn(Howl, SfxChannel::Pulse) == 0 && LayerOn(Howl, SfxChannel::Noise) != 0);
 	const transcribe::SoundEffect Waves = FindSoundEffect("waves")->Make();
-	CHECK(Waves.layers.size() == 1 && Waves.length() == 384);
-	CHECK(*std::min_element(Waves.layers[0].volume.begin(), Waves.layers[0].volume.end()) >= 2);
+	CHECK(Waves.layers.size() == 1 && Waves.length() == 450);
 	CHECK(std::abs(Waves.layers[0].volume.front() - Waves.layers[0].volume.back()) <= 1);
 	// The reward is the designed item get: a run up C major landing on a ringing C-6, a harmony under it and a drop
 	const transcribe::SoundEffect Reward = FindSoundEffect("reward")->Make();
@@ -30878,7 +30875,7 @@ void TestSfxKinds()
 		std::vector<float> Twice = A.samples;
 		Twice.insert(Twice.end(), A.samples.begin(), A.samples.end());
 		SoundHearing H = HearSoundAudio(Twice, Twice, 44100, W.length() / 60.0, true);
-		CHECK(H.Rendered && H.GapSeconds < 0.2 && H.SeamDb < 6.0 && H.Db.size() == 128 && H.What[40].compare(0, 5, "noise") == 0);
+		CHECK(H.Rendered && H.GapSeconds < 0.2 && H.SeamDb < 6.0 && H.Db.size() == static_cast<size_t>(W.length() / 3) && H.What[40].compare(0, 5, "noise") == 0);
 		std::vector<SfxLayerDesign> Swells(1);
 		Swells[0].Channel = SfxChannel::Noise;
 		Swells[0].Seconds = 6.0;
@@ -31073,6 +31070,239 @@ void TestAmbience()
 		for (size_t n = 0; n < Lively.Info.Instruments.size(); ++n)
 			Check(!IsAmbienceName(Lively.Info.Instruments[n].Name), Lively.Info.Instruments[n].Name.c_str(), __LINE__);
 	}
+}
+
+// The user's ear on the second batch of sound effects (fix-sfx-ear): what changed, and what was liked kept as it was
+// What a written sound effect's channel plays a tick at a time, as 0.4.6 plays its cells: each note's instrument from its
+// first tick (its volume sequence under the column, its arpeggio), a halt silent. Volume -1 past the rows
+struct PlayedTick {
+	int Volume;
+	double Pitch;
+};
+std::vector<PlayedTick> PlayedSfx(const FakeSong &Song, int Channel)
+{
+	std::vector<PlayedTick> Out;
+	const std::vector<Cell> &Rows = Song.Rows[static_cast<size_t>(Channel)];
+	const InstrumentInfo *pPlaying = 0;
+	int Base = 0, Column = 15, t = 0;
+	for (size_t r = 0; r < Rows.size(); ++r, ++t) {
+		const Cell &C = Rows[r];
+		if (C.Volume != NO_VOLUME)
+			Column = C.Volume;
+		if (C.Note == NOTE_HALT)
+			pPlaying = 0;
+		else if (C.HasNote()) {
+			pPlaying = 0;
+			for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+				if (Song.Info.Instruments[i].Index == C.Instrument)
+					pPlaying = &Song.Info.Instruments[i];
+			Base = C.Pitch();
+			t = 0;
+		}
+		PlayedTick P = { 0, static_cast<double>(Base) };
+		if (pPlaying != 0) {
+			const std::vector<int> &V = pPlaying->Volume;
+			P.Volume = SfxColumnVolume(V.empty() ? 15 : V[std::min(V.size() - 1, static_cast<size_t>(t))], Column);
+			const std::vector<int> &A = pPlaying->Steps.Items;
+			if (!A.empty()) {
+				const int Step = A[std::min(A.size() - 1, static_cast<size_t>(t))];
+				P.Pitch = pPlaying->Steps.Setting == SEQUENCE_FIXED ? Step : Base + Step;
+			}
+		}
+		Out.push_back(P);
+	}
+	return Out;
+}
+
+void TestSfxEar()
+{
+	using transcribe::SfxChannel;
+	auto Long = [](const char *Kind, double Seconds, int Count) {
+		SoundKindOptions O;
+		O.Count = Count;
+		int Period = 0;
+		return LoopOfLength(*FindSoundEffect(Kind), Seconds, SoundEffectChanges(), 1 << 20, Period, O);
+	};
+	auto Starts = [](const transcribe::SfxLayer &L) {
+		std::vector<int> Out;
+		for (int t = 0; t < L.length(); ++t)
+			if (L.volume[static_cast<size_t>(t)] > 0 && (t == 0 || L.volume[static_cast<size_t>(t - 1)] == 0))
+				Out.push_back(L.start + t);
+		return Out;
+	};
+	auto Lufs = [](const transcribe::SoundEffect &E) {
+		const transcribe::Audio A = transcribe::RenderEffect(E, 44100, false);
+		return IntegratedLoudness(A.samples, A.sampleRate, 0, A.samples.size());
+	};
+
+	// The chain swings with its squeaks alone: the clink after each (the noise's metallic mode) was a blip note
+	const transcribe::SoundEffect Chain = Long("chain", 8.0, 0);
+	CHECK(!Chain.layers.empty() && LayerOn(Chain, SfxChannel::Noise) == 0 && LayerOn(Chain, SfxChannel::Triangle) == 0);
+	// Bubbles: four in the one-shot, a few at uneven times in the loop (never silent 1.5 s), no murmur of noise under them
+	const transcribe::SoundEffect Bubbles = FindSoundEffect("bubbles")->Make();
+	CHECK(Bubbles.layers.size() == 1 && Bursts(Bubbles.layers[0]) == 4);
+	for (int Seed = 1; Seed <= 4; ++Seed) {
+		SoundKindOptions O;
+		O.Seed = Seed;
+		int Period = 0;
+		const transcribe::SoundEffect Under = LoopOfLength(*FindSoundEffect("bubbles"), 8.0, SoundEffectChanges(), 1 << 20, Period, O);
+		CHECK(Under.layers.size() == 1 && LayerOn(Under, SfxChannel::Noise) == 0);
+		const std::vector<int> At = Starts(Under.layers[0]);
+		CHECK(At.size() >= 4 && At.size() <= 10);
+		int Least = 1 << 20, Most = 0;
+		for (size_t i = 1; i < At.size(); ++i) {
+			Least = std::min(Least, At[i] - At[i - 1]);
+			Most = std::max(Most, At[i] - At[i - 1]);
+		}
+		CHECK(Most - Least >= 15 && Most <= 95 && 480 - At.back() + At.front() <= 100);
+	}
+	// The howl is breath: no moan on a pulse, its noise rising brighter with each gust
+	const transcribe::SoundEffect Howl = Long("howl", 8.0, 0);
+	CHECK(Howl.layers.size() == 1 && LayerOn(Howl, SfxChannel::Pulse) == 0);
+	{
+		const transcribe::SfxLayer &Air = Howl.layers[0];
+		double Loud = 0.0, Soft = 0.0;
+		int Louds = 0, Softs = 0;
+		for (int t = 0; t < Air.length(); ++t)
+			if (Air.volume[static_cast<size_t>(t)] >= 6) {
+				Loud += Air.pitchAt(t);
+				++Louds;
+			}
+			else if (Air.volume[static_cast<size_t>(t)] > 0) {
+				Soft += Air.pitchAt(t);
+				++Softs;
+			}
+		CHECK(Louds > 0 && Softs > 0 && Loud / Louds > Soft / Softs + 1.0);
+	}
+	// The creak: slow and low, a groan drifting a semitone or two, not a climb with a vibrato
+	const transcribe::SoundEffect Creak = FindSoundEffect("creak")->Make();
+	{
+		const transcribe::SfxLayer *Groan = LayerOn(Creak, SfxChannel::Pulse);
+		CHECK(Groan != 0 && Groan->length() >= 72);
+		const double High = *std::max_element(Groan->pitch.begin(), Groan->pitch.end());
+		const double Low = *std::min_element(Groan->pitch.begin(), Groan->pitch.end());
+		CHECK(High - Low < 2.5 && High < 37.0);
+		int Turns = 0;
+		for (size_t t = 2; t < Groan->pitch.size(); ++t)
+			Turns += (Groan->pitch[t] - Groan->pitch[t - 1]) * (Groan->pitch[t - 1] - Groan->pitch[t - 2]) < 0.0 ? 1 : 0;
+		CHECK(Turns <= 2);
+	}
+	// The cave: the open air outside fading as it darkens into the cave's low hush, then one drop far off and its echo
+	const transcribe::SoundEffect Cave = FindSoundEffect("cave")->Make();
+	{
+		const transcribe::SfxLayer *Air = LayerOn(Cave, SfxChannel::Noise);
+		CHECK(Air != 0 && Air->pitchAt(0) >= 8.0 && Air->pitchAt(Air->length() / 2) <= 3.0 && LayerOn(Cave, SfxChannel::Triangle) != 0);
+		CHECK(Bursts(*LayerOn(Cave, SfxChannel::Triangle)) == 1);
+	}
+	// Waves as add_ambience draws them: a swell held at one noise pitch, then a sink two steps darker, a bigger and a smaller
+	const transcribe::SoundEffect Waves = Long("waves", 8.0, 0);
+	{
+		CHECK(Waves.layers.size() == 1 && Waves.layers[0].channel == SfxChannel::Noise && Waves.length() == 480);
+		const transcribe::SfxLayer &W = Waves.layers[0];
+		CHECK(W.pitchAt(0) - W.pitchAt(72 + 5) == 2.0 && W.pitchAt(0) == W.pitchAt(72 - 1));
+		const int First = *std::max_element(W.volume.begin(), W.volume.begin() + 240);
+		const int Second = *std::max_element(W.volume.begin() + 240, W.volume.end());
+		CHECK(First > Second && Second >= First / 2);
+	}
+	// The footsteps: stone a hard, bright click; snow a soft, dark crunch; metal a short bright ring, not the metallic buzz
+	SoundKindOptions On;
+	On.Surface = "stone";
+	const transcribe::SoundEffect Stone = MakeSoundKind(*FindSoundEffect("footstep"), On);
+	CHECK(Stone.layers[0].volume[0] >= 12 && Stone.layers[0].pitchAt(0) >= 12.0);
+	On.Surface = "snow";
+	const transcribe::SoundEffect Snow = MakeSoundKind(*FindSoundEffect("footstep"), On);
+	CHECK(*std::max_element(Snow.layers[0].volume.begin(), Snow.layers[0].volume.end()) <= 4 && Snow.layers[0].pitchAt(0) <= 8.5 &&
+		Snow.length() <= 7);
+	CHECK(SoundLevelOffset(*FindSoundEffect("footstep"), On) < 0.0);
+	On.Surface = "metal";
+	const transcribe::SoundEffect Metal = MakeSoundKind(*FindSoundEffect("footstep"), On);
+	{
+		bool Buzz = false;
+		for (size_t l = 0; l < Metal.layers.size(); ++l)
+			for (int t = 0; t < Metal.layers[l].length(); ++t)
+				Buzz = Buzz || (Metal.layers[l].channel == SfxChannel::Noise && Metal.layers[l].dutyAt(t) == 1);
+		CHECK(!Buzz && LayerOn(Metal, SfxChannel::Pulse) != 0);
+		const transcribe::Audio A = transcribe::RenderEffect(Metal, 44100, false);
+		// Its spectrum bright (most of its power over 2 kHz) and short (nearly all of it in the first 0.2 s)
+		double Weighted = 0.0, Power = 0.0, Early = 0.0, All = 0.0;
+		const size_t N = 4096;
+		std::vector<double> Re(N, 0.0), Im(N, 0.0);
+		for (size_t i = 0; i < N && i < A.samples.size(); ++i)
+			Re[i] = A.samples[i];
+		for (size_t k = 1; k < N / 2; ++k) {	// a plain DFT of its first 93 ms
+			double r = 0.0, m = 0.0;
+			for (size_t i = 0; i < N; i += 1) {
+				r += Re[i] * std::cos(2.0 * 3.14159265358979 * k * i / N);
+				m -= Re[i] * std::sin(2.0 * 3.14159265358979 * k * i / N);
+			}
+			const double P = r * r + m * m, Hz = k * 44100.0 / N;
+			Weighted += P * Hz;
+			Power += P;
+		}
+		for (size_t i = 0; i < A.samples.size(); ++i) {
+			All += A.samples[i] * A.samples[i];
+			if (i < static_cast<size_t>(0.2 * A.sampleRate))
+				Early += A.samples[i] * A.samples[i];
+		}
+		CHECK(Power > 0.0 && Weighted / Power > 2000.0 && Early > 0.97 * All);
+	}
+	// Levels: the wind as FamiTracker plays it within 3 dB of the loops the user found at a good level (rain, fire), and
+	// its file wanted under the others
+	{
+		const double Wind = Lufs(Long("wind", 8.0, 0)), Rain = Lufs(Long("rain", 8.0, 0)), Fire = Lufs(Long("fire", 8.0, 0));
+		CHECK(Wind < std::max(Rain, Fire) + 3.0);
+		CHECK(SoundLevelOffset(*FindSoundEffect("wind"), SoundKindOptions()) <= -3.0);
+	}
+}
+
+// Written with fewer instruments (29 sounds filled FamiTracker's 64): alike notes share one, at their own pitch and under a
+// volume column, and each channel plays the sound as it was made
+void TestSfxEarWritten()
+{
+	FakeSong Song;
+	ToolSet Tools(Song);
+	struct MadeSound {
+		const char *Args;
+		const char *Kind;
+		bool Loop;
+		int Channel;	// the one layer's
+		int Most;		// instruments
+	};
+	const MadeSound MADE[] = {
+		{ "{\"kind\": \"waves\", \"loop\": true, \"seconds\": 8}", "waves", true, 3, 2 },
+		{ "{\"kind\": \"lapping\", \"loop\": true, \"seconds\": 8}", "lapping", true, 3, 2 },
+		{ "{\"kind\": \"bubbles\"}", "bubbles", false, 0, 1 },
+		{ "{\"kind\": \"bubbles\", \"loop\": true, \"seconds\": 8}", "bubbles", true, 0, 1 },
+		{ "{\"kind\": \"howl\", \"loop\": true, \"seconds\": 8}", "howl", true, 3, 2 },
+	};
+	for (size_t m = 0; m < sizeof(MADE) / sizeof(MADE[0]); ++m) {
+		const size_t Before = Song.Info.Instruments.size();
+		const ToolResult Result = Tools.Call("make_sound_effect", Parse(MADE[m].Args));
+		Check(!Result.IsError, MADE[m].Args, __LINE__);
+		const int Used = static_cast<int>(Song.Info.Instruments.size() - Before);
+		Check(Used <= MADE[m].Most, MADE[m].Args, __LINE__);
+		Check(Result.Text.find(" It uses " + std::to_string(Used) + (Used == 1 ? " instrument." : " instruments.") + " The module has") != std::string::npos,
+			MADE[m].Args, __LINE__);
+		SoundKindOptions O;
+		O.Seed = 1;
+		int Period = 0;
+		const transcribe::SoundEffect E = MADE[m].Loop ? LoopOfLength(*FindSoundEffect(MADE[m].Kind), 8.0, SoundEffectChanges(),
+			MaxLoopTicks(Song.Info.MaxFrames, Song.Info.PatternLength), Period, O) : MakeSoundKind(*FindSoundEffect(MADE[m].Kind), O);
+		const transcribe::SfxLayer &L = E.layers[0];
+		const std::vector<PlayedTick> Played = PlayedSfx(Song, MADE[m].Channel);
+		bool Same = Played.size() >= static_cast<size_t>(L.start + L.length());
+		for (int t = 0; t < L.length() && Same; ++t) {
+			const PlayedTick &P = Played[static_cast<size_t>(L.start + t)];
+			Same = P.Volume == L.volume[static_cast<size_t>(t)] && (P.Volume == 0 || std::fabs(P.Pitch - L.pitchAt(t)) < 0.5);
+			if (!Same)
+				std::printf("  %s: tick %d plays %d at %.1f, made %d at %.1f\n", MADE[m].Kind, t, P.Volume, P.Pitch,
+					L.volume[static_cast<size_t>(t)], L.pitchAt(t));
+		}
+		Check(Same, MADE[m].Args, __LINE__);
+	}
+	// The wind's reply gives the quieter loudness to export it at
+	CHECK_HAS(Tools.Call("make_sound_effect", Parse("{\"kind\": \"realistic wind\", \"seconds\": 8}")).Text,
+		"Export it at loudness -28, the quiet end of ambience");
 }
 
 int main()
@@ -31374,6 +31604,8 @@ int main()
 	TestGen4Balance();
 	TestAmbience();
 	TestSfxKinds();
+	TestSfxEar();
+	TestSfxEarWritten();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

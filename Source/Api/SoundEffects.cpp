@@ -369,9 +369,11 @@ SoundEffect Designed(const std::vector<SfxLayerDesign> &Layers, bool Loop, doubl
 
 // The loops of ambience, Seconds long: their random parts drawn for the whole of it
 
-SoundEffect WindFor(double Seconds, const SoundKindOptions &)	// a heavy wind: dark noise in uneven gusts, louder and brighter as each one blows
+// A heavy wind: dark noise in uneven gusts, louder and brighter as each one blows. At volume 6 (at 10 it played 5-7 dB over
+// the other loops in FamiTracker, and the user found it "too loud probably")
+SoundEffect WindFor(double Seconds, const SoundKindOptions &)
 {
-	SfxLayerDesign Air = Layer(NOISE, 0.0, Seconds, 6, -1, 10, SFX_STEADY);
+	SfxLayerDesign Air = Layer(NOISE, 0.0, Seconds, 6, -1, 6, SFX_STEADY);
 	Air.Gusts = std::max(1, Round(0.75 * Seconds));	// three in four seconds
 	return Designed({ Air }, true);
 }
@@ -547,41 +549,51 @@ SoundEffect BirdsFor(double Seconds, const SoundKindOptions &Options)
 	return Designed(Layers, true, Seconds, Options.Seed);
 }
 
-// Waves on a shore, Seconds long: each draws in, rising and brightening, breaks at its top and washes back, darkening,
-// with a little fizz; never quite silent, so the surf goes on. Small: water lapping, quicker and softer
+// Waves as add_ambience draws them (Ambience.cpp, Bobber on the Bay's technique, which the user found fine in Night
+// Harbor, where the earlier surf of gliding noise sounded "a bit weird"): each wave swells in at one noise pitch and,
+// at its top, sinks away two steps darker, a bigger and a smaller in turn (the smaller the bigger's shape under a lower
+// volume column, so all the waves share two instruments), each a step brighter or darker than the one before. Seconds
+// long, in whole waves. Small: water lapping, quicker, brighter and softer
+const int SURF_IN_TICKS = 72, SURF_WAVE_TICKS = 225, LAP_IN_TICKS = 26, LAP_WAVE_TICKS = 80;
 SoundEffect Surf(double Seconds, int Seed, bool Small)
 {
 	Random R(static_cast<unsigned int>(Seed) * 104729u + (Small ? 5u : 3u));
-	const double Each = Small ? 1.3 : 3.2;
-	const int Count = std::max(1, static_cast<int>(std::floor(Seconds / Each + 0.5)));
-	std::vector<double> Lengths;
-	double Sum = 0.0;
+	const int Wave = Small ? LAP_WAVE_TICKS : SURF_WAVE_TICKS, InTicks = Small ? LAP_IN_TICKS : SURF_IN_TICKS;
+	const int Ticks = std::max(12, Round(Seconds * 60.0));
+	const int Count = std::max(1, Round(static_cast<double>(Ticks) / Wave)), Each = Ticks / Count;
+	const int In = std::min(InTicks, Each / 3), Away = Each - In;
+	const int Top = Small ? 8 : 11;
+	std::vector<int> Swell, Sink;
+	for (int t = 0; t < In; ++t)
+		Swell.push_back(std::max(1, std::min(Top, Round(1.0 + (Top - 1.0) * std::pow(t / std::max(1.0, In - 1.0), 1.4)))));
+	for (int t = 0; t < Away; ++t)
+		Sink.push_back(std::max(1, Round(Top * std::pow(1.0 - t / std::max(1.0, Away - 1.0), 1.6))));	// never quite silent
+	static const int WAVE_PITCHES[] = { 8, 7, 9, 8, 7, 8 }, LAP_PITCHES[] = { 10, 9, 11, 10, 11, 9 };
+	static const int WAVE_COLUMNS[] = { 15, 11 }, LAP_COLUMNS[] = { 15, 11, 13, 10 };
+	SfxLayer Layer;
+	Layer.channel = NOISE;
 	for (int i = 0; i < Count; ++i) {
-		Lengths.push_back(0.75 + 0.5 * R.Unit());
-		Sum += Lengths.back();
+		const int Pitch = (Small ? LAP_PITCHES : WAVE_PITCHES)[(i + static_cast<int>(R.Unit() * 2.0)) % 6];
+		const int Column = Small ? LAP_COLUMNS[i % 4] : WAVE_COLUMNS[i % 2];
+		for (int t = 0; t < In; ++t) {
+			Layer.volume.push_back(SfxColumnVolume(Swell[static_cast<size_t>(t)], Column));
+			Layer.pitch.push_back(Pitch);
+			Layer.duty.push_back(0);
+		}
+		for (int t = 0; t < Away; ++t) {
+			Layer.volume.push_back(SfxColumnVolume(Sink[static_cast<size_t>(t)], Column));
+			Layer.pitch.push_back(Pitch - 2);
+			Layer.duty.push_back(0);
+		}
 	}
-	std::vector<SfxLayerDesign> Layers;
-	const int Low = Small ? 2 : 3, Ticks = std::max(Count * 8, Round(Seconds * 60.0));
-	double Sofar = 0.0;
-	for (int i = 0; i < Count; ++i) {
-		// In whole ticks, so each wave's two layers meet the next's exactly
-		const int From = Round(Ticks * Sofar / Sum);
-		Sofar += Lengths[static_cast<size_t>(i)];
-		const int To = Round(Ticks * Sofar / Sum), Mid = From + std::max(1, Round((To - From) * 0.4));
-		const double At = From / 60.0, Length = (To - From) / 60.0, In = (Mid - From) / 60.0;
-		const double Size = 0.7 + 0.3 * R.Unit();
-		const int Top = std::max(Low + 2, static_cast<int>(std::floor((Small ? 7 : 10) * Size + 0.5)));
-		SfxLayerDesign Draw = Layer(NOISE, At, In, Small ? 5 : 4, Small ? 8 : 7, Low, SFX_HELD);
-		Draw.VolumeTo = Top;
-		Draw.Glide = SFX_GLIDE_SLOW;
-		SfxLayerDesign Wash = Layer(NOISE, At + In, Length - In, Small ? 9 : 9, Small ? 6 : 4, Top, SFX_HELD);
-		Wash.VolumeTo = Low;
-		Wash.Glide = SFX_GLIDE_FAST;
-		Wash.Crackle = 0.25;
-		Layers.push_back(Draw);
-		Layers.push_back(Wash);
+	while (Layer.length() < Ticks) {	// the ticks a wave's whole count leaves over: silent
+		Layer.volume.push_back(0);
+		Layer.pitch.push_back(Layer.pitch.back());
+		Layer.duty.push_back(0);
 	}
-	return Designed(Layers, true, Ticks / 60.0, Seed);
+	SoundEffect Sound;
+	Sound.layers.push_back(Layer);
+	return Sound;
 }
 
 SoundEffect WavesFor(double Seconds, const SoundKindOptions &Options)
@@ -594,40 +606,37 @@ SoundEffect LappingFor(double Seconds, const SoundKindOptions &Options)
 	return Surf(Seconds, Options.Seed, true);
 }
 
-SoundEffect Waves()
+SoundEffect Waves()		// a bigger wave and a smaller one
 {
-	return Surf(6.4, 1, false);
+	return Surf(2 * SURF_WAVE_TICKS / 60.0, 1, false);
 }
 
-SoundEffect Lapping()
+SoundEffect Lapping()	// four little waves
 {
-	return Surf(3.9, 1, true);
+	return Surf(4 * LAP_WAVE_TICKS / 60.0, 1, true);
 }
 
-SoundEffect Creak()		// a door creaking open: a thin pulse grinding up, then settling back down, and a dull stop
+// A door creaking open, slowly: a dry wooden groan low on a thin pulse, the hinge catching and slipping in uneven grains
+// (its volume, not its pitch: the earlier creak's climb of seven semitones and its vibrato sounded "too goofy"), its pitch
+// drifting a semitone or two, then easing to rest, and a dull stop
+SoundEffect Creak()
 {
-	SfxLayerDesign Open = Layer(PULSE, 0.0, 0.55, 41, 48, 8, SFX_HELD);
-	Open.VolumeTo = 11;
-	Open.Glide = SFX_GLIDE_SLOW;
-	Open.Vibrato = 1.2;
-	Open.VibratoHz = 7.0;
-	Open.Flutter = 22.0;
-	Open.Rough = true;
-	Open.Duty = 0;
-	SfxLayerDesign Settle = Open;
-	Settle.Start = 0.55;
-	Settle.Seconds = 0.45;
-	Settle.Pitch = 48;
-	Settle.PitchTo = 44;
-	Settle.Volume = 11;
-	Settle.VolumeTo = 5;
-	Settle.Glide = SFX_GLIDE_EVEN;
-	Settle.Vibrato = 1.8;
-	Settle.VibratoHz = 5.0;
-	Settle.Flutter = 18.0;
-	Settle.Envelope = SFX_STEADY;
-	SfxLayerDesign Stop = Layer(NOISE, 1.0, 0.08, 4, -1, 8, SFX_HIT);
-	return Designed({ Open, Settle, Stop }, false);
+	Random R(3u);
+	Maker Groan(PULSE);
+	Groan.Duty(0);
+	const int Ticks = 84;	// 1.4 s
+	for (int t = 0; t < Ticks; ++t) {
+		const double x = t / (Ticks - 1.0);
+		// Swelling in over a fifth of it and easing out over the last third
+		const double Level = std::min(1.0, x / 0.2) * std::min(1.0, (1.0 - x) / 0.35 + 0.15);
+		// A grain every two to four ticks: the hinge catching (loud) and slipping (soft)
+		const double Grain = (t % 3 == 0 || R.Unit() < 0.25) ? 1.0 : 0.45 + 0.2 * R.Unit();
+		const double Pitch = 34.0 + 1.5 * std::sin(PI * std::min(1.0, x * 1.3)) - 0.5 * x;	// A#2 up to about C-3 and back
+		Groan.Go(1, std::max(1.0, 9.0 * Level * Grain), std::max(1.0, 9.0 * Level * Grain), Pitch, Pitch);
+	}
+	Maker Stop(NOISE, Ticks + 2);
+	Stop.Go(2, 8, 6, 3, 3).Go(4, 5, 1, 2, 2);
+	return Effect(Groan, Stop);
 }
 
 // One step on a surface: the kind's own soft tap on dirt, a hollow tok on wood, a brush on grass...
@@ -637,17 +646,20 @@ SoundEffect StepOn(const std::string &Surface, int Start)
 		return Effect(Maker(TRIANGLE, Start).Go(3, 15, 15, 57, 50, 0.6), Maker(NOISE, Start).Go(2, 8, 5, 9, 9).Rest(1).Go(3, 4, 1, 6, 6));
 	if (Surface == "grass")	// a soft, high brush and a small crunch, no thump
 		return Effect(Maker(NOISE, Start).Go(2, 4, 7, 12, 12).Go(3, 7, 2, 12, 11).Rest(2).Go(3, 4, 1, 11, 11));
-	if (Surface == "stone")	// a short bright click, and a little grit
-		return Effect(Maker(NOISE, Start).Go(1, 9, 9, 11, 11).Go(3, 6, 1, 9, 9));
-	if (Surface == "snow")	// a soft, rough crunch
-		return Effect(Maker(NOISE, Start).Go(3, 3, 7, 10, 10).Go(6, 7, 1, 10, 8).Rough(1.0));
+	if (Surface == "stone")	// a hard heel's click: sharp and bright at once, then a little grit (the softer click was weaker
+		// than the other surfaces)
+		return Effect(Maker(NOISE, Start).Go(1, 13, 13, 13, 13).Go(1, 10, 10, 12, 12).Go(3, 5, 1, 10, 9));
+	if (Surface == "snow")	// a soft, muffled crunch, dark and short (the brighter, longer one sounded too loud beside the others)
+		return Effect(Maker(NOISE, Start).Go(2, 2, 4, 8, 8).Go(4, 4, 1, 8, 7).Rough(1.0));
 	if (Surface == "sand")	// a duller, softer crunch
 		return Effect(Maker(NOISE, Start).Go(3, 2, 5, 8, 8).Go(6, 5, 1, 8, 7).Rough(1.0));
 	if (Surface == "water")	// a splashy step: wet noise falling away and a small bloop
 		return Effect(Maker(NOISE, Start).Go(2, 8, 8, 11, 11).Go(8, 7, 1, 11, 8, 0.8, 0.6).Rough(1.0),
 			Maker(PULSE, Start + 1).Duty(2).Go(4, 4, 1, 50, 57, 0.6));
-	if (Surface == "metal")	// a ringing clank on the noise's metallic mode
-		return Effect(Maker(NOISE, Start).Duty(1).Go(1, 9, 9, 9, 9).Go(7, 7, 1, 9, 9));
+	if (Surface == "metal")	// a bright "bling": a tick of bright noise for the heel and a high, thin ring dying away quickly (the
+		// noise's metallic mode buzzed, as if the player were shocked on every step)
+		return Effect(Maker(PULSE, Start).Duty(1).Go(1, 9, 9, 76, 76).Go(10, 7, 1, 76, 76, 1.0, 0.6),
+			Maker(NOISE, Start).Go(1, 6, 6, 14, 14).Go(1, 2, 2, 13, 13));
 	return Effect(Maker(NOISE, Start).Go(4, 7, 1, 9, 8));	// dirt: a tiny soft tap
 }
 
@@ -703,17 +715,20 @@ SoundEffect Gust()		// one gust: wind swelling in and brightening, then falling 
 	return Designed({ Rise, Fall }, false);
 }
 
-// A howling wind, Seconds long: the dark rush of wind in gusts, and over it a moan, a quiet pulse whose pitch wanders slowly
-// (never across a multiple of 256 in its period, so it doesn't click)
+// A howling wind, Seconds long: wind in long, slow gusts, its noise rising brighter as each one howls and sinking dark
+// again, all breath (the quiet pulse that moaned over it played a "goofy note", a tune where the user wanted air)
 SoundEffect HowlFor(double Seconds, const SoundKindOptions &Options)
 {
 	SfxLayerDesign Air = Layer(NOISE, 0.0, Seconds, 5, -1, 9, SFX_STEADY);
-	Air.Gusts = std::max(1, Round(0.75 * Seconds));
-	SfxLayerDesign Moan = Layer(PULSE, 0.0, Seconds, 52, -1, 4, SFX_STEADY);
-	Moan.Gusts = std::max(1, Round(0.5 * Seconds));
-	Moan.Vibrato = 2.5;
-	Moan.VibratoHz = 0.3;
-	return Designed({ Air, Moan }, true, 0.0, Options.Seed);
+	Air.Gusts = std::max(1, Round(0.4 * Seconds));
+	SoundEffect Out = Designed({ Air }, true, 0.0, Options.Seed);
+	// Wider than wind's: the pitch swings another three steps with the gust (its volume says where the gust is)
+	for (size_t l = 0; l < Out.layers.size(); ++l) {
+		SfxLayer &L = Out.layers[l];
+		for (size_t t = 0; t < L.pitch.size() && t < L.volume.size(); ++t)
+			L.pitch[t] = std::max(1.0, std::min(10.0, L.pitch[t] + 3.0 * (L.volume[t] / 9.0 - 0.5)));
+	}
+	return Out;
 }
 
 SoundEffect Howl()
@@ -809,19 +824,44 @@ SoundEffect Emerge()	// out of the water: a rising rush as the body comes up, wa
 	return Designed({ Rush, Stream, Drop1, Drop2 }, false);
 }
 
-// Bubbles rising: Count bloops (the kind's six) at uneven times, each a quick slide up at a pitch of its own
+// A bubble: a quick bloop up the scale in whole semitones (a glide between them would give each pitch an instrument of its
+// own), at Column's share of its level, so every bubble of a sound plays one instrument
+void Bloop(SfxLayer &Lane, int At, int Pitch, int Column)
+{
+	static const int STEPS[] = { 0, 2, 4, 5, 7 }, LEVELS[] = { 6, 8, 7, 5, 3 };
+	while (Lane.length() < At) {
+		Lane.volume.push_back(0);
+		Lane.pitch.push_back(Lane.pitch.empty() ? Pitch : Lane.pitch.back());
+		Lane.duty.push_back(2);
+	}
+	for (int i = 0; i < 5; ++i) {
+		Lane.volume.push_back(SfxColumnVolume(LEVELS[i], Column));
+		Lane.pitch.push_back(Pitch + STEPS[i]);
+		Lane.duty.push_back(2);
+	}
+}
+
+// Bubbles rising: Count bloops (the kind's four; six were "too many, too active") at uneven times, now and then two close
+// together, each at a pitch and a loudness of its own
+const int BUBBLE_COUNT = 4;
 SoundEffect BubblesWith(const SoundKindOptions &Options)
 {
-	const int Count = Options.Count > 0 ? std::min(24, Options.Count) : 6;
+	const int Count = Options.Count > 0 ? std::min(24, Options.Count) : BUBBLE_COUNT;
 	Random R(static_cast<unsigned int>(Options.Seed) * 32452843u + 7u);
-	Maker M(PULSE);
-	M.Duty(2);
+	static const int COLUMNS[] = { 15, 11, 13, 9 };
+	SfxLayer Lane;
+	Lane.channel = PULSE;
+	int At = 0;
 	for (int i = 0; i < Count; ++i) {
-		const double Pitch = 50 + std::floor(12 * R.Unit());
-		const int Volume = 7 + static_cast<int>(3 * R.Unit());
-		M.Go(3, Volume, Volume / 2, Pitch, Pitch + 5, 0.6).Rest(2 + static_cast<int>(8 * R.Unit()));
+		Bloop(Lane, At, 50 + static_cast<int>(12 * R.Unit()), COLUMNS[i % 4]);
+		At += R.Unit() < 0.3 ? 7 + static_cast<int>(3 * R.Unit()) : 12 + static_cast<int>(14 * R.Unit());
 	}
-	return Effect(M);
+	Lane.volume.push_back(0);
+	Lane.pitch.push_back(Lane.pitch.back());
+	Lane.duty.push_back(2);
+	SoundEffect Out;
+	Out.layers.push_back(Lane);
+	return Out;
 }
 
 SoundEffect Bubbles()
@@ -829,32 +869,42 @@ SoundEffect Bubbles()
 	return BubblesWith(SoundKindOptions());
 }
 
-// Underwater, Seconds long: bubbles here and there over a faint, dark murmur
+// Underwater, Seconds long: a bubble now and then, at uneven times (a second to two apart, now and then two close
+// together), Count of them in four seconds (the kind's three); no murmur of noise under them (the user heard it as "noise in
+// the background which is weird")
+const int BUBBLES_IN_FOUR_SECONDS = 3;
 SoundEffect BubblesFor(double Seconds, const SoundKindOptions &Options)
 {
 	const int Ticks = std::max(30, Round(Seconds * 60.0));
-	SoundKindOptions Many = Options;
-	Many.Count = std::max(1, Round(Seconds * (Options.Count > 0 ? Options.Count : 6) / 1.5));
-	SoundEffect Out = BubblesWith(Many);
-	transcribe::SfxLayer &B = Out.layers[0];
-	while (B.length() < Ticks) {
-		B.volume.push_back(0);
-		B.pitch.push_back(B.pitch.back());
-		B.duty.push_back(B.duty.back());
+	const double Every = 240.0 / (Options.Count > 0 ? std::min(16, Options.Count) : BUBBLES_IN_FOUR_SECONDS);
+	Random R(static_cast<unsigned int>(Options.Seed) * 32452843u + 13u);
+	static const int COLUMNS[] = { 15, 10, 13, 8, 12 };
+	SfxLayer Lane;
+	Lane.channel = PULSE;
+	int i = 0;
+	for (int At = Round(20 * R.Unit()); At + 6 <= Ticks; ++i) {
+		Bloop(Lane, At, 50 + static_cast<int>(12 * R.Unit()), COLUMNS[i % 5]);
+		if (R.Unit() < 0.25 && At + 22 <= Ticks) {	// another close behind it
+			At += 8 + static_cast<int>(4 * R.Unit());
+			Bloop(Lane, At, 50 + static_cast<int>(12 * R.Unit()), COLUMNS[(i + 2) % 5]);
+		}
+		At += std::max(12, Round(Every * (0.45 + 0.7 * R.Unit())));
 	}
-	B.volume.resize(static_cast<size_t>(Ticks));
-	B.pitch.resize(static_cast<size_t>(Ticks));
-	B.duty.resize(static_cast<size_t>(Ticks));
-	SfxLayerDesign Murmur = Layer(NOISE, 0.0, Ticks / 60.0, 2, -1, 2, SFX_STEADY);
-	Murmur.Gusts = std::max(1, Round(0.5 * Seconds));
-	const SoundEffect Bed = Designed({ Murmur }, true, 0.0, Options.Seed);
-	if (!Bed.layers.empty())
-		Out.layers.push_back(Bed.layers[0]);
+	while (Lane.length() < Ticks) {
+		Lane.volume.push_back(0);
+		Lane.pitch.push_back(Lane.pitch.empty() ? 50.0 : Lane.pitch.back());
+		Lane.duty.push_back(2);
+	}
+	Lane.volume.resize(static_cast<size_t>(Ticks));
+	Lane.pitch.resize(static_cast<size_t>(Ticks));
+	Lane.duty.resize(static_cast<size_t>(Ticks));
+	SoundEffect Out;
+	Out.layers.push_back(Lane);
 	return Out;
 }
 
-// A lantern swinging on a chain, Seconds long: a thin squeak each way, the second lower, and a faint metallic clink where it
-// turns; each swing a little unlike the one before
+// A lantern swinging on a chain, Seconds long: a thin squeak each way, the second lower; each swing a little unlike the one
+// before (the clink where it turned, a tick of the noise's metallic mode, was heard as "one blip note" after each squeak)
 SoundEffect ChainFor(double Seconds, const SoundKindOptions &Options)
 {
 	Random R(static_cast<unsigned int>(Options.Seed) * 49979687u + 3u);
@@ -874,11 +924,8 @@ SoundEffect ChainFor(double Seconds, const SoundKindOptions &Options)
 		Back.Pitch = 64 + Shift;
 		Back.PitchTo = 62 + Shift;
 		Back.Volume = 6;
-		SfxLayerDesign Clink = Layer(NOISE, At + 0.4 * Each, 0.06, 11, -1, 5, SFX_HIT);
-		Clink.Duty = 1;
 		Layers.push_back(Out);
 		Layers.push_back(Back);
-		Layers.push_back(Clink);
 	}
 	return Designed(Layers, true, Seconds, Options.Seed);
 }
@@ -888,22 +935,25 @@ SoundEffect Chain()
 	return ChainFor(3.2, SoundKindOptions());
 }
 
-// Entering a cave: a low, dark swell of air and a deep moan, and a drop falling far off, echoing
+// Entering a cave: the open air outside (a brighter breeze) fading as it darkens into the cave's low, hollow hush, which
+// swells and dies away, and one drop falling far off with its echo coming back twice, fainter (the earlier deep moan on a
+// pulse left the user wondering what it was)
 SoundEffect Cave()
 {
-	SfxLayerDesign Air = Layer(NOISE, 0.0, 2.4, 2, 3, 8, SFX_SWELL_FADE);
-	SfxLayerDesign Moan = Layer(PULSE, 0.1, 2.2, 28, 27, 5, SFX_SWELL_FADE);
-	Moan.Vibrato = 0.3;
-	Moan.VibratoHz = 3.0;
-	SfxLayerDesign Drop = Layer(TRIANGLE, 1.2, 0.07, 81, 88, 15, SFX_HIT);
+	Maker Air(NOISE);
+	Air.Go(40, 6, 3, 9, 4, 0.7).Go(50, 3, 7, 3, 2, 1.0).Hold(20, 7, 2).Go(70, 7, 0, 2, 2, 1.0, 0.7);
+	SfxLayerDesign Drop = Layer(TRIANGLE, 1.45, 0.07, 81, 88, 15, SFX_HIT);
 	Drop.Glide = SFX_GLIDE_FAST;
-	SfxLayerDesign Echo = Layer(PULSE, 1.35, 0.6, 88, 93, 4, SFX_HIT);
-	Echo.Repeats = 3;
-	Echo.Gap = 0.75;
+	SfxLayerDesign Echo = Layer(PULSE, 1.75, 0.1, 86, 88, 4, SFX_HIT);
+	Echo.Repeats = 1;
 	Echo.Glide = SFX_GLIDE_FAST;
 	Echo.Duty = 1;
-	Echo.VolumeTo = 1;
-	return Designed({ Air, Moan, Drop, Echo }, false);
+	SfxLayerDesign Again = Echo;
+	Again.Start = 2.1;
+	Again.Volume = 2;
+	SoundEffect Out = Designed({ Drop, Echo, Again }, false);
+	Out.layers.insert(Out.layers.begin(), Air.Make());
+	return Out;
 }
 
 SoundEffect Outfit()	// changing an outfit: a soft cloth swish twice, then a little sparkle rising and ringing
@@ -1030,12 +1080,12 @@ std::vector<SoundEffectKind> MakeKinds()
 	All.push_back(Kind("lapping", "small waves lapping at a dock or a lake's edge, softer and quicker (loops)", { "water lapping",
 		"lapping water", "lake", "pond", "dock", "pier", "ripples", "gentle waves", "small waves" }, Lapping, true));
 	All.back().MakeLong = LappingFor;
-	All.push_back(Kind("creak", "a door creaking open: a thin grinding pulse up and settling down, and a dull stop", { "door creak",
+	All.push_back(Kind("creak", "a door creaking open slowly: a dry, low wooden groan and a dull stop", { "door creak",
 		"creaking", "creaking door", "creaky door", "creaky", "open door", "door opening", "opening door", "hinge", "creaky hinge",
 		"squeaky door", "floorboard", "creaking floor" }, Creak));
 	All.push_back(Kind("gust", "one gust of wind swelling in and falling away (plays once; wind loops)", { "gust of wind",
 		"wind gust", "gusts", "a gust", "puff of wind", "blast of wind" }, Gust));
-	All.push_back(Kind("howl", "a howling wind: the rush of wind with a low moan wandering over it (loops)", { "howling wind",
+	All.push_back(Kind("howl", "a howling wind: long, slow gusts of air rising brighter as each one howls (loops)", { "howling wind",
 		"wind howling", "wind howl", "howling", "moaning wind", "blizzard", "cave wind", "wind in a cave", "wind in cave",
 		"haunted wind", "ghostly wind", "storm wind" }, Howl, true));
 	All.back().MakeLong = HowlFor;
@@ -1054,11 +1104,12 @@ std::vector<SoundEffectKind> MakeKinds()
 	All.back().MakeWith = BubblesWith;
 	All.back().MakeLong = BubblesFor;
 	All.back().Counts = "bubbles";
-	All.push_back(Kind("chain", "a lantern swinging on a chain: a thin squeak each way and a faint clink (loops)", { "chains",
+	All.push_back(Kind("chain", "a lantern swinging on a chain: a thin squeak each way (loops)", { "chains",
 		"chain creak", "chain squeak", "squeaking chain", "squeaky chain", "creaking chain", "lantern", "swinging lantern",
 		"hanging lantern", "rusty chain", "squeak", "squeaking" }, Chain, true));
 	All.back().MakeLong = ChainFor;
-	All.push_back(Kind("cave", "entering a cave: a low, dark swell of air, a deep moan and a drop echoing far off", {
+	All.push_back(Kind("cave", "entering a cave: the open air outside fading into a low, hollow hush, and one drop falling far off, "
+		"its echo coming back", {
 		"cave entrance", "enter cave", "entering cave", "entering a cave", "cavern", "into the cave", "underground", "mine entrance",
 		"dungeon entrance", "enter the cave" }, Cave));
 	All.push_back(Kind("outfit", "changing an outfit: a soft cloth swish twice and a little sparkle", { "outfit change",
@@ -1275,6 +1326,15 @@ void StyleSoundEffect(SoundEffect &Effect, int Style)
 	}
 }
 
+double SoundLevelOffset(const SoundEffectKind &Kind, const SoundKindOptions &Options)
+{
+	if (Kind.Name == "wind" || Kind.Name == "howl")	// a bed of air: the user heard the realistic wind at -24 LUFS as "too loud"
+		return -4.0;
+	if (Kind.Name == "footstep" && Options.Surface == "snow")	// at -18 LUFS beside the other steps "too loud"
+		return -3.0;
+	return 0.0;
+}
+
 std::string SoundEffectNames()
 {
 	std::string Names;
@@ -1481,6 +1541,59 @@ std::vector<SfxLayer> SoundPieces(const SfxLayer &Layer, int Period)
 		}
 		if (Sounds)
 			Out.push_back(P);
+	}
+	return Out;
+}
+
+int SfxColumnVolume(int Volume, int Column)
+{
+	return Volume <= 0 || Column <= 0 ? 0 : std::max(1, Volume * Column / 15);
+}
+
+std::vector<SfxLayer> SoundEvents(const SfxLayer &Layer)
+{
+	std::vector<SfxLayer> Out;
+	const int N = Layer.length(), Most = MaxSoundTicks(true);
+	auto HeldFrom = [&](int From, int End) {	// ticks the pitch stays as it is at From
+		int k = From;
+		while (k < End && Layer.pitchAt(k) == Layer.pitchAt(From))
+			++k;
+		return k - From;
+	};
+	auto Add = [&](int a, int b) {
+		const int Count = (b - a + Most - 1) / Most, Piece = (b - a + Count - 1) / Count;
+		for (int From = a; From < b; From += Piece) {
+			SfxLayer P;
+			P.channel = Layer.channel;
+			P.start = Layer.start + From;
+			for (int t = From; t < std::min(b, From + Piece); ++t) {
+				P.volume.push_back(Layer.volume[static_cast<size_t>(t)]);
+				P.pitch.push_back(Layer.pitchAt(t));
+				P.duty.push_back(Layer.dutyAt(t));
+			}
+			Out.push_back(P);
+		}
+	};
+	for (int t = 0; t < N; ) {
+		if (Layer.volume[static_cast<size_t>(t)] <= 0) {
+			++t;
+			continue;
+		}
+		int End = t;
+		while (End < N && Layer.volume[static_cast<size_t>(End)] > 0)
+			++End;
+		int From = t, Run = t;
+		for (int k = t + 1; k < End; ++k) {
+			if (Layer.pitchAt(k) == Layer.pitchAt(k - 1))
+				continue;
+			if (k - Run >= SFX_HELD_PITCH_TICKS && HeldFrom(k, End) >= SFX_HELD_PITCH_TICKS) {
+				Add(From, k);
+				From = k;
+			}
+			Run = k;
+		}
+		Add(From, End);
+		t = End;
 	}
 	return Out;
 }
