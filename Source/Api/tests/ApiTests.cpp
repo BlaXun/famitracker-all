@@ -20434,6 +20434,135 @@ void SectionMelody(const FakeSong &Song, int Channel, const Section &Part, std::
 	}
 }
 
+// The development of a walk's parts (fix-r6-depth): no device of the second line (a harmony, the tune an octave under, a
+// counter-line, an echo) given in two parts, A's last of two returns or more over A's top where it has room,
+// and something sounding across the seam from an intro into A. Devices: the parts' calls, by section
+std::map<std::string, std::string> WalkDevices(const std::vector<std::string> &Made)
+{
+	std::map<std::string, std::string> Out;
+	static const char *const TOOLS[] = { "add_harmony", "add_counter_melody", "add_echo", "add_drums", "vary_part" };
+	for (size_t i = 0; i < Made.size(); ++i)
+		for (const char *Tool : TOOLS) {
+			const std::string Head = std::string(Tool) + " ";
+			Json Call;
+			if (Made[i].compare(0, Head.size(), Head) != 0 || !ParseJson(Made[i].substr(Head.size()), Call))
+				continue;
+			std::string Section = Call.Get("section") != 0 ? TextOf(&Call, "section") : std::string();
+			std::string Device = Tool;
+			if (std::string(Tool) == "add_harmony")
+				Device = Call.Get("interval") == 0 ? "harmony" : TextOf(&Call, "interval") == "octave_below" ? "octave" :
+					"harmony " + TextOf(&Call, "interval");
+			else if (std::string(Tool) == "add_counter_melody")
+				Device = "counter";
+			else if (std::string(Tool) == "add_echo")
+				Device = "echo";
+			else if (std::string(Tool) == "add_drums")
+				Device = Call.Get("intensity") != 0 && TextOf(&Call, "intensity") == "busy" ? "busier drums" : "";
+			else
+				Device = TextOf(&Call, "variation") == "octave_up" ? "climbs" : TextOf(&Call, "variation") == "rest" ?
+					"chords rest" : "";
+			if (Device.empty() || Section.empty())
+				continue;
+			Out[Section] += (Out[Section].empty() ? "" : ", ") + Device;
+		}
+	return Out;
+}
+
+void CheckDevelopment(const FakeSong &Song, const std::vector<std::string> &Made, const std::string &What, int Line)
+{
+	const int Melody = WalkMelody(Song, Made);
+	const Section *pA = 0, *pPeak = 0, *pIntro = 0;
+	int Returns = 0;
+	for (const Section &Part : Song.Info.Sections) {
+		if (Part.Name == "A" && pA == 0)
+			pA = &Part;
+		if (Part.Name == "Intro" && Part.First == 0)
+			pIntro = &Part;
+		if (Part.Name == "Climax" && pPeak == 0)
+			pPeak = &Part;
+	}
+	if (Melody < 0 || pA == 0)
+		return;
+	if (pPeak == 0)
+		for (const Section &Part : Song.Info.Sections)
+			if (&Part != pA && Part.Name.size() > 1 && Part.Name[0] == 'A' && Part.Name.find_first_not_of("'", 1) == std::string::npos) {
+				++Returns;
+				pPeak = &Part;
+			}
+	// (A's last of two returns or more: a climax with a tune of its own peaks as it likes, as the kept MudCave's does; the
+	// walks' climaxes climb by their grown tunes, CheckMelodyContrast)
+	if (pPeak != 0 && pPeak->Name != "Climax" && Returns >= 2) {
+		// (the top line: the melody, or a line over it on a channel A doesn't play; where an octave up would pass E-5,
+		// CLIMAX_TOP, and no channel is free there for a line over it, A has the song's peak already)
+		std::vector<std::pair<int, int> > Opening;
+		int ATop = -1, Top = -1, Free = 0;
+		SectionMelody(Song, Melody, *pA, Opening, ATop);
+		SectionMelody(Song, Melody, *pPeak, Opening, Top);
+		for (size_t c = 0; c < Song.Info.Channels.size(); ++c) {
+			const channel_kind Kind = static_cast<channel_kind>(Song.Info.Channels[c].Kind);
+			if (static_cast<int>(c) == Melody || Kind == KIND_TRIANGLE || Kind == KIND_NOISE || Kind == KIND_DPCM)
+				continue;
+			int InA = -1, There = -1;
+			SectionMelody(Song, static_cast<int>(c), *pA, Opening, InA);
+			SectionMelody(Song, static_cast<int>(c), *pPeak, Opening, There);
+			if (InA < 0)
+				Top = std::max(Top, There);
+			Free += There < 0 ? 1 : 0;
+		}
+		if (ATop + 12 <= 64 || (Free > 0 && ATop <= 64))
+			Check(Top > ATop, (What + ": " + pPeak->Name + "'s top " + PitchName(Top) + " over A's " + PitchName(ATop)).c_str(), Line);
+	}
+	// No line device twice
+	const std::map<std::string, std::string> Devices = WalkDevices(Made);
+	std::map<std::string, std::string> Where;
+	for (std::map<std::string, std::string>::const_iterator it = Devices.begin(); it != Devices.end(); ++it) {
+		std::string Item;
+		std::stringstream Words(it->second);
+		while (std::getline(Words, Item, ',')) {
+			while (!Item.empty() && Item[0] == ' ')
+				Item.erase(0, 1);
+			if (Item == "chords rest" || Item == "climbs" || Item == "busier drums")
+				continue;
+			const std::map<std::string, std::string>::const_iterator Before = Where.find(Item);
+			Check(Before == Where.end(), (What + ": " + Item + " in " + (Before == Where.end() ? std::string() : Before->second) +
+				" and " + it->first).c_str(), Line);
+			Where[Item] = it->first;
+		}
+	}
+	// The seam: a channel sounding in the intro's last bar and in A's first (a note ringing across counts)
+	if (pIntro != 0 && pIntro->Last + 1 == pA->First) {
+		const int PL = Song.Info.PatternLength, Bar = Song.Info.SecondHighlight > 0 ? Song.Info.SecondHighlight : PL;
+		const int Seam = pA->First * PL;
+		// (a channel sounds on a row where its last note before it, at or after its last end, has a volume)
+		auto Sounds = [&](size_t c, int Row) {
+			for (int r = Row; r >= 0; --r) {
+				const Cell &C = Song.Rows[c][static_cast<size_t>(r)];
+				if (C.IsEnd())
+					return false;
+				if (C.HasNote())
+					return C.Volume != 0;
+			}
+			return false;
+		};
+		bool Carried = false;
+		for (size_t c = 0; c < Song.Info.Channels.size() && !Carried; ++c) {
+			bool Before = false, After = false;
+			for (int r = Seam - Bar; r < Seam && !Before; ++r)
+				Before = Sounds(c, r);
+			for (int r = Seam; r < Seam + Bar && !After; ++r)
+				After = Sounds(c, r);
+			Carried = Before && After;
+		}
+		Check(Carried, (What + ": nothing carries from the intro into A").c_str(), Line);
+	}
+	if (!Environment("DEVELOP_SHOW").empty()) {
+		std::printf("%s:", What.c_str());
+		for (const Section &Part : Song.Info.Sections)
+			std::printf(" %s [%s]", Part.Name.c_str(), Devices.count(Part.Name) ? Devices.find(Part.Name)->second.c_str() : "");
+		std::printf("\n");
+	}
+}
+
 // The hook's head in every return of A (A', A'', and a climax laid out from A's music, where its rhythm opens as A's): A's
 // first three notes, on the same rows and with the same moves (fix-r4-repeats: embellish took the Caves' rising fifth out
 // of A' and A'')
@@ -20531,7 +20660,7 @@ void TestWhatNextLoop()
 		// original note for note, the intro and the break filled), the echo last of the parts, then finish_song (the polish, the
 		// mix, the seam, a listen and the file for the game in one call: no listen of its own before it), saving
 		const char *const ORDER[] = { "set_tempo", "set_key", "song_shape", "design_instrument", "add_chords_and_bass", "grow_melody",
-			"copy_bars", "add_harmony", "add_echo", "finish_song", "save_song" };
+			"copy_bars", "add_echo", "finish_song", "save_song" };
 		// (a listen after it only to hear a fix its listen gave before the file: fix-r4-finish, where the medium findings' fixes
 		// are steps too)
 		Check(CallIndex(Made, "listen") < 0 || CallIndex(Made, "listen") > CallIndex(Made, "finish_song"), K.Asked, __LINE__);
@@ -20540,8 +20669,10 @@ void TestWhatNextLoop()
 				(std::string(K.Asked) + " " + ORDER[i]).c_str(), __LINE__);
 		// The shape gave every part its place: no section named and no bars put in afterwards
 		Check(CallIndex(Made, "name_section") < 0 && CallIndex(Made, "insert_bars") < 0, K.Asked, __LINE__);
-		Check(CallIndex(Made, "vary_part") < 0 || (CallIndex(Made, "vary_part") > CallIndex(Made, "add_harmony") &&
-			CallIndex(Made, "vary_part") < CallIndex(Made, "add_echo")), K.Asked, __LINE__);
+		// (each part after A with a line of its own, never the same device twice: CheckDevelopment, fix-r6-depth; the
+		// harmony is one of the devices now, an echo the spacious kinds' first)
+		if (std::string(K.Asked) != "{}")	// (a song of the general recipe taken by default, without a seed, isn't planned)
+			CheckDevelopment(Song, Made, K.Asked, __LINE__);
 		Check((CallIndex(Made, "add_drums") >= 0) == K.Drums, K.Asked, __LINE__);
 		// Every kind's chords held as add_chords_and_bass holds them: a lively stage's struck again on a tresillo (feat-chord-
 		// rests) annoyed the user more, not less (feat-chords-room), so no recipe gives a rhythm
@@ -20575,7 +20706,7 @@ void TestWhatNextLoop()
 		// (a part of its own, B, from a hook unlike A's, and a climax's climbing over A's top: fix-melody-roles)
 		Reused += Motifs["A"] == Motifs[Other] ? 1 : 0;
 		CheckMelodyContrast(Song, Made, K.Asked, __LINE__);
-		CHECK(CallIndex(Made, "add_counter_melody") < 0);
+		// (a counter-line answering in the rests is one of the devices a part after A may get: fix-r6-depth)
 		// (up to 36: the review's tips that are steps now, a bass moving its own way bar by bar: fix-gen4-done)
 		Check(Made.size() >= 18 && Made.size() <= 36, (std::string(K.Asked) + " " + std::to_string(Made.size()) + " calls").c_str(),
 			__LINE__);
@@ -20647,7 +20778,8 @@ void TestWhatNextLoop()
 	NewSong(Plain);
 	const std::vector<std::string> Made = FollowWhatNext(Plain, "{\"kind\": \"lively\", \"skip\": [\"drums\", \"echo\", \"lead\"]}",
 		60, Finished, __LINE__);
-	CHECK(Finished && CallIndex(Made, "add_drums") < 0 && CallIndex(Made, "add_echo") < 0 && CallIndex(Made, "add_harmony") >= 0);
+	CHECK(Finished && CallIndex(Made, "add_drums") < 0 && CallIndex(Made, "add_echo") < 0 && (CallIndex(Made, "add_harmony") >= 0 ||
+		CallIndex(Made, "add_counter_melody") >= 0));
 	CHECK(Notes(Plain, 3).empty());
 	CHECK(CallIndex(Made, "grow_melody") >= 0 && CallIndex(Made, "design_instrument") < 0 &&
 		Contains(Made[static_cast<size_t>(CallIndex(Made, "grow_melody"))], "\"instrument\":\"Lead\""));	// the song's own lead
@@ -20709,16 +20841,18 @@ void TestWhatNextStates()
 		CHECK(A.Tool == "add_drums" && WriteJson(A.Arguments) == "{\"groove\":\"basic\",\"from_bar\":5,\"to_bar\":36,\"kit\":\"samples\"}");
 		CHECK_HAS(A.Text, "Done: tempo 128.6 BPM, key ");
 		CHECK_HAS(A.Text, "the form (4 parts, 32 bars), ");
-		// Skipped: the next step after it, the chords' colors (written plain before the melody), then a harmony
+		// Skipped: the next step after it, the chords' colors (written plain before the melody), then a line of A''s own (a
+		// counter-line answering in the rests: fix-r6-depth)
 		const WhatNextAnswer Colors = AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"drums\"]}");
 		CHECK(Colors.Tool == "polish");
 		CHECK_HAS(Colors.Text, "The chords were written plain, before the melody");
 		CHECK_HAS(WriteJson(Colors.Arguments), "\"touches\":[\"colors\"],\"colors\":\"add\"");
-		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"drums\", \"colors\"]}").Tool == "add_harmony");
+		const std::string Line = AskWhatNext(Song, "{\"kind\": \"lively\", \"skip\": [\"drums\", \"colors\"]}").Tool;
+		CHECK(Line == "add_counter_melody" || Line == "add_echo");
 		CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
 		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool == "polish");
 		CHECK(!Run(Song, Colors.Tool.c_str(), WriteJson(Colors.Arguments)).IsError);
-		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool == "add_harmony");
+		CHECK_EQ(AskWhatNext(Song, "{\"kind\": \"lively\"}").Tool, Line);
 	}
 	// Notes that click: one polish nudges them all
 	{
@@ -26853,7 +26987,12 @@ void TestWhatNextListens()
 	// The melody's notes with a vibrato far too deep, heard as FamiTracker plays it: finish_song's listen hears it, and its
 	// fix comes next, though nothing is left to finish
 	Song.ChipPitches = true;
-	for (size_t r = 0; r < Song.Rows[5].size(); ++r)
+	// (in the loop: the intro's pickup, fix-r6-depth, left with it would set it where the fix doesn't reach, a seam of its own)
+	size_t Loop = 0;
+	for (const Section &Part : Song.Info.Sections)
+		if (Part.Name == "Intro" && Part.First == 0)
+			Loop = static_cast<size_t>((Part.Last + 1) * Song.Info.PatternLength);
+	for (size_t r = Loop; r < Song.Rows[5].size(); ++r)
 		if (Song.Rows[5][r].HasNote() && Song.Rows[5][r].Effect[0] == EFF_NONE) {
 			Song.Rows[5][r].Effect[0] = EFF_VIBRATO;
 			Song.Rows[5][r].Param[0] = 0x6F;
@@ -29824,6 +29963,7 @@ void TestKindPools()
 			const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 60, Finished, __LINE__);
 			Check(Finished && Song.Info.Seed != 0, (Asked + " " + Name).c_str(), __LINE__);
 			CheckHookHeads(Song, Made, Asked + " " + Name, __LINE__);
+			CheckDevelopment(Song, Made, Asked + " " + Name, __LINE__);
 			const std::string Style = std::string(NextKindInfo(k).Style) == "any" ? std::string() : std::string(", \"style\": \"") +
 				NextKindInfo(k).Style + "\"";
 			const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + Style + "}").Text);
@@ -29856,6 +29996,7 @@ void TestKindPools()
 		Check(Finished, (Asked + " Brook (core)").c_str(), __LINE__);
 		CheckDoneReview(Song, Asked + " Brook (core)", __LINE__);
 		CheckHookHeads(Song, Made, Asked + " Brook (core)", __LINE__);
+		CheckDevelopment(Song, Made, Asked + " Brook (core)", __LINE__);
 	}
 }
 
@@ -30602,12 +30743,14 @@ void TestGen4Done()
 			Check(Finished, What.c_str(), __LINE__);
 			CheckDoneReview(Song, What, __LINE__);
 			CheckHookHeads(Song, Made, What, __LINE__);
+			CheckDevelopment(Song, Made, What, __LINE__);
 			// The harbor's waves under the music (feat-ambience); the others' words name no such sound (the tower's wind
 			// howls over a fight, which takes none)
 			bool Ambient = false;
 			for (size_t n = 0; n < Song.Info.Instruments.size(); ++n)
 				Ambient = Ambient || IsAmbienceName(Song.Info.Instruments[n].Name);
-			Check(Ambient == (std::string(U.Name) == "Night Harbor"), What.c_str(), __LINE__);
+			// (and the Caves' drips on the noise where no drums play, fix-r6-depth)
+			Check(Ambient == (std::string(U.Name) == "Night Harbor" || std::string(U.Name) == "The Caves"), What.c_str(), __LINE__);
 		}
 }
 
@@ -30961,7 +31104,7 @@ void TestAmbience()
 	CHECK_EQ(AmbienceOfWords("a windy cliff"), static_cast<int>(AMBIENCE_WIND));
 	CHECK_EQ(AmbienceOfWords("by the campfire"), static_cast<int>(AMBIENCE_FIRE));
 	CHECK_EQ(AmbienceOfWords("Hearthfrost by Night"), -1);	// whole words only
-	CHECK_EQ(AmbienceOfWords("a dim cave with glowing crystals"), -1);
+	CHECK_EQ(AmbienceOfWords("a dim cave with glowing crystals"), static_cast<int>(AMBIENCE_DRIPS));	// (a cave drips: fix-r6-depth)
 	CHECK(IsAmbienceName("Ambience waves in") && !IsAmbienceName("Hi-hat"));
 
 	// The harbor at night: its walk adds the waves, ends done and the review has nothing to add
@@ -31073,6 +31216,56 @@ void TestAmbience()
 		for (size_t n = 0; n < Lively.Info.Instruments.size(); ++n)
 			Check(!IsAmbienceName(Lively.Info.Instruments[n].Name), Lively.Info.Instruments[n].Name.c_str(), __LINE__);
 	}
+}
+
+// Development part by part (fix-r6-depth), on the round's three songs and the Caves on the 2A03 alone, each on two seeds,
+// on both sets: each part after A brings a device of its own (CheckDevelopment), the review then gives no tip (its
+// development tips with the others: CheckDoneReview), and the Caves get their depth without a free channel: a drone (the
+// pedal bass), an echo where the chords rest, or drips on the noise where no drums play
+void TestDevelopment()
+{
+	struct Setup {
+		const char *Name, *Chips, *Asked;
+	};
+	const Setup SETUPS[] = {
+		{ "The Caves", "none", "{\"kind\": \"mysterious\", \"about\": \"a dim cave with glowing crystals, curious rather than "
+			"scary\"}" },
+		{ "Hut in a Field", "VRC6", "{\"kind\": \"cozy\", \"about\": \"a cozy wooden hut in a sunny field, an old woman sells odds "
+			"and ends\"}" },
+		{ "Flying the Airship", "VRC6", "{\"kind\": \"adventure\", \"about\": \"flying an airship high over green fields, bright "
+			"and adventurous\"}" },
+	};
+	for (const Setup &U : SETUPS)
+		for (unsigned int Seed : { 3322503023u, 77u })
+			for (int Core = 0; Core < 2; ++Core) {
+				FakeSong Song(1);
+				NewSong(Song);
+				Song.Info.TrackName = Song.Tracks[0].Name = U.Name;
+				Song.Info.Seed = Seed;
+				CHECK(!Run(Song, "set_expansion", std::string("{\"chip\": \"") + U.Chips + "\"}").IsError);
+				bool Finished = false;
+				const std::string What = std::string(U.Name) + " seed " + std::to_string(Seed) + (Core ? " (core)" : "");
+				const std::vector<std::string> Made = FollowWhatNext(Song, U.Asked, 70, Finished, __LINE__, Core == 1);
+				Check(Finished, What.c_str(), __LINE__);
+				CheckDoneReview(Song, What, __LINE__);
+				CheckDevelopment(Song, Made, What, __LINE__);
+				if (std::string(U.Name) != "The Caves")
+					continue;
+				// The Caves' depth: the bass a drone (a note a bar or fewer, the pedal), an echo, or drips on the noise
+				bool Echo = false, Drips = false;
+				for (size_t i = 0; i < Made.size(); ++i) {
+					Echo = Echo || Made[i].compare(0, 9, "add_echo ") == 0;
+					Drips = Drips || (Made[i].compare(0, 13, "add_ambience ") == 0 && Contains(Made[i], "drips"));
+				}
+				int Bass = 0;
+				for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
+					if (Song.Info.Channels[c].Kind == KIND_TRIANGLE)
+						for (size_t r = 0; r < Song.Rows[c].size(); ++r)
+							Bass += Song.Rows[c][r].HasNote() ? 1 : 0;
+				const int Bars = static_cast<int>(Song.Rows[0].size()) / std::max(1, Song.Info.SecondHighlight);
+				Check(Echo || Drips || Bass <= Bars, (What + ": no drone, echo or drips").c_str(), __LINE__);
+				Check(Drips, (What + ": the noise drips where no drums play").c_str(), __LINE__);
+			}
 }
 
 int main()
@@ -31374,6 +31567,7 @@ int main()
 	TestGen4Balance();
 	TestAmbience();
 	TestSfxKinds();
+	TestDevelopment();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

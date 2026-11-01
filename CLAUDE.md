@@ -3021,6 +3021,77 @@ flagged. FakeSong's `ChipRounding` renders notes at their registers' pitch.
 `TestCrossChipDoubles`, `TestFinishStepsKept`, `TestMelodyVeryHigh` and
 `TestSeam` (`listen_tests`) cover them.
 
+Development part by part (from `fix-r6-depth`): of round 5's songs made by
+following `what_next`, the user heard "no depth" and, of the Caves, "everything
+from the intro is gone, not smooth"; A', A'' and the climax each got the same
+harmony a third under, A'' was never above A's top, the Caves (mysterious, the
+2A03 alone) had no drone, no echo and a fallback that sent the model in a
+circle; the songs a subagent composed freely (Hut in a Field and Flying the
+Airship, "on a completely different level") bring something into every part.
+The user's verdict on round 5's songs, before this: "fine... not exciting
+enough maybe"; this is the lever for that. `DevelopmentOf` (with `DevelopedPart` and
+`SongDevelopment` before `ReviewTool`, the function after `PartsBeside`)
+prints each body part's texture: its melodic channels, each with its role
+told by the notes alone (`DevelopRole`: chords, echo, octave double,
+harmony, else counter-line; never by the volumes, which a mix changes, so
+the steps done never fall after `finish_song`) and its sounds, and "high"
+when its top line (the lead, or a line over it) reaches `CLIMB_LEAST` (3)
+semitones over A's top; the drums and the bass stay out of the print (drums
+put in later reprinted every part). It lists what a part brings in against
+A (its lines counted against A's: harmony, counter-line, octave double,
+echo; chords resting, bass or drums changing, `Busier` drums, a new lead
+sound, climbs; its lines are melodic channels new to it against A, silent
+there or with other sounds, a bell read as the counter-line), finds parts
+that print as an earlier part of their family past A's own first return (a
+climax against any of A's) where a channel is free for a line, the peak
+(the climax, else A's last of two returns or more) and, for A's last return
+alone, whether it climbs where it has room (an octave up under
+`CLIMAX_TOP`, or a free channel for a line over it; a climax with a tune of
+its own peaks as it likes, as the kept MudCave's does), and an intro whose
+last bar shares no sounding channel with A's first. Only songs what_next
+plans (`PlannedSong`: a seed, or a kind kept; what_next asked for a kind)
+are held to it: the user's hand-made songs don't all climb (The Narrows,
+The Lamplighter's Round). The review tips each ("sounds as ... did", "should be the fullest part",
+"Nothing carries from the intro"), so `CheckDoneReview` holds every walk to
+them; the register tip leaves out a channel's bars where it plays such a
+line (`HarmonyVoice` takes a third over the tune too), and the lively
+"chords cover the melody" part check leaves out intros, breaks and outros,
+where a pickup or a bell is all the melody plays. `WhatNext::Develop` (in
+`Depth`, the "second line" milestone, step id `second_line`; it replaced the
+repeat's harmony and calm's last-repeat harmony) gives the first part that
+needs one a device from the kind's palette that no other part has
+(`SPACIOUS`: echo first, the chords resting there first when no channel is
+free, never at the peak, which keeps its chords; `SOFT`: a harmony, then a counter-line answering in
+the rests, a bell on a pulse, then an echo, no octave double, which a calm
+mix weighs as a chord layer; `BAND`: a counter-line, an echo, the tune an
+octave under, the harmony kept for the peak), the peak climbing first
+(`vary_part` `octave_up` over the part, its second half or last quarter,
+else `add_harmony` `third_above`) and combining two lines (a stage's: the
+harmony, then the tune an octave under, else a fifth (read as a double too)
+or a sixth under, and
+busier drums where they lift two hits a bar), each tried on a dry run on up
+to three channels free of note starts (`FreeChannels`; `StandIn` a sound for
+calls that would add one; `TryWriteHearing` runs `add_counter_melody`,
+`add_echo` and `add_drums` now), none from a tool the small set lacks.
+`WhatNext::Climax` takes the octave under where another part has the
+harmony, and `Doubled` any free channel of the melody's chip after the
+sawtooth. The intro gets the lead's pickup in its last bar (`PickupLine`,
+shared with the short closing break: the bar that leads into A in the loop,
+else A's or a return's last), else A's first bar of bass where nothing
+carries across; every break of four bars or more (or before more of the
+body) gets `BreakSound`'s bell. `Echo` counts an echo in one part and its
+fallback says one thing; `add_ambience` has `drips` (`AMBIENCE_DRIPS`,
+appended: a plip a bar on an eighth, cave words) and `around_drums`
+(stretches around the noise's drum bars, those bars kept), and
+`WhatNext::Ambience` gives a mysterious or atmospheric song drips without
+place words, around its drums where four bars or more rest.
+`song_file_checks` fails a kept song with a development tip or step.
+`TestDevelopment`
+(the Caves on the 2A03 alone, the Hut and the Airship, two seeds, both sets)
+and `CheckDevelopment` in `TestKindPools`' and `TestGen4Done`'s walks (no line
+device in two parts, the peak over A's top where it has room, a part sounding
+across the intro's seam) cover it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
