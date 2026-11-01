@@ -60,6 +60,49 @@ struct StudySound {
 		ModDepth(0), ModDelay(0) {}
 };
 
+// A stretch of a track, for how its texture changes (feat-like-reference): the intro, then the loop's four-bar phrases
+// as the form letters them (or four-bar blocks of a track without a form)
+struct StudyBlock {
+	int FirstBar, Bars;				// from the first bar line, from 0
+	std::string Name;				// "intro", or the phrase's letter in the form ("A", "B", "A'"; "-" where the lead rests), or ""
+	std::vector<std::string> Parts;	// what plays in it, of "lead", "bass", "chords", "second", "echo", "drums", "noise layer"
+	int Top;						// the lead's highest note in it, -1 when it rests
+	int Notes;						// the notes and hits every channel starts in it (how full it is)
+	StudyBlock() : FirstBar(0), Bars(4), Top(-1), Notes(0) {}
+};
+
+// How a track is built beyond its sounds and its harmony, in the tools' terms, so a song can be made like it
+// (feat-like-reference): how the lead's opening motif comes back, which parts play in each stretch (when the chord part
+// rests), where the peak is, the styles add_chords_and_bass and add_drums would play it in, and a noise layer apart from
+// the drums (an ambience). The melodies themselves aren't kept.
+struct StudyPlan {
+	bool Has;						// worked out (false for a study without a lead or bars)
+	int MotifNotes;					// the lead's opening motif: its notes (3-6) that come back in their rhythm; 0 when none does
+	int MotifReturns;				// how often it comes back after the opening
+	int MotifShaped;				// of those, in its shape too (as written, or moved: the same moves)
+	double RhythmReturn;			// the share of the lead's bars (after its first) whose rhythm an earlier bar had
+	double ShapeReturn;				// ... whose rhythm and moves (the shape) an earlier bar had
+	int LeadLow, LeadHigh;			// the lead's range
+	std::vector<StudyBlock> Blocks;
+	int PeakBar, PeakNote;			// the lead's highest note in the loop (or the track) and the bar it first plays in; -1 for none
+	int Fullest;					// the block with the most parts (then the most notes), -1 for none
+	std::string ChordChannel;		// the channel playing the chords, "" for none
+	std::string ChordStyle;			// add_chords_and_bass's style it plays them in: "arpeggio", "stabs", "lush", "broken", "guide"; "" none
+	std::string BassStyle;			// add_chords_and_bass's bass_style: "roots", "root_fifth", "half", "octaves", "walking", "arpeggio",
+									// "driving", "pedal", "syncopated"; "" for no bass
+	std::string Groove;				// add_drums's groove: "basic", "four_on_floor", "driving", "calm", "half_time", "waltz", "march"; "" none
+	std::string Intensity;			// add_drums's: "light", "normal" or "busy"
+	double DrumHits;				// drum hits a bar in the loop
+	std::string Ambience;			// a noise layer apart from the drums, in words; "" for none
+	std::string AmbienceKind;		// what it's like: "waves", "wind", "rain"; "" for none
+	StudyPlan() : Has(false), MotifNotes(0), MotifReturns(0), MotifShaped(0), RhythmReturn(0), ShapeReturn(0), LeadLow(-1), LeadHigh(-1),
+		PeakBar(-1), PeakNote(-1), Fullest(-1), DrumHits(0) {}
+};
+
+// The plan in words, a line each (the study's description has them): "The lead's motif: ...", "Texture by phrase: ...",
+// "The peak: ...", "To arrange like it: ...", "A noise layer apart from the drums: ..."
+std::vector<std::string> DescribePlan(const StudyPlan &P);
+
 struct TrackStudy {
 	std::string Name;
 	double Bpm;
@@ -83,6 +126,7 @@ struct TrackStudy {
 	std::vector<std::string> Drums;		// the kit and the groove
 	std::vector<std::string> Tricks;	// techniques found, most used first
 	std::vector<StudySound> Sounds;		// by channel, most used first
+	StudyPlan Plan;						// how it's built: motif, texture, peak, styles (feat-like-reference)
 	TrackStudy() : Bpm(0), RowsPerBeat(4), BeatsPerBar(4), TicksPerRow(6), Tracker(false), Speed(6), Tempo(125), FirstBarRow(0), IntroBars(0), LoopBars(0),
 		Kind("music"), Seconds(0), PlaylistSeconds(0), DrumLoopBars(0), LoopStartBar(-1) {}
 };

@@ -72,6 +72,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "skip", "Steps to leave out, like [\"drums\"]: tempo, key, lead, chords, melody, form, drums, echo, polish, mix..." },
 			{ "melody_channel", "The melody's channel (default: the designed lead's, else the busiest)." },
 			{ "about", "Words about the place, for an empty song's form (and the kind)." },
+			{ "like", "A studied track to be like: \"Mega Man 3 Needle Man\" (never its tune)." },
 			{ "all", "Also list every step found now." },
 			{ "format", 0 } } },
 		{ "read_notes", "One channel's notes: bar, beat, pitch, length, instrument, volume, effects. format steps gives a melody "
@@ -265,6 +266,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "drop", "Parts to take out." },
 			{ "bars", "About how long, 8-256 bars." },
 			{ "parts", "The whole list: \"Intro 4, A 8, A' 8, B 8, Break 4\"." },
+			{ "like", "A studied track: its loop's length." },
 			{ "add_bars", "A track with notes: add the bars the form lacks." } } },
 		{ "set_key", "Chooses the track's key, which every tool then uses. It moves no notes. Needs direct changes.", {
 			{ "key", "Like \"D dorian\", \"A minor\", \"C major pentatonic\"; \"auto\" finds it from the notes." } } },
@@ -360,6 +362,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "backup", "Its number or label." } } },
 		{ "get_recipe", "The steps for composing a kind of song with these tools; without a kind, how to choose one.", {
 			{ "kind", "The kind (default: how to choose)." },
+			{ "like", "A studied track: its picks first." },
 			{ "idea", 0 },
 			{ "bars", 0 } } },
 		{ "explain", "A music or tracker term in plain words, as FamiTracker's glossary has it (a chord, swing, an effect like "

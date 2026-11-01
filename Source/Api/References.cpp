@@ -41,7 +41,7 @@ namespace ftapi {
 
 namespace {
 
-const int REFERENCE_FORMAT = 1;
+const int REFERENCE_FORMAT = 2;	// 2: the study's plan kept (feat-like-reference)
 const int MAX_ITEMS = 252;		// FamiTracker's sequences hold 253 values; one spare
 const char *const SEQUENCE_NAMES[5] = { "volume", "arpeggio", "pitch", "hi_pitch", "duty" };
 
@@ -321,8 +321,61 @@ std::string ModuleReferenceId(const std::string &Title, const std::string &Forma
 	return Slug(Title, "module") + "-" + Lowercase(Format);
 }
 
+int ReferenceFormat()
+{
+	return REFERENCE_FORMAT;
+}
+
+bool ReferenceBlock::Plays(const char *Part) const
+{
+	return std::find(Parts.begin(), Parts.end(), std::string(Part)) != Parts.end();
+}
+
 namespace {
 void AddTechniqueTags(Reference &R);
+
+// A study's plan as the reference keeps it
+void AddStudyPlan(Reference &R, const nsf::TrackStudy &Study)
+{
+	const nsf::StudyPlan &P = Study.Plan;
+	ReferencePlan &Q = R.Plan;
+	R.Format = REFERENCE_FORMAT;
+	Q = ReferencePlan();
+	Q.Has = P.Has;
+	if (!P.Has)
+		return;
+	Q.RowsPerBeat = Study.RowsPerBeat;
+	Q.BeatsPerBar = Study.BeatsPerBar;
+	Q.IntroBars = Study.IntroBars;
+	Q.Form = Study.Form;
+	Q.MotifNotes = P.MotifNotes;
+	Q.MotifReturns = P.MotifReturns;
+	Q.MotifShaped = P.MotifShaped;
+	Q.RhythmReturn = P.RhythmReturn;
+	Q.ShapeReturn = P.ShapeReturn;
+	Q.LeadLow = P.LeadLow;
+	Q.LeadHigh = P.LeadHigh;
+	for (size_t i = 0; i < P.Blocks.size(); ++i) {
+		ReferenceBlock B;
+		B.FirstBar = P.Blocks[i].FirstBar;
+		B.Bars = P.Blocks[i].Bars;
+		B.Name = P.Blocks[i].Name;
+		B.Parts = P.Blocks[i].Parts;
+		B.Top = P.Blocks[i].Top;
+		Q.Blocks.push_back(B);
+	}
+	Q.PeakBar = P.PeakBar;
+	Q.PeakNote = P.PeakNote;
+	Q.Fullest = P.Fullest;
+	Q.ChordChannel = P.ChordChannel;
+	Q.ChordStyle = P.ChordStyle;
+	Q.BassStyle = P.BassStyle;
+	Q.Groove = P.Groove;
+	Q.Intensity = P.Intensity;
+	Q.DrumHits = P.DrumHits;
+	Q.Ambience = P.Ambience;
+	Q.AmbienceKind = P.AmbienceKind;
+}
 
 // A study's sounds as the reference keeps them (the VRC7's patches aren't sequences: left out)
 void AddStudySounds(Reference &R, const nsf::TrackStudy &Study)
@@ -432,6 +485,7 @@ Reference MakeReference(const nsf::NsfFile &File, int Track, const nsf::TrackStu
 	R.LoopBars = Study.LoopBars;
 	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
 	AddStudySounds(R, Study);
+	AddStudyPlan(R, Study);
 
 	// Tags to find it by: the maker, the tempo, the mode, the chips and the techniques
 	AddNsfStudyTags(R);
@@ -477,6 +531,7 @@ Reference MakeFtmReference(const nsf::Module &M, int Track, const nsf::TrackStud
 	R.LoopBars = Study.LoopBars;
 	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
 	AddStudySounds(R, Study);
+	AddStudyPlan(R, Study);
 	AddTag(R.Tags, "famitracker");
 	AddMusicTags(R);
 	AddTechniqueTags(R);
@@ -529,6 +584,7 @@ Reference MakeModuleReference(const nsf::TrackerSong &Song, const nsf::TrackStud
 	R.Key = Study.Key;
 	R.LoopBars = Study.LoopBars;
 	R.Study = ValidUtf8(nsf::DescribeStudy(Study, false));
+	AddStudyPlan(R, Study);
 	if (Song.Format == "MIDI") {
 		AddTag(R.Tags, "midi");
 		R.Copyright = ValidUtf8(Song.Copyright);
@@ -617,6 +673,48 @@ std::string ReferenceFile(const Reference &R)
 		Sounds.Push(Sd);
 	}
 	J.Set("sounds", Sounds);
+	if (R.Plan.Has) {
+		const ReferencePlan &P = R.Plan;
+		Json Plan = Json::MakeObject();
+		Plan.Set("rows_per_beat", P.RowsPerBeat);
+		Plan.Set("beats_per_bar", P.BeatsPerBar);
+		Plan.Set("intro_bars", P.IntroBars);
+		Plan.Set("form", P.Form);
+		Plan.Set("motif_notes", P.MotifNotes);
+		Plan.Set("motif_returns", P.MotifReturns);
+		Plan.Set("motif_shaped", P.MotifShaped);
+		Plan.Set("rhythm_return", Json::NumberText(FormatNumber(std::floor(P.RhythmReturn * 100 + 0.5) / 100)));
+		Plan.Set("shape_return", Json::NumberText(FormatNumber(std::floor(P.ShapeReturn * 100 + 0.5) / 100)));
+		Plan.Set("lead_low", P.LeadLow);
+		Plan.Set("lead_high", P.LeadHigh);
+		Json Blocks = Json::MakeArray();
+		for (size_t i = 0; i < P.Blocks.size(); ++i) {
+			const ReferenceBlock &B = P.Blocks[i];
+			Json Block = Json::MakeObject();
+			Block.Set("name", B.Name);
+			Block.Set("first_bar", B.FirstBar);
+			Block.Set("bars", B.Bars);
+			Json Parts = Json::MakeArray();
+			for (size_t k = 0; k < B.Parts.size(); ++k)
+				Parts.Push(B.Parts[k]);
+			Block.Set("parts", Parts);
+			Block.Set("top", B.Top);
+			Blocks.Push(Block);
+		}
+		Plan.Set("blocks", Blocks);
+		Plan.Set("peak_bar", P.PeakBar);
+		Plan.Set("peak_note", P.PeakNote);
+		Plan.Set("fullest", P.Fullest);
+		Plan.Set("chord_channel", P.ChordChannel);
+		Plan.Set("chord_style", P.ChordStyle);
+		Plan.Set("bass_style", P.BassStyle);
+		Plan.Set("groove", P.Groove);
+		Plan.Set("intensity", P.Intensity);
+		Plan.Set("drum_hits", Json::NumberText(FormatNumber(std::floor(P.DrumHits * 10 + 0.5) / 10)));
+		Plan.Set("ambience", P.Ambience);
+		Plan.Set("ambience_kind", P.AmbienceKind);
+		J.Set("plan", Plan);
+	}
 	std::string Out;
 	Pretty(J, 0, Out);
 	return Out + "\n";
@@ -652,6 +750,51 @@ bool ReadReferenceFile(const std::string &Text, Reference &Out, std::string &Err
 	Out.Key = TextOf(J, "key");
 	Out.LoopBars = IntOf(J, "loop_bars", 0);
 	Out.Study = Join(TextsOf(J, "study"), "\n");
+	Out.Format = IntOf(J, "reference", 1);
+	const Json *pPlan = J.Get("plan");
+	if (pPlan != 0 && pPlan->IsObject()) {
+		const Json &Pl = *pPlan;
+		ReferencePlan &P = Out.Plan;
+		auto Number = [&](const char *Key) { const Json *p = Pl.Get(Key); return p != 0 && p->IsNumber() ? p->Number() : 0.0; };
+		P.Has = true;
+		P.RowsPerBeat = std::max(1, std::min(32, IntOf(Pl, "rows_per_beat", 4)));
+		P.BeatsPerBar = std::max(1, std::min(16, IntOf(Pl, "beats_per_bar", 4)));
+		P.IntroBars = std::max(0, IntOf(Pl, "intro_bars", 0));
+		P.Form = TextOf(Pl, "form");
+		P.MotifNotes = IntOf(Pl, "motif_notes", 0);
+		P.MotifReturns = IntOf(Pl, "motif_returns", 0);
+		P.MotifShaped = IntOf(Pl, "motif_shaped", 0);
+		P.RhythmReturn = Number("rhythm_return");
+		P.ShapeReturn = Number("shape_return");
+		P.LeadLow = IntOf(Pl, "lead_low", -1);
+		P.LeadHigh = IntOf(Pl, "lead_high", -1);
+		const Json *pBlocks = Pl.Get("blocks");
+		for (size_t i = 0; pBlocks != 0 && pBlocks->IsArray() && i < pBlocks->Size() && i < 64; ++i) {
+			const Json &Bl = pBlocks->At(i);
+			if (!Bl.IsObject())
+				continue;
+			ReferenceBlock B;
+			B.Name = TextOf(Bl, "name");
+			B.FirstBar = std::max(0, IntOf(Bl, "first_bar", 0));
+			B.Bars = std::max(1, std::min(256, IntOf(Bl, "bars", 4)));
+			B.Parts = TextsOf(Bl, "parts");
+			B.Top = IntOf(Bl, "top", -1);
+			P.Blocks.push_back(B);
+		}
+		P.PeakBar = IntOf(Pl, "peak_bar", -1);
+		P.PeakNote = IntOf(Pl, "peak_note", -1);
+		P.Fullest = IntOf(Pl, "fullest", -1);
+		if (P.Fullest >= static_cast<int>(P.Blocks.size()))
+			P.Fullest = -1;
+		P.ChordChannel = TextOf(Pl, "chord_channel");
+		P.ChordStyle = TextOf(Pl, "chord_style");
+		P.BassStyle = TextOf(Pl, "bass_style");
+		P.Groove = TextOf(Pl, "groove");
+		P.Intensity = TextOf(Pl, "intensity");
+		P.DrumHits = Number("drum_hits");
+		P.Ambience = TextOf(Pl, "ambience");
+		P.AmbienceKind = TextOf(Pl, "ambience_kind");
+	}
 	const Json *pSounds = J.Get("sounds");
 	if (pSounds != 0 && pSounds->IsArray())
 		for (size_t i = 0; i < pSounds->Size(); ++i) {
@@ -756,6 +899,9 @@ std::string ReferenceText(const Reference &R)
 		Out += "Tags: " + Join(R.Tags, ", ") + "\n";
 	if (!R.Notes.empty())
 		Out += "Notes: " + R.Notes + "\n";
+	if (!R.Source.empty() && R.Format > 0 && R.Format < REFERENCE_FORMAT && !R.Plan.Has)
+		Out += "(Studied before FamiTracker kept how a track is built: references with action restudy studies it again from its "
+			"file, for its motif, texture by phrase, peak and styles.)\n";
 	// The study without its first line, the title
 	const std::vector<std::string> StudyLines = Lines(R.Study);
 	for (size_t i = 0; i < StudyLines.size(); ++i) {

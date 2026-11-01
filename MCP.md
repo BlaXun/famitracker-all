@@ -680,7 +680,9 @@ is the recipes':
 
 It takes `kind` (calm, lively, cozy or action; without one, the kind the
 words in `about` ask for, else calm when the track's name says so, else the
-general recipe), `skip` (steps to leave out, like
+general recipe), `like` (a studied track the song should be like, whose
+study gives the picks; see [How a track is built, and songs like
+it](#how-a-track-is-built-and-songs-like-it)), `skip` (steps to leave out, like
 `["drums"]`, or a kind of `check_song`'s finding) and `all` (every step found
 now, in order). With direct changes off it asks for them first, since each
 step works on what the one before wrote. `export_for_game` (and
@@ -1231,7 +1233,7 @@ before a batch of changes.
 | `soundtrack_notes` | Reads or adds to a text file next to the song that keeps your taste and the decisions about your game's music between sessions |
 | `study_nsf` | Studies tracks of an NSF file you have (game music) and keeps what makes each one work in your reference library. See [References: learning from NES soundtracks](#references-learning-from-nes-soundtracks) |
 | `study_module` | Studies a tracker module you have (MOD, S3M, XM or IT) from its patterns, a MIDI file from its notes, or a FamiTracker module (.ftm) track by track, and keeps it in your reference library too, so new NES music can borrow its style. See [Modules as references](#modules-as-references) |
-| `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music |
+| `references` | Lists, shows and searches the reference library, and the built-in guide to the classic NES styles (Konami, Capcom, Nintendo, Square, Sunsoft, Technos) and to dark and melancholic music; `restudy` studies the library again from its files. See [How a track is built, and songs like it](#how-a-track-is-built-and-songs-like-it) |
 | `effects` | FamiTracker 0.4.6's effects (what each does, on which channels, how long it lasts, what it's good for) and the techniques made with them. See [Effects and techniques](#effects-and-techniques) |
 | `explain` | A music, sound or tracker term in plain words, as FamiTracker's glossary (**Help > Glossary**) explains it to you: what it is, an everyday comparison, where it is in FamiTracker, what its Hear it example plays and the terms to see too; an effect as written (`447`) with what its numbers do. Without a term, the terms by category. See [The glossary](#the-glossary) |
 | `write_log` | Writes a line into FamiTracker's agent log (**View > Agent log**): `text`, and a `category` (idea, plan, research, fix, check, note or error; note when none is given; any other is refused with the list). FamiTracker stamps the time; the song and its undo history stay as they are. See [The agent log](#the-agent-log-why-and-notes-back) |
@@ -2753,6 +2755,57 @@ or a reference named in its idea or in the soundtrack notes by itself, so
 "a save room in the style of <a composer whose modules you studied>" plans
 from those studies. A composer is found by the name the modules give as
 their author.
+
+### How a track is built, and songs like it
+
+A study also says how its track is built, in the tools' terms (since
+FamiTracker's reference format 2): how the lead's opening motif comes back
+(its notes, how often in their rhythm, how often in their shape too, and
+how many of its bars bring back an earlier bar's rhythm), which parts play
+in each stretch (the intro, then the loop's four-bar phrases as the form
+letters them: lead, bass, chords, a second part, an echo, drums, a noise
+layer), so you see where the chord part rests and where parts join or
+drop, where the peak is (the lead's highest note and the fullest stretch),
+the styles `add_chords_and_bass` and `add_drums` would play it in (chord
+style, bass style, groove and how busy the drums are), and a noise layer
+apart from the drums (slow swells like waves, held noise like wind): an
+ambience. For one of your kept songs, Ironworks:
+
+```
+The lead's motif: its opening 6 notes come back 8 times in their rhythm (2 of them in their shape too, ...); 84% of its bars bring back an earlier bar's rhythm, 35% its rhythm and shape; it plays from G-3 to C-6.
+The chord part (Pulse 1, lush): it plays in 2 of the 8 phrases the lead plays in and rests in A, B, A, B, A', E; it plays where the lead rests (intro, bars 37-40).
+To arrange like it with the tools: chord_style lush; bass_style octaves; groove basic, intensity busy (about 12.8 drum hits a bar).
+```
+
+Studies made before this don't have it. `references` with action
+`restudy` studies the library again from each study's file (an NSF's track,
+a FamiTracker module's, a tracker module or a MIDI file), keeping your tags,
+notes and the date it was added: up to 24 tracks a call (call again for
+the rest), the older studies first (`all` studies every one; `reference`
+one). A file that isn't where it was studied is named with its path, for
+you to say where it is now (`study_nsf` with that path studies it again,
+keeping the tags). The studies live in the `References` folder next to
+FamiTracker.exe, and the NSFs wherever you keep them: restudy runs on that
+computer, so it finds them where they were.
+
+`what_next` with `like` (words, like "Mega Man 3 Needle Man", or a
+reference's id) makes the song like that study: the tempo (the nearest
+whose rows are even), the key, the chord and bass styles, the groove (as
+busy as the reference's drums, with kit samples where it had DPCM drums, or
+none where it had none), the lead's sound (`reference_sound`, named as
+`what_next`'s lead), a form as long as its loop (`song_shape` with `like`),
+and the chord part resting where the reference's rests (in its A phrases, or
+its others: `vary_part` `rest`, step `texture`); without a kind, the
+reference's tempo and mode choose one, which sets everything the study
+doesn't. Each step says which pick came from the reference, and the notes
+give its texture by phrase, its peak and its motif's returns to follow. The
+tune is never the reference's: the hooks stay the song's own. A built-in
+game's track (its sounds alone) gives its lead's sound. With no study that
+matches, the first step asks for one: the NSF's path for `study_nsf` (a
+client on another computer sends the file first with `send_file`), or
+`references` search; `skip` `like` follows the kind alone. `song_shape` and
+`get_recipe` take `like` too (the loop's length; the picks, then the
+recipe of the kind they suggest).
 
 ### Sounds from twelve soundtracks
 

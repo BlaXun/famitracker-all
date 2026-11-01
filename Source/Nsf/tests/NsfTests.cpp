@@ -921,6 +921,129 @@ void TestKeys()
 	CHECK(S.LoopBars == 0 && S.Key == "no clear key (around G)");
 }
 
+// How a track is built (feat-like-reference): a lead whose opening motif comes back, chords (0xy, held a bar) that
+// rest in its A phrases and play in its B ones, a bass in octaves, a basic beat on the noise; and, in another track,
+// a noise layer of slow swells apart from the drums (an ambience)
+Module PlanTrack(bool Layer)
+{
+	Module M;
+	Instrument Held, Hit, Swell;
+	Held.Macros[SEQ_VOLUME] = Macro(std::vector<int>(1, 15));
+	Hit.Macros[SEQ_VOLUME] = Macro(std::vector<int>{ 15, 10, 5, 0 });
+	Swell.Macros[SEQ_VOLUME] = Macro(std::vector<int>{ 1, 2, 3, 4, 5, 6, 7, 8, 7, 6, 5, 4, 3 });
+	M.Instruments.push_back(Held);
+	M.Instruments.push_back(Hit);
+	M.Instruments.push_back(Swell);
+	Track T;
+	T.Name = "Plan";
+	T.PatternLength = 16;
+	T.Speed = 6;
+	T.Tempo = 150;
+	T.Columns.assign(5, 1);
+	T.Patterns.assign(5, std::vector<std::vector<Cell> >());
+	// A's bars: a motif (rows 0, 4, 6, 8) and its answer; B's: other notes and rhythms
+	static const int A[4][4] = { { 60, 64, 62, 67 }, { 69, 67, 64, 62 }, { 62, 65, 64, 69 }, { 72, 67, 64, 60 } };
+	static const int B[4][3] = { { 65, 69, 72 }, { 74, 72, 69 }, { 67, 71, 74 }, { 76, 74, 71 } };
+	static const int ROOTS[4] = { 48, 53, 55, 48 };
+	for (int b = 0; b < 16; ++b) {
+		for (int c = 0; c < 5; ++c)
+			T.Patterns[c].push_back(std::vector<Cell>(16));
+		const bool InA = (b / 4) % 2 == 0;
+		const int k = b % 4;
+		if (InA) {
+			static const int ROWS[4] = { 0, 4, 6, 8 };
+			for (int n = 0; n < 4; ++n) {
+				Cell &m = T.Patterns[0][b][ROWS[n]];
+				m.Note = A[k][n];
+				m.Instrument = 0;
+			}
+		}
+		else {
+			static const int ROWS[3] = { 0, 3, 10 };
+			for (int n = 0; n < 3; ++n) {
+				Cell &m = T.Patterns[0][b][ROWS[n]];
+				m.Note = B[k][n];
+				m.Instrument = 0;
+			}
+			Cell &h = T.Patterns[1][b][0];
+			h.Note = ROOTS[k];
+			h.Instrument = 0;
+			h.AddEffect('0', 0x47);
+		}
+		for (int r = 0; r < 16; r += 2) {
+			Cell &t = T.Patterns[2][b][r];
+			t.Note = ROOTS[k] - 12 + (r % 4 == 0 ? 0 : 12);
+			t.Instrument = 0;
+		}
+		if (Layer) {
+			Cell &n = T.Patterns[3][b][0];
+			n.Note = 3;
+			n.Instrument = 2;
+		}
+		else
+			for (int r = 0; r < 16; r += 4) {
+				Cell &n = T.Patterns[3][b][r];
+				n.Note = r == 4 || r == 12 ? 7 : (r == 0 || r == 8 ? 2 : 12);
+				n.Instrument = 1;
+				if (r == 0 || r == 8) {
+					Cell &h = T.Patterns[3][b][r + 2];
+					h.Note = 12;
+					h.Instrument = 1;
+				}
+				else {
+					Cell &h = T.Patterns[3][b][r + 2];
+					h.Note = 12;
+					h.Instrument = 1;
+				}
+			}
+		T.Frames.push_back(std::vector<int>(5, b));
+	}
+	T.Patterns[4][15][15].AddEffect('B', 0);
+	M.Tracks.push_back(T);
+	return M;
+}
+
+void TestStudyPlan()
+{
+	TrackReport R;
+	R.RowsPerBeat = 4;
+	R.TicksPerRow = 6;
+	R.Bpm = 150;
+	const TrackStudy S = StudyTrack(PlanTrack(false), 0, R);
+	const StudyPlan &P = S.Plan;
+	CHECK(P.Has && S.Form == "A B A B");
+	CHECK(P.Blocks.size() == 4 && P.Blocks[0].Name == "A" && P.Blocks[1].Name == "B");
+	CHECK(P.ChordChannel == "Pulse 2" && P.ChordStyle == "arpeggio");
+	// the chords rest in the A phrases, where the lead carries the song, and play in the B ones
+	CHECK(!P.Blocks.empty() && std::find(P.Blocks[0].Parts.begin(), P.Blocks[0].Parts.end(), "chords") == P.Blocks[0].Parts.end());
+	CHECK(P.Blocks.size() > 1 && std::find(P.Blocks[1].Parts.begin(), P.Blocks[1].Parts.end(), "chords") != P.Blocks[1].Parts.end());
+	CHECK(P.Blocks.size() > 1 && std::find(P.Blocks[0].Parts.begin(), P.Blocks[0].Parts.end(), "lead") != P.Blocks[0].Parts.end() &&
+		std::find(P.Blocks[0].Parts.begin(), P.Blocks[0].Parts.end(), "drums") != P.Blocks[0].Parts.end());
+	CHECK(P.BassStyle == "octaves");
+	CHECK(P.Groove == "basic" && P.Intensity == "normal" && P.DrumHits > 5 && P.DrumHits < 9);
+	CHECK(P.Ambience.empty());
+	// the motif: A's opening comes back, in its shape too, and most bars bring back an earlier bar's rhythm
+	CHECK(P.MotifNotes >= 3 && P.MotifReturns >= 1 && P.MotifShaped >= 1);
+	CHECK(P.RhythmReturn > 0.5);
+	// the peak: B's highest note
+	CHECK(P.PeakNote == 76 && P.PeakBar == 7);
+	CHECK(P.Fullest == 1);
+	const std::string Text = DescribeStudy(S);
+	CHECK(Text.find("  Texture by phrase: A (bars 1-4) lead, bass, drums; B (bars 5-8) lead, bass, chords, drums;") != std::string::npos);
+	CHECK(Text.find("The chord part (Pulse 2, arpeggio): it plays in 2 of the 4 phrases the lead plays in and rests in A, A.") !=
+		std::string::npos);
+	CHECK(Text.find("To arrange like it with the tools: chord_style arpeggio; bass_style octaves; groove basic, intensity normal") !=
+		std::string::npos);
+	CHECK(Text.find("The peak: the lead's highest note, E-6, first in bar 8 (B)") != std::string::npos);
+	CHECK(Text.find("The lead's motif: its opening") != std::string::npos);
+	// a noise layer of slow swells, once a bar, apart from any beat: an ambience, like waves
+	const TrackStudy L = StudyTrack(PlanTrack(true), 0, R);
+	CHECK(L.Plan.AmbienceKind == "waves" && L.Plan.Ambience.find("slow noise swells on Noise") != std::string::npos);
+	CHECK(L.Plan.Groove.empty() && L.Plan.Blocks.size() == 4 &&
+		std::find(L.Plan.Blocks[0].Parts.begin(), L.Plan.Blocks[0].Parts.end(), "noise layer") != L.Plan.Blocks[0].Parts.end());
+	CHECK(DescribeStudy(L).find("A noise layer apart from the drums, an ambience: slow noise swells") != std::string::npos);
+}
+
 }	// namespace
 
 int main()
@@ -941,6 +1064,7 @@ int main()
 	TestLoopAroundARepeat();
 	TestDrumsOnTheirOwn();
 	TestKeys();
+	TestStudyPlan();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

@@ -2636,6 +2636,63 @@ on three seeded songs, and on the small set) and `TestGen4Done`, the
 round's six setups (kinds, words and chips) each on its own seed and two
 more, on the set the round used.
 
+Songs like a reference (from `feat-like-reference`): asked how much
+`what_next` keeps a local model from making a song like Mega Man 3's
+Needle Man, the answer was that it did (it knew only a kind and words
+about the map). A study now records how its track is built:
+`nsf::StudyPlan` (`TrackStudy::Plan`, worked out at the end of
+`StudyTrack`; `DescribePlan` writes its lines into `DescribeStudy`): the
+lead's opening motif (3-6 notes coming back in their rhythm at the same
+place in the beat, and in their shape: the same moves, or each within two
+semitones the same way), the share of its bars whose rhythm (and shape) an
+earlier bar had, its range, `StudyBlock`s (the intro, then the loop's
+four-bar phrases named by the form's letters) with the parts playing in
+each (lead, bass (the bass or "a low part": a sawtooth under the
+triangle's thumps), chords (arpeggio chords, a pad, or a second part
+breaking chords in thirds and fifths), second, echo, drums, noise layer),
+the peak (the lead's highest note in the loop, the fullest block), the
+styles `add_chords_and_bass` and `add_drums` would take (chord style from
+how the chord part plays, bass style from its notes a bar and moves,
+groove and intensity from the drum voices' hits) and a noise layer apart
+from the drums (`Ambience`: a long-decaying noise voice off the backbeat,
+at most 1.5 a bar, sounding half a bar or more: swells are waves, a high
+one rain, else wind). The library keeps it as `ReferencePlan`
+(`References.h`, a `plan` object; `REFERENCE_FORMAT` 2, `Reference::Format`;
+format 1 files still read, without a plan, and `ReferenceText` says how to
+get one). `references` action `restudy` (`RestudyReferences` before
+`ReferencesTool`) studies again the references whose plan is missing (`all`:
+every one; `reference`: one) from their `Source` (an NSF's track, a `.ftm`'s,
+a tracker module, a MIDI file by the reference's tags), up to `MAX_STUDIED`
+tracks a call, keeping the id, tags (`KeepOwnTags`, or the union as the
+module studies keep them), notes and date added, and names each file not
+found with its path. `like` (what_next, song_shape, get_recipe) finds the
+reference (`FindLike` before `class WhatNext`: most of the words in its id,
+title, game and composer, `LikeMatch`; else a built-in game's track, sounds
+alone) and `LikePicks` gives the picks: the tempo the nearest even one
+(`EvenBpmNear`), the key, the plan's chord and bass styles and groove (an
+empty groove: no drums), the lead's sound (`reference_sound` with
+`name` the kind's `LeadName`, so the lead's milestone and melody channel
+work unchanged), the form's length (`LikeBars`, `ShapeRequestOf`), a kind
+from its tempo and mode where none is asked or worded (action at 140 BPM or
+more in minor, calm or mysterious under 95, else lively); `WhatNext` puts
+them into `m_Picks` (`m_LikeTempo` and its siblings; the tempo's range is
+the reference's then, and the key note against the kind is left out for
+the reference's key), its steps say so (`LikeNote`), `LikeLines` heads the
+notes (the picks, the texture by phrase, the peak, the motif's returns,
+an ambience; the tune the song's own), and `LikeTexture` (step and skip
+word `texture`, after `Colors`, once the form is done) rests the chord
+part (`vary_part` `rest`) in the song's A sections where the reference's
+rests in half or more of its main phrases (else in its other body parts,
+never the climax). No match: the first step is an ask (`LikeMissingText`:
+study_nsf with the NSF's path, references search; a client sends it with
+send_file first), skip word `like`. `TestStudyPlan` in
+`Source/Nsf/tests/NsfTests.cpp` (a built module and one with a noise
+layer) and `TestLikeReference` in `Source/Api/tests/ApiTests.cpp` (the
+plan read back and an old file, a walk like a reference ending done with
+its picks, no study, song_shape and get_recipe, restudy with a missing
+file) cover them. `nsf2ftm -study` on the user's kept songs shows the
+plan's lines (read only, never committed).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
