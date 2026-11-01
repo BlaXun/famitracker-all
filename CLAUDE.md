@@ -2636,6 +2636,58 @@ on three seeded songs, and on the small set) and `TestGen4Done`, the
 round's six setups (kinds, words and chips) each on its own seed and two
 more, on the set the round used.
 
+Texture: chords that rest, a highlight, outros that lead back (from
+`feat-texture`), from the user's ear on six songs made by following
+`what_next`: "an arpeggio the whole song... overused effect" (the airship,
+the caves, the guard tower), "no new instruments introduced along the
+track, so there is no excitement" (the shop) and Guard Tower's outro "kinda
+missing some notes". A chord part that rolls on unchanged is
+`ThroughoutFindings` (after `DroneFindings`, `ARRANGE_THROUGHOUT`;
+`ChordRollOf`, `ThroughoutRests`), check_song's `chords_throughout`
+(severity low, problem `plays_all_through`; `PROBLEM_CHORDS_THROUGHOUT`,
+the panel's `WORDS` "chord part that never rests"): a chord part
+(`PlaysChordPart`) under the melody in `THROUGH_WITH` of its bars
+(`THROUGH_BARS` at least), its commonest bar rhythm in `THROUGH_SAME` of
+its bars at `THROUGH_NOTES` notes a bar or fewer, any kind. Measured on the
+44 kept songs (the comment before the constants): their chord parts that
+play as often restrike and vary (commonest rhythm 0.30-0.84 of their bars,
+1.47-8.83 notes a bar), the six songs' struck one held chord a bar, every
+bar alike (1.00 at 1.00); none of the kept songs gets it, and GreenValley
+Sunrise (0.94 at 1.15) does. Its fix is `vary_part` `rest` over the
+sections where the melody carries the song (A and its repeats, a verse, a
+chorus; never an intro, a break, an outro, B, a bridge or the climax, the
+fullest part), else the last of those keeps them; a channel with a
+`chord_drone` finding gets that one. Being low, `what_next` gives it with
+the review's tips, after the intro, the break and the climax have copied
+A's chords. The highlight: `TextureOf` (before `ReviewTool`) finds a song
+of three named parts or more (the free ones aside) that all play the same
+channels with no melodic instrument new after the first part (the intro's
+count as heard); of the 11 kept songs with named parts every one changes
+its channels, so none gets it. The review tips it ("The texture never
+changes"), and `WhatNext::Highlight` (after `Echo`) gives the melody
+another lead of the kind's pool ("Highlight lead", `design_instrument`,
+then `set_instrument`) in `SongTexture::Target`, the contrasting part
+(else the climax, else the last); step id and skip word `highlight`. Calm
+styles' intros are filled with the chords alone, the bass joining with A
+(`CalmStyle()` in `Depth`'s filling): the six known failures of gen4's base
+(bittersweet and melancholic walks keeping "about one loudness all the way
+through", 3 dB) and a cozy walk the rests had added are gone. An outro of a
+song that loops (`IsOutroBase`) is filled with A's closing bars whole, the
+melody and the drums too, and an outro already filled without the melody
+gets them, and a break of under four bars that ends a song that loops (a
+boss fight's, a small loop's; not a night's with its one small sound)
+gets a pickup: the melody of the second half of A's last bar, the tune's
+closing notes, in the second half of its own (`write_notes` in steps,
+tried with `TryWrite`; A's whole last bar, with or without its drums, left
+the boss fights' walks "about one loudness"): Guard Tower's "outro" was the boss shape's two-bar closing break, while
+the Ironworks the user liked ends on four bars of chords, bass and a few
+drums, which stay a part of their own (step id and skip word `outro` for
+both); the shapes' outro and short closing-break lines say they lead back
+into the loop. `TestTexture` covers the three on songs built in
+code (`TextureSong`), `CheckDoneReview` holds every walk to no
+`chords_throughout` finding (and the review's texture tip with the others),
+and `song_file_checks` checks `chords_throughout` on keep/ and flag/.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

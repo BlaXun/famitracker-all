@@ -56,7 +56,8 @@ int g_Failures = 0;
 // one (a climax too high to lift an octave gets advice without a call, so no step)
 struct CheckedKind { const char *Kind; const char *Step; bool StepNeeded; };
 const CheckedKind KINDS[] = { { "too_busy", "oo busy for the NES", true }, { "chord_drone", "drone against the tune", true },
-	{ "climax_repeats", "the song's high point, plays the melody", false } };
+	{ "climax_repeats", "the song's high point, plays the melody", false },
+	{ "chords_throughout", "A chord part that plays all through", true } };
 const size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
 std::vector<std::string> FtmFiles(const std::string &Folder)

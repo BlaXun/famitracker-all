@@ -660,11 +660,25 @@ is the recipes':
 4. Depth: a harmony in the repeat (cleaner beside the chords than a
    counter-melody), the repeats made different (`vary_part`, a variation
    that rubs against nothing), a break and an intro that plays once, filled
-   with the chords and the bass, and the loop after the intro.
+   with the chords and the bass, an outro of a song that loops filled with
+   A's closing bars whole (the melody and the drums leading back in), a
+   short break (under four bars) that ends it given a pickup, the tune's
+   closing notes from the second half of A's last bar in the second half
+   of its own (it breathes, then leads back in), and the loop after the
+   intro.
 5. The review's tips that suit the kind (a lively stage that doesn't build
-   gets a harmony in its last part, the climax).
+   gets a harmony in its last part, the climax), with `check_song`'s
+   lighter fixes: a chord part that plays the same way all through rests in
+   A and its repeats (`chords_throughout`), so the chords come in with the
+   intro, B, the break and the climax.
 6. An echo, last of the parts, since it copies the melody's notes as they
-   are.
+   are. Then a highlight, when every part of the song (A, A', B...) still
+   plays the same channels with the same sounds: the melody takes a new
+   sound where the song turns (B, else the climax), another lead of the
+   kind's (`design_instrument`, then `set_instrument` over that part's
+   bars); `review_arrangement` tips the same ("The texture never changes"),
+   since every song the user keeps brings a part or a sound in after its
+   first part.
 7. The last steps, once the parts are written: `polish` (on a lively stage
    with its accents), then the mix in the kind's style when another mix
    would change the song, the loop's seam (`fix_loop`), a `listen` and the
@@ -937,6 +951,21 @@ JSON as `fix`.
   the tune's C, its Ab over the tune's G), so the chords then rest in A, A'
   and the climax (bars 5-20 and 29-36), playing on in the intro, B and the
   break, 10% of the time rubbing.
+- **Chords that never rest** (`chords_throughout`, severity `low`): a chord
+  part (as above) that plays under the melody in three quarters of its bars
+  or more (16 at least), striking 1.5 chords a bar or fewer, the same
+  rhythm in 90% of its bars or more: the arpeggio rolls on unchanged through
+  the song, on any kind of track, whether or not it rubs. The user heard
+  three songs made by following `what_next` with such a part as "an
+  arpeggio the whole song... an overused effect"; of the 44 songs the user
+  keeps, the chord parts that play as often restrike and vary their chords
+  (their commonest rhythm in at most 84% of their bars). Fix: `vary_part`
+  with `rest` over the sections where the melody carries the song (A and
+  its repeats, a verse, a chorus) that the chords play in, so they play in
+  the intro, B, a bridge, the break and the climax; when none of those
+  plays with the melody, the last part where it carries keeps them. Without
+  named sections it's advice. A part with a `chord_drone` finding gets that
+  one alone.
 - `polish` with the touch `colors` works on a chord part's lush chords
   (instruments named as `add_chords_and_bass` names them, "Lush m(add9)")
   and `0xy` chords. A color (an added ninth, a seventh, a sixth) rubs the
@@ -1058,7 +1087,7 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy`, `key` and `held`, notes that vanish counted by the note, then the
 arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
-`short_loop`, `intro`, `too_busy`, `climax_repeats` and `chord_drone`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
+`short_loop`, `intro`, `too_busy`, `climax_repeats`, `chord_drone` and `chords_throughout`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
 (`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
@@ -1541,7 +1570,11 @@ first frame without a gap, every name a part's, repeats marked with
 primes), it fills the parts in order: A's chords and melody first, a
 repeat (A', B') its original's music to vary later, a climax A's (which
 check_song's climax finding then takes up an octave), a part of its own (B,
-a bridge) new chords, the intro, a break and an outro A's chords and bass;
+a bridge) new chords, the intro and a break A's chords and bass, and an
+outro of a song that loops A's closing bars whole, the melody and the drums
+too, so it leads back into the loop (an outro already filled without the
+melody gets A's melody and drums there), and a break of under four bars
+that ends the song a pickup from A's last bar;
 the form is done once every part laid out has its music, and a form laid
 out without a break or an intro gets none. FamiTracker's Module > Song
 shape has the same options: the form (the track's name's, or one of the

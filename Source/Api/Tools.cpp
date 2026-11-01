@@ -14578,9 +14578,10 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // its channel can't play, faders doing the mix's work, a section that repeats another note for note, a lively stage that
 // loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main
 // part (IntroFinding); and (BusyFindings) a part too busy for the NES; and (DroneFindings) chords that drone against the tune
-// through the song. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
+// through the song; and (ThroughoutFindings, feat-texture) a chord part that rolls on the same way in nearly every bar of
+// the melody. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
 enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO, ARRANGE_BUSY,
-	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_KINDS };
+	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_THROUGHOUT, ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -16084,6 +16085,186 @@ void DroneFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int 
 	}
 }
 
+// A chord part that plays all through (from feat-texture). Six songs made by following what_next (gen4's second round)
+// put the kind's chord part (chord_style arpeggio or lush) in every bar, copied into every part; the user heard "an
+// arpeggio the whole song... pretty annoying... kinda boring" (an airship, adventure), "again, arpeggio the whole
+// length of the song... overused effect" (a cave, mysterious, calm's style) and "arpeggios the whole song again" (a guard
+// tower, action), and liked the Ironworks whose Pulse 1 played its chords only in the intro, B and the break. None of
+// those rubbed the tune (chord_drone's rule). Measured on the 44 songs the user keeps, every chord part (PlaysChordPart):
+// the kept ones that play in nearly every bar of the melody (01 Skylight Overture, 02 Lanternbrook, 08 Verdant Run, 11
+// Applefall Lane, 13 Mirage Bazaar, 22 Ember Foundry, 28 Lantern Festival, 51 Quiet Hours, all with the melody in 0.96 of
+// its bars or more) restrike and vary their chords: their commonest bar rhythm takes 0.30-0.84 of their bars, at 1.47-8.83
+// notes a bar (Applefall Lane 0.53 at 1.47; Quiet Hours 0.84 at 7.68), and most fade between strikes (volume slides,
+// instrument envelopes). The six songs' chord parts strike one chord a bar, every bar alike: 1.00 at 1.00 notes a bar
+// (the airship, the tower, the caves, and the first Ironworks, whose lush Pulse 1 the user found annoying; GreenValley
+// Sunrise, which the user called chaos, 0.94 at 1.15). So a chord part sounding in THROUGH_WITH of the melody's bars or more (THROUGH_BARS of them at
+// least), playing its commonest rhythm in THROUGH_SAME of its bars or more at THROUGH_NOTES notes a bar or fewer, rolls
+// on unchanged through the song: it rests where the melody carries the song (ThroughoutRests), on every kind
+const double THROUGH_WITH = 0.75, THROUGH_SAME = 0.9, THROUGH_NOTES = 1.5;
+const int THROUGH_BARS = 16;
+
+// How a chord part plays in bars From-To where it sounds (half a bar or more): the bars, the notes starting in them, and the
+// share of them playing its commonest rhythm (the rows its notes start on)
+struct ChordRoll {
+	int Bars, Notes;
+	double Same;
+	ChordRoll() : Bars(0), Notes(0), Same(0.0) {}
+	double NotesABar() const { return Bars > 0 ? Notes / static_cast<double>(Bars) : 0.0; }
+};
+
+ChordRoll ChordRollOf(Session &S, Hearing &Ears, int Channel, int From, int To)
+{
+	ChordRoll Out;
+	const int Total = S.Time.TotalRows();
+	const std::vector<double> &Power = Ears.Power(Channel);
+	std::map<std::string, int> Rhythms;
+	for (int Bar = From; Bar <= To; ++Bar) {
+		const int A = S.Time.BarStart(Bar), Z = std::min(Total, S.Time.BarEnd(Bar));
+		const int FA = Ears.FrameOf(A), FZ = Ears.FrameOf(Z);
+		int On = 0;
+		for (int f = FA; f < FZ && f < static_cast<int>(Power.size()); ++f)
+			On += Power[static_cast<size_t>(f)] > 1e-4 ? 1 : 0;
+		if (FZ <= FA || On * 2 < FZ - FA)
+			continue;
+		std::string Print;
+		for (const NoteInfo &N : NotesIn(S.Notes(Channel), A, Z))
+			if (N.Row >= A) {
+				Print += Format("%d ", N.Row - A);
+				++Out.Notes;
+			}
+		++Out.Bars;
+		++Rhythms[Print];
+	}
+	int Top = 0;
+	for (std::map<std::string, int>::const_iterator it = Rhythms.begin(); it != Rhythms.end(); ++it)
+		Top = std::max(Top, it->second);
+	Out.Same = Out.Bars > 0 ? Top / static_cast<double>(Out.Bars) : 0.0;
+	return Out;
+}
+
+// Where a chord part that plays all through rests: in the sections where the melody carries the song (A and its repeats,
+// a verse, a chorus) that it plays in with the melody, as the Ironworks the user liked rests its chords; it keeps playing
+// in the intro, a break, an outro, the contrasting parts (B, a bridge) and the climax, the song's fullest part. When no
+// part of those plays with the melody, the last part where the melody carries keeps them, so they come in once with the
+// tune. Without sections there are no parts to rest by rule (the finding is advice)
+std::vector<std::pair<int, int> > ThroughoutRests(Session &S, Hearing &Ears, int Channel, int Melody, std::vector<std::string> &Resting,
+	std::vector<std::string> &Playing)
+{
+	struct Part { int From, To; std::string Name; bool Carries, With, Notes; };
+	std::vector<Part> Parts;
+	const SectionList &List = S.Song.Sections;
+	const int Total = S.Time.TotalRows();
+	bool Elsewhere = false;
+	for (size_t i = 0; i < List.size(); ++i) {
+		const std::string Base = Lowercase(SectionBase(List[i].Name));
+		Part P = { SectionFirstBar(S, List[i]), SectionLastBar(S, List[i]), List[i].Name, false, false, false };
+		const bool Free = IsFreeSectionBase(Base);
+		P.Carries = !Free && (Base == "a" || Base == "verse" || Base == "chorus") && !IsClimaxName(List[i].Name);
+		const int First = S.Time.BarStart(P.From), End = std::min(Total, S.Time.BarEnd(P.To));
+		P.Notes = End > First && !NotesIn(S.Notes(Channel), First, End).empty();
+		P.With = P.Notes && ChordRubOf(S, Ears, Channel, Melody, P.From, P.To).WithBars > 0;
+		Elsewhere = Elsewhere || (!Free && !P.Carries && P.With);
+		Parts.push_back(P);
+	}
+	int Keep = -1;
+	if (!Elsewhere)
+		for (size_t i = 0; i < Parts.size(); ++i)
+			if (Parts[i].Carries && Parts[i].With)
+				Keep = static_cast<int>(i);
+	std::vector<std::pair<int, int> > Out;
+	for (size_t i = 0; i < Parts.size(); ++i) {
+		const Part &P = Parts[i];
+		if (P.Carries && P.With && static_cast<int>(i) != Keep) {
+			if (!Out.empty() && Out.back().second + 1 == P.From)
+				Out.back().second = P.To;
+			else
+				Out.push_back(std::make_pair(P.From, P.To));
+			Resting.push_back("\"" + P.Name + "\"");
+		}
+		else if (P.Notes)
+			Playing.push_back("\"" + P.Name + "\"");
+	}
+	return Out;
+}
+
+std::string WordList(const std::vector<std::string> &Words);
+
+// A finding for a chord part that plays all through, or false
+bool ThroughoutFinding(Session &S, Hearing &Ears, int Channel, int Melody, int From, int To, ArrangeFinding &F)
+{
+	const ChordRub R = ChordRubOf(S, Ears, Channel, Melody, From, To);
+	if (R.MelodyBars < THROUGH_BARS || R.With() < THROUGH_WITH)
+		return false;
+	const ChordRoll Roll = ChordRollOf(S, Ears, Channel, From, To);
+	if (Roll.Same < THROUGH_SAME || Roll.NotesABar() > THROUGH_NOTES)
+		return false;
+	const std::string Name = S.Channel(Channel).FullName();
+	F = ArrangeFinding();
+	F.Kind = ARRANGE_THROUGHOUT;
+	F.Channel = Channel;
+	F.FromBar = R.FirstBar;
+	F.ToBar = R.LastBar;
+	F.Weight = 1.0;
+	F.Text = Format("A chord part that plays all through: %s's chords play under the melody in %d of its %d bars, the same way "
+		"in %.0f%% of their bars (%s a bar), so the song's texture never changes and the arpeggio wears thin. The soundtrack's "
+		"chord parts that play throughout restrike and vary their chords (their commonest rhythm in at most 84%% of their bars); "
+		"others rest where the melody carries the song and come in for the intro, B and the break, which gives each part "
+		"its own sound.", Name.c_str(), R.WithBars, R.MelodyBars, std::floor(Roll.Same * 100.0 + 0.5),
+		Plural(static_cast<int>(std::floor(Roll.NotesABar() + 0.5)), "chord", "chords").c_str());
+	F.Summary = Format("%s's chords play the same way under the melody in %d of its %d bars: they never rest", Name.c_str(), R.WithBars,
+		R.MelodyBars);
+	F.Details.Set("problem", "plays_all_through");
+	F.Details.Set("melody_bars", R.MelodyBars);
+	F.Details.Set("bars_with_melody", R.WithBars);
+	F.Details.Set("same_rhythm_share", Json::NumberText(FormatNumber(std::floor(Roll.Same * 100.0 + 0.5) / 100)));
+	F.Details.Set("notes_a_bar", Json::NumberText(FormatNumber(std::floor(Roll.NotesABar() * 10.0 + 0.5) / 10)));
+	std::vector<std::string> Resting, Playing;
+	const std::vector<std::pair<int, int> > Rests = ThroughoutRests(S, Ears, Channel, Melody, Resting, Playing);
+	F.Fix = Json();
+	Json Bars = Json::MakeArray();
+	for (size_t i = 0; i < Rests.size(); ++i) {
+		Json A = Json::MakeObject();
+		A.Set("channel", Name);
+		A.Set("variation", "rest");
+		A.Set("from_bar", Rests[i].first);
+		A.Set("to_bar", Rests[i].second);
+		const Json Call = ToolCall("vary_part", A, Format("lets %s's chords rest in %s, where the melody carries the song", Name.c_str(),
+			RangeText(Rests[i].first, Rests[i].second).c_str()));
+		if (F.Fix.IsNull())
+			F.Fix = Call;
+		else
+			ThenCall(F.Fix, Call);
+		Json Span = Json::MakeArray();
+		Span.Push(Rests[i].first);
+		Span.Push(Rests[i].second);
+		Bars.Push(Span);
+	}
+	if (!Rests.empty()) {
+		F.Text += Format(" So the chords rest in %s, where the melody carries the song, and play in %s.", WordList(Resting).c_str(),
+			Playing.empty() ? "no other part" : WordList(Playing).c_str());
+		F.Details.Set("rests", Bars);
+	}
+	else
+		F.Text += " The song has no parts named to rest them in by rule (name_section names them): let the chords sit out the "
+			"bars where the melody carries the song (vary_part's rest), or play them in another rhythm there.";
+	return true;
+}
+
+void ThroughoutFindings(Session &S, Hearing &Ears, int Melody, int From, int To, std::vector<ArrangeFinding> &Out)
+{
+	if (Melody < 0 || !IsMelodic(S.Channel(Melody)) || To - From + 1 < THROUGH_BARS)
+		return;
+	const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		bool Drones = false;	// (chord_drone's rests come first)
+		for (size_t i = 0; i < Out.size() && !Drones; ++i)
+			Drones = Out[i].Kind == ARRANGE_DRONE && Out[i].Channel == c;
+		ArrangeFinding F;
+		if (c != Melody && !Drones && PlaysChordPart(S, c, First, End) && ThroughoutFinding(S, Ears, c, Melody, From, To, F))
+			Out.push_back(F);
+	}
+}
+
 // Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats, the loop,
 // the intro and parts too busy for the NES
 std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const TrackUse &Use,
@@ -16104,6 +16285,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	IntroFinding(S, Ears, Melody, From, Style, Out);
 	BusyFindings(S, Melody, From, To, Out);
 	DroneFindings(S, Ears, Melody, From, To, Style, K, Out);
+	ThroughoutFindings(S, Ears, Melody, From, To, Out);
 	return Out;
 }
 
@@ -16382,6 +16564,78 @@ std::string ShortReview(const std::string &Head, const std::string &Cue, const s
 	for (size_t i = 0; i < Shown; ++i)
 		Text += Format("\n%d. ", static_cast<int>(i) + 1) + ShortTip(Tips[i].Text, Tips[i].Summary, Tips[i].Fix);
 	return Text;
+}
+
+// Whether the song's texture develops (from feat-texture). The user, of the Odds and Ends Shop, a small loop made by
+// following what_next: "the instruments are the same all the time, there are no new instruments introduced along the
+// track, so there is no excitement where I can say 'there, that's the part I love the most'". Its parts (A, A', B) each
+// played the same four channels with the same sounds; so did the Caves' (A, A', B, the climax). Measured on the songs the
+// user keeps whose parts are named (11 of the 44; songs without sections have no parts to compare): in every one a part
+// after the first plays a channel the first doesn't or leaves one out (The Narrows: A on three channels, A' on five, B on
+// seven; 57 Mud Caves E brings one in at A', with no sound new to the song). So a song of three named parts or more whose parts (an intro, a break and an
+// outro aside) all play the same channels (two notes or more each) with no sound new after the first is the same all the
+// way: it wants a highlight, a part where something new comes in (what_next's highlight: a new sound for the melody in
+// the contrasting part, Target)
+struct SongTexture {
+	int Parts;				// the named parts with a tune
+	bool Same;				// all play the same channels, and no sound comes in after the first
+	std::string Names;		// "A, A' and B"
+	int Target;				// the part a highlight goes in (an index into the sections): the contrasting part, else the climax,
+							// else the last; -1 without one
+	SongTexture() : Parts(0), Same(false), Target(-1) {}
+};
+
+SongTexture TextureOf(Session &S)
+{
+	SongTexture Out;
+	const SectionList &List = S.Song.Sections;
+	const int Total = S.Time.TotalRows();
+	std::set<std::string> Sets;
+	std::set<int> Heard;
+	std::vector<std::string> Names;
+	int New = 0, Contrast = -1, Climax = -1, Last = -1;
+	bool Body = false;
+	for (size_t i = 0; i < List.size(); ++i) {
+		const int First = S.Time.BarStart(SectionFirstBar(S, List[i])), End = std::min(Total, S.Time.BarEnd(SectionLastBar(S, List[i])));
+		const std::string Base = Lowercase(SectionBase(List[i].Name));
+		const bool Free = IsFreeSectionBase(Base);
+		std::string Set;
+		std::set<int> Here;
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			int Starts = 0;
+			for (const NoteInfo &N : NotesIn(S.Notes(c), First, End))
+				if (N.Row >= First && N.Volume > 0) {
+					++Starts;
+					if (IsMelodic(S.Channel(c)))
+						Here.insert(N.Instrument);
+				}
+			if (Starts >= 2)
+				Set += Format("%d ", c);
+		}
+		if (Free || Set.empty()) {
+			if (!Body)
+				Heard.insert(Here.begin(), Here.end());	// an intro's sounds are heard before the first part
+			continue;
+		}
+		for (std::set<int>::const_iterator it = Here.begin(); it != Here.end(); ++it)
+			New += Heard.insert(*it).second && Body ? 1 : 0;
+		Body = true;
+		Sets.insert(Set);
+		Names.push_back(List[i].Name);
+		++Out.Parts;
+		if (Out.Parts == 1)
+			continue;
+		if (Contrast < 0 && Base != "a" && Base != "verse" && Base != "chorus" && !IsClimaxName(List[i].Name))
+			Contrast = static_cast<int>(i);
+		if (Climax < 0 && IsClimaxName(List[i].Name))
+			Climax = static_cast<int>(i);
+		Last = static_cast<int>(i);
+	}
+	Out.Same = Out.Parts >= 3 && Sets.size() == 1 && New == 0;
+	Out.Target = Contrast >= 0 ? Contrast : Climax >= 0 ? Climax : Last;
+	for (size_t i = 0; i < Names.size(); ++i)
+		Out.Names += (i == 0 ? "" : i + 1 == Names.size() ? " and " : ", ") + Names[i];
+	return Out;
 }
 
 std::string ReviewTool(Session &S, const Json &Asked)
@@ -16700,6 +16954,16 @@ std::string ReviewTool(Session &S, const Json &Asked)
 			"alone, the bass joining later; a break without the drums and the melody) and the full sound where it matters. "
 			"Well-arranged tracks swing 8-12 dB in loudness between sections; the triangle is loud, so bars with it stay "
 			"loud. write_notes with an empty list of notes clears a part from bars.", static_cast<int>(std::floor(Swing + 0.5))));
+	// The same parts and sounds in every part of the song: no highlight (TextureOf)
+	if (Use.Use == TRACK_MUSIC) {
+		const SongTexture Texture = TextureOf(S);
+		if (Texture.Same)
+			Tip(0.5, Format("The texture never changes: %s each play the same parts with the same sounds, so nothing new comes in "
+				"and no part stands out as the one to love. Give the song a highlight where it turns (B, or the climax): a new "
+				"sound for the melody there (design_instrument, then set_instrument over its bars), a part that joins (a "
+				"harmony or a counter-melody), or the chords resting in A (vary_part's rest) so they come in later. The "
+				"soundtrack's songs bring a part or a sound in after their first part, every one.", Texture.Names.c_str()));
+	}
 
 	// The intro (the bars before the loop starts, or a section named Intro at the start), as the stems measure it: more
 	// than 10 dB under the rest it reads as silence in a game (6-10 dB under is the soundtrack's target)
@@ -26071,20 +26335,22 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // TOO_BUSY (from feat-busy-check): the arrangement's ARRANGE_BUSY, a part too busy for the NES (BusyFindings); BUSY is a
 // bar of quick notes, the older and smaller check. CLIMAX (from feat-tool-replies): ARRANGE_CLIMAX, a section named as the
 // high point whose melody repeats an earlier one's (ClimaxFindings). CHORD_DRONE (from feat-chord-rests, its rule from
-// feat-chords-room): ARRANGE_DRONE, chords that rub the tune through the song (DroneFindings)
+// feat-chords-room): ARRANGE_DRONE, chords that rub the tune through the song (DroneFindings). CHORDS_THROUGHOUT (from
+// feat-texture): ARRANGE_THROUGHOUT, a chord part that plays the same way in nearly every bar of the melody (ThroughoutFindings)
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
 	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY,
-	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_KINDS };
+	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_CHORDS_THROUGHOUT, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
-	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats", "chord_drone" };
+	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats", "chord_drone", "chords_throughout" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium" };
+	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium", "low" };
 
 // The check_song kind of one of ArrangeFindings' (arrange_kind)
 int ArrangeCheckKind(int Kind)
 {
 	return Kind == ARRANGE_BUSY ? static_cast<int>(FOUND_TOO_BUSY) : Kind == ARRANGE_CLIMAX ? static_cast<int>(FOUND_CLIMAX) :
 		Kind == ARRANGE_DRONE ? static_cast<int>(FOUND_CHORD_DRONE) :
+		Kind == ARRANGE_THROUGHOUT ? static_cast<int>(FOUND_CHORDS_THROUGHOUT) :
 		FOUND_PHRASES + Kind;
 }
 
@@ -26600,7 +26866,8 @@ std::string CheckTool(Session &S, const Json &Asked)
 	}
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
-		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX], Arranged[ARRANGE_DRONE] };
+		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX], Arranged[ARRANGE_DRONE],
+		Arranged[ARRANGE_THROUGHOUT] };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -26676,7 +26943,7 @@ std::string CheckTool(Session &S, const Json &Asked)
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind. The arrangement's few findings are all listed, after the rest
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
-		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "", "", "", "" };
+		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "", "", "", "", "", "" };
 	int Shown[FOUND_KINDS], Left = MAX_LISTED * 3;
 	bool Any = false;
 	for (int k = FOUND_PHRASES; k < FOUND_KINDS; ++k) {
@@ -28438,6 +28705,17 @@ bool IsFreeSectionBase(const std::string &Base)
 	return Word == "end";
 }
 
+// An outro's name: the turnaround at a song's end
+bool IsOutroBase(const std::string &Base)
+{
+	const std::string Word = Lowercase(Base);
+	static const char *const OUTRO[] = { "outro", "ending", "coda", "turnaround" };
+	for (size_t i = 0; i < sizeof(OUTRO) / sizeof(OUTRO[0]); ++i)
+		if (Word.compare(0, std::strlen(OUTRO[i]), OUTRO[i]) == 0)
+			return true;
+	return Word == "end";
+}
+
 // The track's form: its sections in order, and the stretches of bars between them that no section has
 std::vector<FormPart> SongForm(Session &S)
 {
@@ -28927,6 +29205,7 @@ private:
 	bool Climax(const std::string &Tip);
 	bool Doubled(const FormPart &P, const std::string &Tip);
 	bool LeadSound(const std::string &Id, const std::string &KindWord, const std::string &Name, const std::string &Why);
+	void Highlight();
 	void NameSections();
 	void MelodyStep();
 	void GrowForm();
@@ -30783,18 +31062,117 @@ void WhatNext::Depth()
 		Put.Set("name", "Intro");
 		Step("intro", "insert_bars", Put, Format("An intro that plays once opens the song quietly: %s at the start, then filled with the %s "
 			"in A's rhythm%s, so it leads into A: quieter than A (fewer parts), not slower.", Plural(Short, "bar", "bars").c_str(),
-			Calm() ? "chords alone" : "chords and bass", Calm() ? "" : " and the beat coming in during its last bar"));
+			CalmStyle() ? "chords alone" : "chords and bass", Calm() ? "" : " and the beat coming in during its last bar"));
 	}
 	// The intro and the break filled with the chords and the bass of the A part: its first bars for the intro, its last for a
-	// break, which then leads back in as A's end does
+	// break, which then leads back in as A's end does. An outro of a song that loops gets A's last bars whole, the melody and
+	// the drums too (from feat-texture): Guard Tower's outro had only the chords and the bass copied in, then the loop went
+	// back to A, and the user heard the end as "kinda missing some notes"; A's closing phrase leads into A's start as it does
+	// into its repeat
+	const bool Loops = !Flow(S).Halts();
 	for (size_t i = 0; i < m_Form.size(); ++i) {
 		const FormPart &P = m_Form[i];
-		if (!P.Named || !P.Free || !P.Empty)
+		if (!P.Named || !P.Free)
 			continue;
 		const FormPart &Source = m_Form[static_cast<size_t>(A)];
 		const int Length = std::min(P.LastBar - P.FirstBar + 1, Source.LastBar - Source.FirstBar + 1);
 		const int From = i == 0 ? Source.FirstBar : Source.LastBar - Length + 1;
-		const std::vector<int> Channels = BackingChannels(S.Time.BarStart(Source.FirstBar), std::min(S.Time.BarEnd(Source.LastBar), Total));
+		const int SourceFirst = S.Time.BarStart(From), SourceEnd = std::min(S.Time.BarEnd(From + Length - 1), Total);
+		if (i > 0 && Loops && IsOutroBase(P.Base) && Wanted("outro")) {
+			// (what A's closing bars play that the outro doesn't yet: all of it in an empty outro, else the melody and the drums)
+			const int First = S.Time.BarStart(P.FirstBar), End = std::min(S.Time.BarEnd(P.LastBar), Total);
+			const bool Tuneless = !NoteStartsIn(S, m_Melody, First, End) && NoteStartsIn(S, m_Melody, SourceFirst, SourceEnd);
+			Json List = Json::MakeArray();
+			for (int c = 0; c < S.ChannelCount() && (P.Empty || Tuneless); ++c)
+				if (NoteStartsIn(S, c, SourceFirst, SourceEnd) && (P.Empty || ((c == m_Melody || !IsMelodic(S.Channel(c))) &&
+					!NoteStartsIn(S, c, First, End))))
+					List.Push(ChannelName(c));
+			if (List.Size() == 0)
+				continue;
+			Json Copy = Json::MakeObject();
+			Copy.Set("from_bar", From);
+			Copy.Set("to_bar", From + Length - 1);
+			Copy.Set("at_bar", P.FirstBar);
+			Copy.Set("channels", List);
+			Step("outro", "copy_bars", Copy, Format("%s %s: the song loops, so the outro leads back in with %s's closing phrase (bars "
+				"%d-%d), %s, which runs into %s's start as it does into its repeat. An outro of the chords and the bass alone sounds "
+				"as if the tune had dropped out before the loop.", P.Name.c_str(), P.Empty ? "is empty" : "plays without the melody",
+				Source.Name.c_str(), From, From + Length - 1, P.Empty ? "every part of it" : "its melody and drums",
+				Source.Name.c_str()));
+			continue;
+		}
+		if (!P.Empty) {
+			// A short break that ends a song that loops (a boss fight's two bars, a small loop's) leads back in: the second half
+			// of A's last bar's melody (the tune's closing notes, a pickup into A) in the second half of its own last bar, so
+			// it still breathes (A's whole last bar there, and with the drums, the boss fights' walks kept "about one
+			// loudness"). Guard Tower's two bars of chords and bass alone before the loop went back to A sounded "kinda missing
+			// some notes". A break of four bars or more is a part of its own, a breath: the Ironworks the user liked ends on
+			// four bars of its chords, a bass and a few drums. Not a calm night's break with its one small sound (BreakSound),
+			// nor a break whose last bar has the tune already
+			bool Ends = i > 0 && P.LastBar - P.FirstBar + 1 < 4;
+			for (size_t j = i + 1; j < m_Form.size() && Ends; ++j)
+				Ends = m_Form[j].Empty;
+			if (!Ends || !Loops || !Wanted("outro") || PartLine(P.Name, pLaid).find("one small sound") != std::string::npos)
+				continue;
+			const int LastFirst = S.Time.BarStart(P.LastBar), LastEnd = std::min(S.Time.BarEnd(P.LastBar), Total);
+			const int AFirst = S.Time.BarStart(Source.LastBar), AEnd = std::min(S.Time.BarEnd(Source.LastBar), Total);
+			const int Eighth = EighthRows();
+			if (NoteStartsIn(S, m_Melody, LastFirst, LastEnd) || Eighth <= 0 || S.Time.BarLength(P.LastBar) != AEnd - AFirst ||
+				(AEnd - AFirst) % (2 * Eighth) != 0)
+				continue;
+			// The pickup: the melody's notes starting in the second half of A's last bar, each to the next (the last to the bar's
+			// end), on the grid of eighths
+			const int Half = AFirst + (AEnd - AFirst) / 2;
+			std::vector<NoteInfo> Pickup;
+			for (const NoteInfo &N : NotesIn(S.Notes(m_Melody), Half, AEnd))
+				if (N.Row >= Half && N.Volume > 0)
+					Pickup.push_back(N);
+			bool OnGrid = !Pickup.empty();
+			for (size_t n = 0; n < Pickup.size() && OnGrid; ++n)
+				OnGrid = (Pickup[n].Row - AFirst) % Eighth == 0;
+			if (!OnGrid)
+				continue;
+			StepLine Line;
+			StepLineBar Bar;
+			Bar.Steps = (AEnd - AFirst) / Eighth;
+			Line.FirstBar = P.LastBar;
+			Line.Bars.push_back(Bar);
+			for (size_t n = 0; n < Pickup.size(); ++n) {
+				StepLineNote Note;
+				Note.Step = (Pickup[n].Row - AFirst) / Eighth;
+				const int Until = n + 1 < Pickup.size() ? Pickup[n + 1].Row : std::min(AEnd, Pickup[n].Row + Pickup[n].Rows);
+				Note.Steps = std::max(1, (Until - Pickup[n].Row + Eighth - 1) / Eighth);
+				Note.Steps = std::min(Note.Steps, Bar.Steps - Note.Step);
+				Note.Pitch = StepPitch(S.Channel(m_Melody), Pickup[n].Pitch, Spell());
+				Note.Volume = n == 0 ? Pickup[n].Volume : -1;
+				Line.Notes.push_back(Note);
+			}
+			Json W = Json::MakeObject();
+			W.Set("channel", ChannelName(m_Melody));
+			W.Set("from_bar", P.LastBar);
+			W.Set("to_bar", P.LastBar);
+			W.Set("notes", FormatStepLine(Line));
+			int Added = 0;
+			if (!TryWrite(S, "write_notes", W, P.LastBar, P.LastBar, m_Melody, Added) || Added > 0)
+				continue;
+			Step("outro", "write_notes", W, Format("%s ends the song on the chords alone before the loop goes back to %s, which sounds "
+				"as if the tune had dropped out: the second half of its last bar (bar %d) takes the tune's closing notes from %s's "
+				"last bar (bar %d), a pickup that leads back in while the break still breathes.", P.Name.c_str(), Source.Name.c_str(),
+				P.LastBar, Source.Name.c_str(), Source.LastBar));
+			continue;
+		}
+		std::vector<int> Channels = BackingChannels(S.Time.BarStart(Source.FirstBar), std::min(S.Time.BarEnd(Source.LastBar), Total));
+		// A song in calm's style opens on the chords alone, the bass joining with A (from feat-texture): with the bass, the
+		// triangle kept the intro as loud as the rest, and bittersweet, melancholic and cozy songs kept "about one loudness all
+		// the way through" (3 dB) after what_next said done
+		if (i == 0 && CalmStyle() && Channels.size() > 1 && m_Parts.Bass >= 0) {
+			std::vector<int> Chords;
+			for (size_t c = 0; c < Channels.size(); ++c)
+				if (Channels[c] != m_Parts.Bass)
+					Chords.push_back(Channels[c]);
+			if (!Chords.empty())
+				Channels = Chords;
+		}
 		if (Channels.empty())
 			continue;
 		Json Copy = Json::MakeObject();
@@ -31468,6 +31846,54 @@ bool WhatNext::LeadSound(const std::string &Id, const std::string &KindWord, con
 	return Step(Id, "set_instrument", A, Why + " The melody takes " + FindInstrument(S.Song, Made)->Name + ".");
 }
 
+// A highlight (from feat-texture): a song whose parts all play the same channels with the same sounds (TextureOf; the
+// Odds and Ends Shop: "no new instruments introduced along the track, so there is no excitement where I can say 'there,
+// that's the part I love the most'") gets a new sound for the melody where the song turns (B, else the climax, else its
+// last part): another lead of the kind's pool (a calm kind's are gentle: a breath for a music box), designed for the
+// melody's channel, then taken by the melody over that part's bars. Once something new comes in, nothing is asked
+void WhatNext::Highlight()
+{
+	if (!m_HasMelody || m_Melody < 0 || !Wanted("highlight") || m_Unmet.count("form") != 0 || m_Unmet.count("melody") != 0)
+		return;
+	const SongTexture T = TextureOf(S);
+	if (!T.Same || T.Target < 0)
+		return;
+	const Section &Part = S.Song.Sections[static_cast<size_t>(T.Target)];
+	const int From = SectionFirstBar(S, Part), To = SectionLastBar(S, Part);
+	std::vector<std::string> Leads = PoolEntries(Kind().Leads);
+	const char *const GENTLE[] = { "breath", "music box", "falling strike" }, *const BRIGHT[] = { "lead", "bloom lead", "brass" };
+	for (size_t i = 0; i < 3; ++i)
+		Leads.push_back(CalmStyle() ? GENTLE[i] : BRIGHT[i]);
+	std::string Lead;
+	for (size_t i = 0; i < Leads.size() && Lead.empty(); ++i)
+		if (!Leads[i].empty() && Leads[i] != m_Picks.Lead.Value && Leads[i] != Kind().LeadKind)
+			Lead = Leads[i];
+	if (Lead.empty())
+		return;
+	const std::string Name = "Highlight lead";
+	const int Made = FindInstrumentNamed(Name, m_Melody);
+	if (Made < 0) {
+		Json A = Json::MakeObject();
+		A.Set("name", Name);
+		A.Set("kind", Lead);
+		A.Set("channel", ChannelName(m_Melody));
+		if (Lead == "music box")
+			CalmLeadArgs(A, S.Channel(m_Melody));
+		Step("highlight", "design_instrument", A, Format("The texture never changes: %s each play the same parts with the same sounds, "
+			"so no part stands out. A highlight where the song turns: the melody takes a new sound in %s (bars %d-%d), first the "
+			"sound (kind %s, another of the leads a %s song draws from), then the melody takes it there.", T.Names.c_str(),
+			Part.Name.c_str(), From, To, Lead.c_str(), Kind().Name));
+		return;
+	}
+	Json A = Json::MakeObject();
+	A.Set("channel", ChannelName(m_Melody));
+	A.Set("instrument", Name);
+	A.Set("from_bar", From);
+	A.Set("to_bar", To);
+	Step("highlight", "set_instrument", A, Format("The melody takes its new sound (%s) in %s (bars %d-%d): the part the song turns "
+		"in sounds new, the highlight the ear waits for.", Name.c_str(), Part.Name.c_str(), From, To));
+}
+
 // An echo of the melody, a beat behind on the other side: depth's last step, since it copies the melody's notes as they are
 void WhatNext::Echo()
 {
@@ -31826,6 +32252,8 @@ void WhatNext::Work()
 			Tips();
 		Echo();		// cheap: its milestone counts even when a step came before it
 		if (Looking())
+			Highlight();
+		if (Looking())
 			Polish();
 		if (Looking())
 			Mix();
@@ -32052,6 +32480,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 	if (Id == "chord_drone")
 		return Where(Tool == "polish" ? "Take out the chords' colors that rub the melody" :
 			"Fit the chords to the melody so they stop rubbing it", true);
+	if (Id == "chords_throughout")
+		return Where("Let the chords rest where the melody carries the song", true);
 	// The recipe's steps
 	if (Id == "tempo")
 		return "Set the tempo to " + FormatNumber(Number("bpm")) + " BPM";
@@ -32126,6 +32556,12 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		return Format("Fill the %s with %s", Id.c_str(), pChannels != 0 && pChannels->IsArray() && pChannels->Size() > 1 ?
 			"the chords and the bass" : "the chords");
 	}
+	if (Id == "outro")
+		return Tool == "write_notes" ? Format("Lead the song's end back into the loop: the tune's closing notes in bar %d",
+			static_cast<int>(Number("from_bar"))) : Format("Lead the outro back into the loop with A's closing phrase (bar %d)", At);
+	if (Id == "highlight")
+		return Where(Tool == "design_instrument" ? "Make a new sound for the song's highlight" : "Give the melody its new sound in the "
+			"highlight", false);
 	if (Id == "loop")
 		return Format("Loop the song from bar %d to its end", static_cast<int>(Number("from_bar")));
 	if (Id == "tips") {

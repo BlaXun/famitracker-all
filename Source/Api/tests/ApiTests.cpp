@@ -20356,6 +20356,9 @@ void CheckDoneReview(FakeSong &Song, const std::string &What, int Line)
 			Tips += Tip + "\n";
 	}
 	Check(Tips.empty(), (What + ": after done, the review's tips:\n" + Tips + Review).c_str(), Line);
+	// (and no chord part plays the same way all through: its chords rest where the melody carries the song, feat-texture)
+	const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+	Check(IntegerOf(Found.Get("counts"), "chords_throughout") == 0, (What + ": a chord part plays all through").c_str(), Line);
 }
 
 // A new song as FamiTracker's template starts it (speed 6, tempo 120: rows of 7 and 8 frames), changes allowed
@@ -20506,7 +20509,7 @@ void TestWhatNextLoop()
 		const std::string Style = *K.Style ? std::string("\"style\": \"") + K.Style + "\"" : std::string();
 		const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + (Style.empty() ? std::string() : ", " + Style) +
 			"}").Text);
-		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone" };
+		const char *const CLEAN[] = { "vanishing", "click", "clash", "range", "intro", "too_busy", "chord_drone", "chords_throughout" };
 		bool Clean = true;
 		for (const char *Kind : CLEAN) {
 			Check(IntegerOf(Found.Get("counts"), Kind) == 0, (std::string(K.Asked) + " " + Kind).c_str(), __LINE__);
@@ -27846,6 +27849,166 @@ void ColorSong(FakeSong &Song, bool Colored)
 // polish's colors touch (feat-color-rubs): a chord part's colors that rub the melody taken out, the notes, the
 // progression and the bass kept; colors add gives plain lush chords the rich colors that fit; check_song's chord_drone
 // gives the touch as its fix when it brings the rubs under DRONE_RUB
+// A song for the texture's checks (feat-texture): bars of 16 rows, the sections given (name, first and last frame), a tune
+// on VRC6 Pulse 1 and a bass on the triangle in every part but an intro, a break or an outro, and chords on 2A03 Pulse 1 (a lush
+// major chord) in every part: one held chord a bar (Rolling), else struck on a varying rhythm (two strikes, then three, by
+// the bar)
+void TextureSong(FakeSong &Song, const std::vector<Section> &Parts, bool Rolling)
+{
+	Song.Info.DirectChanges = true;
+	Song.AddInstrumentInfo(3, "Lush major", "2A03", false);
+	Song.Info.Instruments.back().Volume = { 15, 14, 14, 13, 13, 12, 12, 12, 11, 11, 11, 10, 9, 7, 5, 3, 2, 1, 0 };
+	Song.Info.Instruments.back().VolumeRelease = 11;
+	Song.Info.Instruments.back().Steps.Items = { 0, 0, 4, 4, 7, 7, 12, 12 };
+	Song.Info.Instruments.back().Steps.Loop = 0;
+	Song.Info.Instruments.back().Arpeggio = { 4, 7, 12 };
+	Song.Info.Sections = Parts;
+	Song.Info.KeyChosen = true;
+	ParseKey("C major", Song.Info.ChosenKey.K);
+	static const char *const ROOTS[4] = { "C-3", "A-2", "F-2", "G-2" };
+	static const char *const TUNE[8] = { "G-4", "A-4", "C-5", "A-4", "G-4", "E-4", "D-4", "E-4" };
+	const int Bars = static_cast<int>(Song.Rows[0].size()) / 16;
+	for (int Bar = 1; Bar <= Bars; ++Bar) {
+		const int Row = (Bar - 1) * 16;
+		bool Free = false;
+		for (const Section &P : Parts)
+			if ((Bar - 1) / (Song.Info.PatternLength / 16) >= P.First && (Bar - 1) / (Song.Info.PatternLength / 16) <= P.Last)
+				Free = P.Name == "Intro" || P.Name == "Outro" || P.Name == "Break";
+		const char *Root = ROOTS[(Bar - 1) % 4];
+		Song.Put(0, Row, Root, Bar == 1 ? 3 : NO_INSTRUMENT, Bar == 1 ? 8 : -1);
+		if (!Rolling) {
+			Song.Put(0, Row + (Bar % 2 == 0 ? 6 : 8), Root);
+			if (Bar % 2 == 0)
+				Song.Put(0, Row + 12, Root);
+		}
+		if (Free)
+			continue;
+		Song.Put(2, Row, Root, Bar == 1 || Bar == 5 ? 1 : NO_INSTRUMENT);
+		Song.Put(2, Row + 8, Root);
+		for (int Beat = 0; Beat < 4; ++Beat)
+			if (Beat < 3 || Bar % 2 == 1)
+				Song.Put(5, Row + Beat * 4, TUNE[((Bar - 1) * 4 + Beat) % 8], Beat == 0 ? 0 : NO_INSTRUMENT, Beat == 0 ? 10 : -1);
+			else
+				Song.End(5, Row + Beat * 4, NOTE_RELEASE);
+	}
+}
+
+// The texture (from feat-texture): a chord part that plays the same way all through rests where the melody carries the
+// song (check_song's chords_throughout, its fix vary_part's rest, what_next's step); a song whose parts all play the same
+// channels with the same sounds gets the review's tip and what_next's highlight, a new sound for the melody in B; an outro
+// of a song that loops leads back in with A's closing bars, the melody and the drums too, and a short break ending it with
+// a pickup
+void TestTexture()
+{
+	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	const std::vector<Section> Form = { Section("A", 0, 1), Section("A'", 2, 3), Section("B", 4, 5), Section("Climax", 6, 7) };
+	{
+		FakeSong Song(8);
+		TextureSong(Song, Form, true);
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		CHECK(FindingsOf(Out, "chord_drone").empty());
+		const std::vector<const Json *> Found = FindingsOf(Out, "chords_throughout", "plays_all_through");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "chords_throughout"), 1);
+		if (!Found.empty()) {
+			CHECK_EQ(IntegerOf(Found[0], "channel"), 1);
+			CHECK_EQ(TextOf(Found[0], "severity"), std::string("low"));
+			CHECK_EQ(IntegerOf(Found[0], "bars_with_melody"), 32);
+			CHECK_HAS(TextOf(Found[0], "message"), "A chord part that plays all through: 2A03 Pulse 1's chords play under the "
+				"melody in 32 of its 32 bars, the same way in 100% of their bars");
+			CHECK_HAS(TextOf(Found[0], "message"), "So the chords rest in \"A\" and \"A'\", where the melody carries the song, "
+				"and play in \"B\" and \"Climax\"");
+			const Json *pFix = Found[0]->Get("fix");
+			CHECK(pFix != 0 && TextOf(pFix, "tool") == "vary_part" && pFix->Get("then") == 0);
+			if (pFix != 0 && pFix->Get("arguments") != 0)
+				CHECK_EQ(WriteJson(*pFix->Get("arguments")), std::string("{\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\","
+					"\"from_bar\":1,\"to_bar\":16}"));
+			CHECK(Found[0]->Get("rests") != 0 && WriteJson(*Found[0]->Get("rests")) == "[[1,16]]");
+		}
+		ProblemList List;
+		std::string Error;
+		CHECK(List.Read(Run(Song, "check_song", Args).Text, Error));
+		CHECK_EQ(List.Count(PROBLEM_CHORDS_THROUGHOUT), 1);
+		CHECK_EQ(std::string(ProblemKindId(PROBLEM_CHORDS_THROUGHOUT)), std::string("chords_throughout"));
+		CHECK_EQ(ProblemSeverity(PROBLEM_CHORDS_THROUGHOUT), 1);
+		CHECK_HAS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "A chord part that plays all through");
+		const std::string Next = Run(Song, "what_next", "{\"all\": true, \"kind\": \"adventure\"}").Text;
+		CHECK_HAS(Next, "vary_part {\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\",\"from_bar\":1,\"to_bar\":16}");
+		// Made, the chords rest in A and A' and play in B and the climax: nothing left to find, and the parts differ
+		CHECK(!Run(Song, "vary_part", "{\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\",\"from_bar\":1,\"to_bar\":16}").IsError);
+		bool Quiet = true;
+		for (int r = 0; r < 16 * 16; ++r)
+			Quiet = Quiet && !Song.Rows[0][static_cast<size_t>(r)].HasNote();
+		CHECK(Quiet);
+		CHECK(Song.Rows[0][16 * 16].HasNote());
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chords_throughout").empty());
+		CHECK_LACKS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "The texture never changes");
+	}
+	{
+		// Struck again on a rhythm that varies (as the soundtrack's chord parts are): no finding, though they play throughout
+		FakeSong Song(8);
+		TextureSong(Song, Form, false);
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chords_throughout").empty());
+		// Every part plays the same channels with the same sounds: the review's tip, and what_next's highlight, a new sound
+		// for the melody in B (the contrasting part), then the melody takes it there
+		const std::string Review = Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text;
+		CHECK_HAS(Review, "The texture never changes: A, A', B and Climax each play the same parts with the same sounds");
+		std::string Next = Run(Song, "what_next", "{\"all\": true, \"kind\": \"adventure\"}").Text;
+		CHECK_HAS(Next, "design_instrument {\"name\":\"Highlight lead\",\"kind\":\"");
+		CHECK_HAS(Next, "the melody takes a new sound in B (bars 17-24)");
+		const size_t At = Next.find("design_instrument {\"name\":\"Highlight lead\"");
+		Json Design;
+		const size_t Open = At == std::string::npos ? std::string::npos : Next.find('{', At);
+		CHECK(Open != std::string::npos && ParseJson(Next.substr(Open, Next.find('}', Open) - Open + 1), Design));
+		CHECK(!Run(Song, "design_instrument", WriteJson(Design)).IsError);
+		Next = Run(Song, "what_next", "{\"all\": true, \"kind\": \"adventure\"}").Text;
+		CHECK_HAS(Next, "set_instrument {\"channel\":\"VRC6 Pulse 1\",\"instrument\":\"Highlight lead\",\"from_bar\":17,"
+			"\"to_bar\":24}");
+		CHECK(!Run(Song, "set_instrument", "{\"channel\":\"VRC6 Pulse 1\",\"instrument\":\"Highlight lead\",\"from_bar\":17,"
+			"\"to_bar\":24}").IsError);
+		CHECK_LACKS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "The texture never changes");
+		CHECK_LACKS(Run(Song, "what_next", "{\"all\": true, \"kind\": \"adventure\"}").Text, "Highlight lead");
+	}
+	{
+		// An outro of the chords and the bass alone, in a song that loops: A's closing bars there, the melody too
+		FakeSong Song(10);
+		TextureSong(Song, { Section("A", 0, 1), Section("A'", 2, 3), Section("B", 4, 5), Section("A''", 6, 7),
+			Section("Outro", 8, 9) }, false);
+		for (int Bar = 33; Bar <= 40; ++Bar)
+			Song.Put(2, (Bar - 1) * 16, "C-3", NO_INSTRUMENT);
+		const std::string Next = Run(Song, "what_next", "{\"all\": true, \"kind\": \"adventure\"}").Text;
+		CHECK_HAS(Next, "copy_bars {\"from_bar\":1,\"to_bar\":8,\"at_bar\":33,\"channels\":[\"VRC6 Pulse 1\"]}");
+		CHECK_HAS(Next, "the song loops, so the outro leads back in with A's closing phrase (bars 1-8)");
+		CHECK(!Run(Song, "copy_bars", "{\"from_bar\":1,\"to_bar\":8,\"at_bar\":33,\"channels\":[\"VRC6 Pulse 1\"]}").IsError);
+		CHECK_LACKS(Run(Song, "what_next", "{\"all\": true, \"kind\": \"adventure\"}").Text, "the outro leads back in");
+	}
+	{
+		// A short break that ends the song on the chords alone (Guard Tower's two bars): the second half of its last bar takes
+		// the tune's closing notes from A's last bar, a pickup; one of four bars is a part of its own (Ironworks-liked's)
+		for (int Short = 0; Short < 2; ++Short) {
+			FakeSong Song(Short ? 8 : 9);
+			Song.Info.PatternLength = 32;
+			Song.Info.Frames *= 2;
+			TextureSong(Song, { Section("A", 0, 3), Section("A'", 4, 7), Section("B", 8, 11), Section("A''", 12, Short ? 14 : 15),
+				Section("Break", Short ? 15 : 16, Short ? 15 : 17) }, false);
+			const std::string Next = Run(Song, "what_next", "{\"all\": true, \"kind\": \"action\"}").Text;
+			if (!Short) {
+				CHECK_LACKS(Next, "ends the song on the chords alone");
+				continue;
+			}
+			const size_t At = Next.find("write_notes {\"channel\":\"VRC6 Pulse 1\",\"from_bar\":32,\"to_bar\":32,\"notes\":");
+			CHECK(At != std::string::npos);
+			CHECK_HAS(Next, "Break ends the song on the chords alone before the loop goes back to A");
+			Json Pickup;
+			CHECK(At != std::string::npos && ParseJson(Next.substr(At + 12, Next.find('}', At) - At - 11), Pickup));
+			CHECK(!Run(Song, "write_notes", WriteJson(Pickup)).IsError);
+			// (A's last bar's second half: its D-4 on beat 3)
+			CHECK(Song.Rows[5][31 * 16 + 8].HasNote() && !Song.Rows[5][31 * 16].HasNote() && !Song.Rows[5][30 * 16].HasNote());
+			CHECK_LACKS(Run(Song, "what_next", "{\"all\": true, \"kind\": \"action\"}").Text, "ends the song on the chords alone");
+		}
+	}
+}
+
 void TestColorRubs()
 {
 	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}";
@@ -29880,6 +30043,7 @@ int main()
 	TestBusyFindings();
 	TestToolReplies();
 	TestChordDrones();
+	TestTexture();
 	TestColorRubs();
 	TestIntroNoteIntoLoop();
 	TestEchoInTuneWhereDoubled();
