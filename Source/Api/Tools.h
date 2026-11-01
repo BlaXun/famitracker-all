@@ -149,6 +149,9 @@ public:
 	// For FamiTracker's piano roll: the selected track's key (chosen, or found from the notes as the tools find it)
 	// and the chords its parts play, as get_song hears them; false with the reason when there's no song
 	bool Harmony(TrackHarmony &Out, std::string &Error);
+	// For calibrating what makes a tune catchy (song_file_checks -tunes): the selected track's melody measured as TuneShape.h
+	// measures it, its opening 8 bars and the whole of it, a line each
+	std::string TuneShapes();
 	// For FamiTracker's sound browser (Instrument > Sound browser): every sound the song can get, as find_sound
 	// lists them (SoundIndex.h), Cursor the channel the user is on (-1 for none); false with the reason. Without
 	// Library, the ready-made sounds and the song's own only, quickly (the main window's Listen)

@@ -91,6 +91,7 @@ struct GrownVersion {
 	std::vector<int> PeakBars;		// where (from 0)
 	std::vector<int> Hooks;			// the bars (from 0) where the motif comes back as written, its first bar
 	std::vector<int> Phrases;		// each phrase's bars, in order
+	std::vector<std::string> Monotone;	// what's monotone about its first 8 bars (TuneShape.h's MonotoneMelody), empty when not
 	GrownVersion() : Spans(0), Breaths(0) {}
 };
 
