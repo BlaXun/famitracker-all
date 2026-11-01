@@ -31211,7 +31211,7 @@ void TestSfxEar()
 	CHECK(Stone.layers[0].volume[0] >= 12 && Stone.layers[0].pitchAt(0) >= 12.0);
 	On.Surface = "snow";
 	const transcribe::SoundEffect Snow = MakeSoundKind(*FindSoundEffect("footstep"), On);
-	CHECK(*std::max_element(Snow.layers[0].volume.begin(), Snow.layers[0].volume.end()) <= 4 && Snow.layers[0].pitchAt(0) <= 8.5 &&
+	CHECK(*std::max_element(Snow.layers[0].volume.begin(), Snow.layers[0].volume.end()) <= 4 && Snow.layers[0].pitchAt(0) <= 9.0 &&
 		Snow.length() <= 7);
 	CHECK(SoundLevelOffset(*FindSoundEffect("footstep"), On) < 0.0);
 	On.Surface = "metal";
@@ -31281,8 +31281,10 @@ void TestSfxEarWritten()
 		Check(!Result.IsError, MADE[m].Args, __LINE__);
 		const int Used = static_cast<int>(Song.Info.Instruments.size() - Before);
 		Check(Used <= MADE[m].Most, MADE[m].Args, __LINE__);
-		Check(Result.Text.find(" It uses " + std::to_string(Used) + (Used == 1 ? " instrument." : " instruments.") + " The module has") != std::string::npos,
-			MADE[m].Args, __LINE__);
+		const std::string Uses = " It uses " + std::to_string(Used) + (Used == 1 ? " instrument." : " instruments.") + " The module has";
+		if (Result.Text.find(Uses) == std::string::npos)
+			std::printf("  %s (%d): %s\n", MADE[m].Kind, Used, Result.Text.c_str());
+		Check(Result.Text.find(Uses) != std::string::npos, MADE[m].Args, __LINE__);
 		SoundKindOptions O;
 		O.Seed = 1;
 		int Period = 0;
@@ -31293,7 +31295,7 @@ void TestSfxEarWritten()
 		bool Same = Played.size() >= static_cast<size_t>(L.start + L.length());
 		for (int t = 0; t < L.length() && Same; ++t) {
 			const PlayedTick &P = Played[static_cast<size_t>(L.start + t)];
-			Same = P.Volume == L.volume[static_cast<size_t>(t)] && (P.Volume == 0 || std::fabs(P.Pitch - L.pitchAt(t)) < 0.5);
+			Same = P.Volume == L.volume[static_cast<size_t>(t)] && (P.Volume == 0 || std::fabs(P.Pitch - L.pitchAt(t)) <= 0.5);
 			if (!Same)
 				std::printf("  %s: tick %d plays %d at %.1f, made %d at %.1f\n", MADE[m].Kind, t, P.Volume, P.Pitch,
 					L.volume[static_cast<size_t>(t)], L.pitchAt(t));

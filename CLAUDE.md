@@ -3010,7 +3010,9 @@ column on every note, since the column lasts), and cuts each layer either
 as `SoundPieces` or as the notes it sounds in (`SoundEvents`: at silences
 and where a pitch held `SFX_HELD_PITCH_TICKS` gives way to another),
 whichever needs fewer instruments; the reply says how many the sound uses
-(`SoundRoomText`'s `Uses`): an 8 s waves loop 2, bubbles 1. Glides
+(`SoundRoomText`'s `Uses`): an 8 s waves loop 2, bubbles 1. `Format` in
+`Tools.cpp` takes any length now: its 1024 bytes had cut the longer sound
+replies off mid-word. Glides
 between semitones give each pitch its own pitch sequence, so shapes meant
 to share keep whole semitones. `TestSfxEar` and `TestSfxEarWritten` (each
 channel as the cells and instruments play it, the sound as made) cover it.

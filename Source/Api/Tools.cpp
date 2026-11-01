@@ -98,14 +98,25 @@ struct Problem {
 	explicit Problem(const std::string &Reason) : Text(Reason) {}
 };
 
+// Any length (a sound effect's reply ran past the 1024 bytes this once held, and was cut off mid-word: fix-sfx-ear)
 std::string Format(const char *pFormat, ...)
 {
 	char Buffer[1024];
-	va_list Args;
+	va_list Args, Again;
 	va_start(Args, pFormat);
-	std::vsnprintf(Buffer, sizeof(Buffer), pFormat, Args);
+	va_copy(Again, Args);
+	const int Needed = std::vsnprintf(Buffer, sizeof(Buffer), pFormat, Args);
 	va_end(Args);
-	return Buffer;
+	std::string Out;
+	if (Needed >= static_cast<int>(sizeof(Buffer))) {
+		std::vector<char> Long(static_cast<size_t>(Needed) + 1);
+		std::vsnprintf(&Long[0], Long.size(), pFormat, Again);
+		Out.assign(&Long[0], static_cast<size_t>(Needed));
+	}
+	else
+		Out = Needed > 0 ? Buffer : "";
+	va_end(Again);
+	return Out;
 }
 
 std::string Trim(const std::string &Text)
