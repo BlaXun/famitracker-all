@@ -827,6 +827,8 @@ const double TUNE_CENTS = 20.0, TUNE_BAD_CENTS = 35.0, CHIP_CENTS = 6.0;
 // the quieter within BEAT_LEVEL_DB of the louder, wavering between BEAT_SLOWEST and BEAT_FASTEST times a second. 38's ghost
 // echo, 7 cents sharp on purpose (P81 on the N163) against its FDS lead 2 cents flat, beats 2.2 times a second 13 dB under
 // the lead: a chorus, which passes
+// A part this quiet (its samples' peak) in the 20 ms before the seam and before the loop's first start is silent there
+const double SEAM_SILENT = 0.002;
 const double BEAT_CENTS = 12.0, BEAT_BAD_CENTS = 20.0, BEAT_OVERLAP = 0.25, BEAT_LEVEL_DB = 15.0, BEAT_SLOWEST = 1.0, BEAT_FASTEST = 30.0;
 // A drone: after a note's release or halt, with nothing for DRONE_GAP seconds or more, its part still sounds within
 // DRONE_UNDER_DB of the note a quarter second on, and doesn't fade by DRONE_FADE_DB (a space's ring fades faster); its
@@ -1226,8 +1228,21 @@ void Ears::Clicks()
 				After += X[static_cast<size_t>(n)];
 			return std::fabs(After - Before) / static_cast<double>(Half);
 		};
+		// Silent before it both times, the part starts a note there: where its wave is as it starts depends on where the
+		// chip's own counter was (a pulse doesn't restart its wave on a note, and a render starts the counter where the last
+		// one left it), not on the seam, so one render steps there and the next doesn't. Guard Tower's lead, silent through
+		// the intro and the loop's last bars, stepped 0.036 at bar 5 in one listen of four, which fix_loop had nothing for
+		const long long Quiet = SamplesOf(0.02, S.Rate);
+		auto SilentBefore = [&](const std::vector<float> &X, long long At) {
+			double Most = 0.0;
+			for (long long n = std::max(0LL, At - Half - Quiet); n < At - Half && n < static_cast<long long>(X.size()); ++n)
+				Most = std::max(Most, static_cast<double>(std::fabs(X[static_cast<size_t>(n)])));
+			return Most < SEAM_SILENT;
+		};
 		for (size_t p = 0; p < S.Parts.size(); ++p) {
 			const std::vector<float> &X = S.Parts[p].Samples;
+			if (SilentBefore(X, S.Seam) && SilentBefore(X, S.LoopStart))
+				continue;
 			const double AtSeam = StepAt(X, S.Seam), First = StepAt(X, S.LoopStart);
 			std::vector<double> Usual;
 			for (long long At = S.Seam - SamplesOf(1.0, S.Rate); At < S.Seam - Half * 4; At += Half)

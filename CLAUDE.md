@@ -2978,6 +2978,49 @@ fields with no findings and a `sound` object. A cue's review gives the
 length to its halt (`HaltBar`). `VariantText` says another duty only for a
 sound with a pulse (`HasPulse`). `TestSfxKinds` covers them.
 
+Finishing fixes (from `fix-r4-finish`): doubles in tune across chips.
+`DoubledFines` (before `EchoFines` in `Tools.cpp`) gives each note of a part
+that sounds another part's pitch, or octaves of it, for half the note or
+`DOUBLE_SECONDS` the fine pitch that puts it on that part's pitch as the two
+chips' registers play it (`DoubledHz`, `ListenNoteTuning`'s `ChipHz`;
+`FineToMatch`, within `DOUBLE_MOST_STEPS`), the melody's note first: `P80`
+for a detuned echo on its own chip, a step of `Pxx` where two tables round a
+high note apart (the Airship's VRC6 sawtooth an octave under its pulse lead
+15 cents off at A-5, 17 at B-5, and its 2A03 echo beating against the
+sawtooth). polish's `unison` (`TuneUnisons`, which writes the fine pitch on
+every note it tunes, since a change keeps the notes after it as they played)
+leaves the melody alone unless it's named; `add_echo` (`EchoFines`) and
+`add_harmony` (`TuneDoubledPart`) write it as they write. listen's beating
+gives that call only where a dry run of the touch changes a note
+(`ListenCallOf`), else advice, and every call the tools write names channels
+by name (clashes, clicks, beating, `change_mood`'s plan, `grow_melody`'s
+pick). `HeardFixDue` takes medium findings with a call too, so `what_next`
+isn't done while one is open; a fix the last listen gave, made as given,
+keeps the song's print (`AfterCall`, "heard_fix"), so `HeardBefore` keeps
+`listened` and the mix counted while the song stays so (the steps done never
+fall; the listen before the file still comes). The seam's pop
+leaves out a part silent before both the seam and the loop's first start
+(`SEAM_SILENT` in `Listen.cpp`: Guard Tower's lead popped at bar 5 in one
+listen of four, from where the pulse's free-running wave was as the note
+started, which finish_song's listen didn't hear and no note change fixes),
+and its `fix_loop` call comes only where `FindSeams` finds something to
+write. `SongHost::KeepFinishStep` keeps the polish and the mix that ran
+(finish_song's, or called alone through `AfterCall`) with the song's print:
+`WhatNext::Polish` leaves polish out of the count where it never ran and
+would change nothing (Hut in a Field's finish skipped it and what_next listed
+"polished"), and `MixDue` takes a mix as done while the song is as it left it
+(a calm mix again moved Hut's echo by rounding, and what_next asked for the
+same finish_song). `ListenForSong` keeps a kind's "Listen for:" clauses only
+where the song has what they name (roles as `HeardRoles` hears them; the
+Caves' line spoke of an echo and a drone it hadn't). check_song's range lists
+a melody reaching over `MELODY_HIGHEST` (F-6, the kept songs' highest lead)
+as advice (`reason` `melody very high`, no what_next step): measured on the 44
+kept songs, the Airship's B-5 over a middle of A-4 is within them (Autumn
+Woods' B-5, Ironworks' C#6, Mud Caves' D-6), so only Mud Caves II's A#6 is
+flagged. FakeSong's `ChipRounding` renders notes at their registers' pitch.
+`TestCrossChipDoubles`, `TestFinishStepsKept`, `TestMelodyVeryHigh` and
+`TestSeam` (`listen_tests`) cover them.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

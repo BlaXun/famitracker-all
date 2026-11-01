@@ -216,6 +216,9 @@ public:
 	// register) and on the FDS its modulator (the instrument's, Hxx-Jxx over it, from its delay) as a swing as wide and as
 	// fast as the emulator's bends; SoundOffset puts a channel's sound off its notes (as a pitch sequence that ends off)
 	bool ChipPitches = false;
+	// ChipRounding (with ChipPitches): each note at its chip's register as it rounds it (ListenTuning's ChipHz), so two chips
+	// playing one pitch up high sound apart, as the Airship's lead and sawtooth did (fix-r4-finish)
+	bool ChipRounding = false;
 	std::map<int, double> SoundOffset;	// channel -> cents
 	// What undo brings back: the selected track's rows, sections and key and the mixer before each change;
 	// for a group of changes (BeginGroup) every track as it was before the group, as one step
@@ -1219,7 +1222,8 @@ public:
 						ModSpeed[c] = (ModSpeed[c] & 0xF00) | C.Param[k];
 				}
 				if (Pitch[c] >= 0) {
-					BaseHz[c] = ListenNoteTuning(Ch.Chip, Ch.Kind, Pitch[c], Detune[c] - 0x80, Ch.ChipChannels, 16, Info.Pal).Hz;
+					const ListenTuning Tuning = ListenNoteTuning(Ch.Chip, Ch.Kind, Pitch[c], Detune[c] - 0x80, Ch.ChipChannels, 16, Info.Pal);
+					BaseHz[c] = ChipRounding && Tuning.ChipHz > 0.0 ? Tuning.ChipHz : Tuning.Hz;
 					VibratoCents[c] = (Vibrato[c] & 15) > 0 ? ListenVibratoCents(Ch.Chip, Ch.Kind, Pitch[c], Vibrato[c] & 15, Ch.ChipChannels,
 						Info.Pal) : 0.0;
 					std::vector<int> Table;
@@ -12310,7 +12314,7 @@ void TestCheckJson()
 		CHECK_EQ(TextOf(pFix, "tool"), std::string("polish"));
 		CHECK_EQ(TextOf(pFix, "does"), std::string("nudges it a hair (P81, 7 cents sharp), so its vibrato stays clear of 256"));
 		const Json *pArguments = pFix != 0 ? pFix->Get("arguments") : 0;
-		CHECK(pArguments != 0 && WriteJson(*pArguments) == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}");
+		CHECK(pArguments != 0 && WriteJson(*pArguments) == "{\"touches\":[\"clicks\"],\"channels\":[\"2A03 Pulse 1\"],\"from_bar\":1,\"to_bar\":1}");
 		// The fix as it's given: one change. Its write reaches the next A-3, which would click with the pitch it had back,
 		// so the change nudges that one too (as any direct change does), and E-4 gets the fine pitch back
 		if (pFix != 0 && pArguments != 0) {
@@ -12336,7 +12340,7 @@ void TestCheckJson()
 		CHECK_EQ(IntegerOf(pSecond, "row"), 32);
 		CHECK_EQ(IntegerOf(pSecond, "bar"), 3);
 		CHECK(pSecond != 0 && pSecond->Get("fix") != 0 &&
-			WriteJson(*pSecond->Get("fix")->Get("arguments")) == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":3,\"to_bar\":3}");
+			WriteJson(*pSecond->Get("fix")->Get("arguments")) == "{\"touches\":[\"clicks\"],\"channels\":[\"2A03 Pulse 1\"],\"from_bar\":3,\"to_bar\":3}");
 
 		// Too deep a vibrato to nudge clear: no fix
 		FakeSong Deep;
@@ -12530,7 +12534,7 @@ void TestProblemList()
 		CHECK(Clicks.Read(Run(Clicky, "check_song", "{\"format\": \"json\"}").Text, Error));
 		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixTool == "polish");
 		CHECK(Clicks.Findings().size() == 1 &&
-			Clicks.Findings()[0].FixArguments == "{\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}");
+			Clicks.Findings()[0].FixArguments == "{\"touches\":[\"clicks\"],\"channels\":[\"2A03 Pulse 1\"],\"from_bar\":1,\"to_bar\":1}");
 		CHECK(Clicks.Findings().size() == 1 && Clicks.Findings()[0].FixDoes == "nudges it a hair (P81, 7 cents sharp), so its vibrato "
 			"stays clear of 256");
 		CHECK_HAS(Clicks.LineText(Clicks.Lines(PROBLEM_CLICK)[0]), "A-3 clicks ");
@@ -19164,7 +19168,7 @@ void TestShortReplies()
 		Clicky.End(0, 32);
 		const std::string Text = Run(Clicky, "check_song", "{\"format\": \"short\"}").Text;
 		CHECK_HAS(Text, "\nFound:\n1. A-3 clicks ");
-		CHECK_HAS(Text, "(2A03 Pulse 1 bar 1 beat 1). Fix: polish {\"touches\":[\"clicks\"],\"channels\":[1],\"from_bar\":1,\"to_bar\":1}.");
+		CHECK_HAS(Text, "(2A03 Pulse 1 bar 1 beat 1). Fix: polish {\"touches\":[\"clicks\"],\"channels\":[\"2A03 Pulse 1\"],\"from_bar\":1,\"to_bar\":1}.");
 	}
 	FakeSong Empty;
 	CHECK_HAS(Run(Empty, "check_song", "{\"format\": \"short\"}").Text, "Nothing stands out.");
@@ -20528,7 +20532,9 @@ void TestWhatNextLoop()
 		// mix, the seam, a listen and the file for the game in one call: no listen of its own before it), saving
 		const char *const ORDER[] = { "set_tempo", "set_key", "song_shape", "design_instrument", "add_chords_and_bass", "grow_melody",
 			"copy_bars", "add_harmony", "add_echo", "finish_song", "save_song" };
-		Check(CallIndex(Made, "listen") < 0, K.Asked, __LINE__);
+		// (a listen after it only to hear a fix its listen gave before the file: fix-r4-finish, where the medium findings' fixes
+		// are steps too)
+		Check(CallIndex(Made, "listen") < 0 || CallIndex(Made, "listen") > CallIndex(Made, "finish_song"), K.Asked, __LINE__);
 		for (size_t i = 0; i + 1 < sizeof(ORDER) / sizeof(ORDER[0]); ++i)
 			Check(CallIndex(Made, ORDER[i]) >= 0 && CallIndex(Made, ORDER[i]) < CallIndex(Made, ORDER[i + 1]),
 				(std::string(K.Asked) + " " + ORDER[i]).c_str(), __LINE__);
@@ -21589,9 +21595,10 @@ void TestFinishSong()
 		CHECK_HAS(R.Text, "\nOne Ctrl+Z in FamiTracker undoes the song's changes together (the exported file stays).");
 		CHECK_HAS(R.Text, "\n- Listen: ");
 		CHECK(!Song.LastListen().empty());	// kept for what_next
-		CHECK_HAS(R.Text, "\nListen for: the band carrying the tune, the lead's accents on the beats, and the climax lifting; the seam "
-			"going round (play "
-			"{\"from_bar\":15} plays the end into the loop; stop ends it).");
+		// (no section named as a climax here: its clause stays out, fix-r4-finish)
+		CHECK_HAS(R.Text, "\nListen for: the band carrying the tune");
+		CHECK_LACKS(R.Text, "the climax lifting");
+		CHECK_HAS(R.Text, "the seam going round (play {\"from_bar\":15} plays the end into the loop; stop ends it).");
 		CHECK(R.Text.size() < 2500u);
 		// polish's lively style, its default touches (KindPolish's, what_next's polish step's too)
 		CHECK(!Run(Separate, "polish", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
@@ -26870,7 +26877,8 @@ void TestWhatNextListens()
 	CHECK(!Run(Song, "listen", "{\"from_bar\": 5, \"to_bar\": 8}").IsError);
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	CHECK_EQ(A.Tool, std::string("save_song"));
-	CHECK_HAS(A.Text, "\nLeft: listened, saved, exported.");
+	// (listened stays counted after the fix it gave, fix-r4-finish: the listen before the file still comes, below)
+	CHECK_HAS(A.Text, "\nLeft: saved, exported.");
 	CHECK(!Run(Song, "save_song", "{}").IsError);
 	Song.Info.Modified = false;
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
@@ -27251,7 +27259,7 @@ void TestClashFix()
 		CHECK_EQ(TextOf(pClash, "severity"), std::string("high"));
 		const Json *pFix = pClash->Get("fix");
 		CHECK(pFix != 0 && TextOf(pFix, "tool") == "polish" && IntegerOf(pFix->Get("arguments"), "from_bar") == 4 &&
-			IntegerOf(pFix->Get("arguments"), "melody_channel") == 6);
+			TextOf(pFix->Get("arguments"), "melody_channel") == "VRC6 Plus Pulse 1");
 		CHECK_HAS(TextOf(pFix, "does"), "on VRC6 Plus Pulse 2 at bar 4");
 		CHECK_HAS(TextOf(pFix, "does"), "to D-3, a note of the Asus4 the other parts play there");
 		CHECK_HAS(TextOf(pClash, "message"), " Fix: polish {\"touches\":[\"clashes\"],\"channels\":[");
@@ -28735,7 +28743,7 @@ void TestEchoInTuneWhereDoubled()
 	ToolResult Result = Run(Song, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"2A03 Pulse 2\", \"delay_beats\": 1, \"instrument\": \"Square\", "
 		"\"detune\": 1}");
 	CHECK(!Result.IsError);
-	CHECK_HAS(Result.Text, "Where the echo doubles VRC6 Pulse 2's notes, ");
+	CHECK_HAS(Result.Text, "Where the echo doubles VRC6 Pulse 2, ");
 	CHECK_HAS(Result.Text, " notes play in tune (P80): detuned there, the two would beat");
 	CHECK(HasEffectAt(Song, 1, 4, EFF_PITCH, 0x80));
 	CHECK(HasEffectAt(Song, 1, 32, EFF_PITCH, 0x81));	// detuned once the doubling ends
@@ -28792,18 +28800,189 @@ void TestEchoInTuneWithItsMelody()
 	if (!Called)
 		return;
 	const Json FixArgs = *pBeat->Get("fix")->Get("arguments");
-	CHECK_HAS(WriteJson(FixArgs), "\"touches\":[\"unison\"],\"channels\":[2]");
+	CHECK_HAS(WriteJson(FixArgs), "\"touches\":[\"unison\"],\"channels\":[\"2A03 Pulse 2\"]");
 	// finish_song's listen (the song as it is, heard already) gives it as a line to fix
 	const ToolResult Finish = Run(Beat, "finish_song", "{\"skip\": [\"polish\", \"mix\", \"loop\", \"export\"]}");
 	Check(Contains(Finish.Text, "\n- Heard: Beats against ") && Contains(Finish.Text, "Fix: polish {"), Finish.Text.c_str(), __LINE__);
 	const ToolResult Fixed = Tools.Call("polish", FixArgs);
 	Check(!Fixed.IsError, Fixed.Text.c_str(), __LINE__);
-	CHECK_HAS(Fixed.Text, "in tune (P80) where they double 2A03 Pulse 1's pitch");
+	CHECK_HAS(Fixed.Text, "in tune where they double 2A03 Pulse 1's pitch (P80");
 	CHECK(HasEffectAt(Beat, 1, 0, EFF_PITCH, 0x80) && !HasEffectAt(Beat, 1, 16, EFF_PITCH, 0x82));
 	Out = Parse(Run(Beat, "listen", "{\"format\": \"json\"}").Text);
 	CHECK(ListenCount(Out, "beating") == 0);
 	// Nothing detuned left: the touch says so
 	CHECK(Tools.Call("polish", FixArgs).IsError);
+}
+
+// Doubles in tune across chips (fix-r4-finish): the Airship's lead on VRC6 Pulse 1 and its sawtooth an octave under beat 15-17
+// cents apart at A-5 and B-5, since the chips' registers round those notes apart (the sawtooth's period counts 14 steps),
+// with no Pxx written. listen's call is polish's unison touch on the part that isn't the melody, by its name; it puts a
+// fine pitch on it that takes it to the lead's pitch as the chips play it, and listen then hears no beating. add_harmony
+// and add_echo write that fine pitch as they write a double on another chip. what_next isn't done while the finding is open
+double FineOf(const FakeSong &Song, int Channel, int Row)
+{
+	const Cell &C = Song.Rows[static_cast<size_t>(Channel)][static_cast<size_t>(Row)];
+	for (int k = 0; k < EFFECT_COLUMNS; ++k)
+		if (C.Effect[k] == EFF_PITCH)
+			return C.Param[k];
+	return -1;
+}
+
+void TestCrossChipDoubles()
+{
+	// Where VRC6 Pulse 1 and the sawtooth an octave under it round a note 13 cents or more apart (A-5 and B-5 among them). The
+	// song plays B-5 and D-5 (in tune together): listen hears A-5 itself some 9 cents off up there in these renders
+	std::vector<int> Apart;
+	for (int p = 60; p < 84; ++p) {
+		const double Lead = ListenNoteTuning("VRC6", KIND_PULSE, p, 0, 0, 16, false).ChipHz;
+		const double Saw = ListenNoteTuning("VRC6", KIND_SAWTOOTH, p - 12, 0, 0, 16, false).ChipHz;
+		if (std::fabs(1200.0 * std::log2(2.0 * Saw / Lead)) >= 13.0)
+			Apart.push_back(p);
+	}
+	CHECK(std::find(Apart.begin(), Apart.end(), 69) != Apart.end() && std::find(Apart.begin(), Apart.end(), 71) != Apart.end());
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	Song.ChipPitches = Song.ChipRounding = true;
+	for (int b = 0; b < 8; ++b) {
+		Cell &Lead = Song.Rows[5][static_cast<size_t>(b * 16)];
+		Lead.SetPitch(b % 2 == 0 ? 71 : 62);
+		Lead.Instrument = 0;
+		Cell &Saw = Song.Rows[7][static_cast<size_t>(b * 16)];
+		Saw.SetPitch(b % 2 == 0 ? 59 : 50);
+		Saw.Instrument = 0;
+		Saw.Volume = 10;
+	}
+	Json Out = Parse(Run(Song, "listen", "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text);
+	const Json *pBeat = ListenFindingOf(Out, "beating");
+	Check(pBeat != 0, WriteJson(Out).c_str(), __LINE__);
+	ToolSet Tools(Song);
+	CheckFixCalls(Tools, Out, "listen's beating across chips", __LINE__);
+	const bool Called = pBeat != 0 && pBeat->Get("fix") != 0 && pBeat->Get("fix")->IsObject() && TextOf(pBeat->Get("fix"), "tool") == "polish";
+	Check(Called, pBeat != 0 ? WriteJson(*pBeat).c_str() : "no beating", __LINE__);
+	if (!Called)
+		return;
+	const Json FixArgs = *pBeat->Get("fix")->Get("arguments");
+	CHECK_HAS(WriteJson(FixArgs), "\"touches\":[\"unison\"],\"channels\":[\"VRC6 Sawtooth\"]");
+	// finish_song's listen gives it as a Heard line, and what_next, with the song finished, gives it rather than done
+	const ToolResult Finish = Run(Song, "finish_song", "{\"skip\": [\"polish\", \"mix\", \"loop\", \"export\"]}");
+	Check(Contains(Finish.Text, "\n- Heard: Beats against ") && Contains(Finish.Text, "Fix: polish {"), Finish.Text.c_str(), __LINE__);
+	const ToolResult Fixed = Tools.Call("polish", FixArgs);
+	Check(!Fixed.IsError, Fixed.Text.c_str(), __LINE__);
+	Check(Contains(Fixed.Text, "on VRC6 Sawtooth in tune where they double VRC6 Pulse 1's pitch"), Fixed.Text.c_str(), __LINE__);
+	CHECK(FineOf(Song, 7, 0) > 0 && FineOf(Song, 7, 0) != 0x80);
+	CHECK(FineOf(Song, 5, 0) < 0);	// the melody stays as it was
+	Out = Parse(Run(Song, "listen", "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text);
+	Check(ListenCount(Out, "beating") == 0, WriteJson(Out).c_str(), __LINE__);
+	// In tune now: the touch finds nothing more, and listen offers no call that would fail
+	CHECK(Tools.Call("polish", FixArgs).IsError);
+
+	// add_harmony an octave under on the sawtooth: its notes get the fine pitch as it writes them
+	FakeSong Harmony;
+	Harmony.Info.DirectChanges = true;
+	Harmony.ChipPitches = Harmony.ChipRounding = true;
+	for (int b = 0; b < 8; ++b) {
+		Cell &Lead = Harmony.Rows[5][static_cast<size_t>(b * 16)];
+		Lead.SetPitch(b % 2 == 0 ? 71 : 62);
+		Lead.Instrument = 0;
+	}
+	ToolResult Added = Run(Harmony, "add_harmony", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Sawtooth\", "
+		"\"interval\": \"octave_below\", \"instrument\": \"Lead\"}");
+	Check(!Added.IsError, Added.Text.c_str(), __LINE__);
+	Check(Contains(Added.Text, "a fine pitch (Pxx) that puts them on that part's pitch as the chips play it"), Added.Text.c_str(), __LINE__);
+	CHECK(FineOf(Harmony, 7, 0) > 0 && FineOf(Harmony, 7, 0) != 0x80);
+	Out = Parse(Run(Harmony, "listen", "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}").Text);
+	Check(ListenCount(Out, "beating") == 0, WriteJson(Out).c_str(), __LINE__);
+
+	// add_echo onto the sawtooth a beat behind long notes it sounds in unison with (F#5 and G-5 round 17-18 cents apart there)
+	FakeSong Echo;
+	Echo.Info.DirectChanges = true;
+	Echo.ChipPitches = Echo.ChipRounding = true;
+	for (int b = 0; b < 8; ++b) {
+		Cell &Lead = Echo.Rows[5][static_cast<size_t>(b * 16)];
+		Lead.SetPitch(b % 2 == 0 ? 66 : 67);
+		Lead.Instrument = 0;
+	}
+	Added = Run(Echo, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"VRC6 Sawtooth\", \"delay_beats\": 1}");
+	Check(!Added.IsError, Added.Text.c_str(), __LINE__);
+	CHECK_HAS(Added.Text, "a step or two off P80, where the two chips round the pitch apart");
+	CHECK(FineOf(Echo, 7, 4) > 0 && FineOf(Echo, 7, 4) != 0x80);
+	// The same on one chip's table (2A03 Pulse 2 under VRC6 Pulse 1): nothing to write
+	FakeSong Same = Echo;
+	Added = Run(Same, "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"2A03 Pulse 2\", \"delay_beats\": 1, "
+		"\"instrument\": \"Square\"}");
+	Check(!Added.IsError, Added.Text.c_str(), __LINE__);
+	CHECK(FineOf(Same, 1, 4) < 0);
+}
+
+// The steps finish_song ran (fix-r4-finish): polish kept as run only when it ran (Hut in a Field's finish skipped it, and
+// what_next listed "polished"), the mix with the song as it left it, so what_next doesn't ask for the same finish_song again
+// (a calm mix run again moves a part by rounding); "Listen for:" names only what the song has (the Caves' line spoke of an
+// echo and a drone it didn't have)
+void TestFinishStepsKept()
+{
+	FakeSong Song(1);
+	NewSong(Song);
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"cozy\"}", 60, Finished, __LINE__, false, "finish_song");
+	const WhatNextAnswer First = AskWhatNext(Song, "{\"kind\": \"cozy\"}");
+	Check(First.Tool == "finish_song", First.Tool.c_str(), __LINE__);
+	{
+		FakeSong Skipped = Song;
+		Json A = First.Arguments;
+		Json Skip = Json::MakeArray();
+		Skip.Push("polish");
+		Skip.Push("export");
+		A.Set("skip", Skip);
+		CHECK(!Run(Skipped, "finish_song", WriteJson(A)).IsError);
+		CHECK(Skipped.KeptFinishStep(Skipped.Info.Track, "polish").empty());
+		CHECK(!Skipped.KeptFinishStep(Skipped.Info.Track, "mix").empty());
+		const std::string Text = Run(Skipped, "what_next", "{\"kind\": \"cozy\"}").Text;
+		const WhatNextAnswer Next = ReadWhatNext(Text);
+		Check(!(Next.Tool == "finish_song" && WriteJson(Next.Arguments) == WriteJson(A)), Text.c_str(), __LINE__);
+		CHECK_LACKS(Text, "polished");
+	}
+	const ToolResult Did = Run(Song, "finish_song", WriteJson(First.Arguments));
+	CHECK(!Did.IsError);
+	CHECK(!Song.KeptFinishStep(Song.Info.Track, "mix").empty());
+	const std::string Text = Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text;
+	Check(ReadWhatNext(Text).Tool != "finish_song", Text.c_str(), __LINE__);
+
+	// A tune over a bass alone, finished as a mysterious track: its line keeps "nothing louder than a curious step", not the
+	// drone or the echo it hasn't got
+	FakeSong Plain;
+	Plain.Info.DirectChanges = true;
+	for (int r = 0; r < 128; r += 8)
+		Plain.Put(5, r, r % 16 == 0 ? "E-4" : "G-4", 0, 12);
+	for (int r = 0; r < 128; r += 4)
+		Plain.Put(2, r, r % 8 == 0 ? "C-2" : "G-2");
+	const ToolResult Mysterious = Run(Plain, "finish_song", "{\"kind\": \"mysterious\", \"skip\": [\"polish\", \"mix\", \"loop\", "
+		"\"listen\", \"export\"]}");
+	Check(!Mysterious.IsError, Mysterious.Text.c_str(), __LINE__);
+	CHECK_HAS(Mysterious.Text, "Listen for: nothing louder than a curious step");
+	CHECK_LACKS(Mysterious.Text, "the echo answering");
+	CHECK_LACKS(Mysterious.Text, "over the drone");
+}
+
+// A melody reaching higher than the soundtrack's leads (fix-r4-finish): check_song lists it under the range (F-6 is the
+// highest the kept songs' leads reach; the Airship's B-5 is within them), as advice what_next gives no step for
+void TestMelodyVeryHigh()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	for (int r = 0; r < 128; r += 4)
+		Song.Put(5, r, r < 96 ? (r % 8 == 0 ? "E-4" : "G-4") : (r % 8 == 0 ? "B-5" : "D-6"), 0, 12);
+	for (int r = 0; r < 128; r += 16)
+		Song.Put(2, r, "C-2");
+	CHECK_LACKS(Run(Song, "check_song", "{}").Text, "very high for a lead");
+	CHECK_LACKS(Run(Song, "check_song", "{}").Text, "the melody (VRC6 Pulse 1) reaches");
+	FakeSong High = Song;
+	High.Put(5, 120, "A#6", 0, 12);
+	const std::string Text = Run(High, "check_song", "{}").Text;
+	CHECK_HAS(Text, "Range: the melody (VRC6 Pulse 1) reaches A#6 at bar 8");
+	CHECK_HAS(Text, "the highest at F-6");
+	Json Out = Parse(Run(High, "check_song", "{\"format\": \"json\"}").Text);
+	CHECK_HAS(WriteJson(Out), "\"reason\":\"melody very high\"");
+	CHECK_LACKS(Run(High, "what_next", "{}").Text, "octave_down");
 }
 
 // review_arrangement, check_song and measure_mix judge a song as its kind (fix-gen4-review): Hut in a Field and the Odds and
@@ -31178,6 +31357,9 @@ int main()
 	TestIntroNoteIntoLoop();
 	TestEchoInTuneWhereDoubled();
 	TestEchoInTuneWithItsMelody();
+	TestCrossChipDoubles();
+	TestFinishStepsKept();
+	TestMelodyVeryHigh();
 	TestKindJudged();
 	TestVibratoAcrossRegister();
 	TestReviewKeepsItsStyle();

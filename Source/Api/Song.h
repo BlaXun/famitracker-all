@@ -593,6 +593,29 @@ public:
 		return It != m_Kinds.end() ? It->second : std::string();
 	}
 
+	// The finishing steps that ran on a track of the open song (polish with its finishing touches, the mix; finish_song's or
+	// called alone), each with the song's print (SoundPrint) after it: what_next counts polish done only once one ran (not a
+	// song it would change nothing in), and takes a mix as done while the song is as the last one left it (a calm mix moves a
+	// part again by rounding: Hut in a Field's echo 6.2 dB under, then 6.7, and what_next asked for the same finish_song
+	// again). Kept by the host while it runs, by the song (SongIdentity's serial) and the track, not in the song; "" for a
+	// step that didn't run
+	void KeepFinishStep(int Track, const std::string &Step, const std::string &Print)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		m_Steps[std::make_pair(std::make_pair(Serial, Track), Step)] = Print;
+	}
+	std::string KeptFinishStep(int Track, const std::string &Step)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		const std::map<std::pair<std::pair<long long, int>, std::string>, std::string>::const_iterator It =
+			m_Steps.find(std::make_pair(std::make_pair(Serial, Track), Step));
+		return It != m_Steps.end() ? It->second : std::string();
+	}
+
 	// Which song is open, for its agent log (AgentLog.h): Serial changes whenever another song comes in its place (File >
 	// New, Open, a song from the tools), FileName is its file's name ("Town.ftm", "" while it has none). A host without
 	// songs of its own (this default) keeps one log
@@ -611,6 +634,7 @@ public:
 private:
 	std::string m_LastListen;
 	std::map<std::pair<long long, int>, std::string> m_Kinds;
+	std::map<std::pair<std::pair<long long, int>, std::string>, std::string> m_Steps;
 	AgentLog m_Log;
 	bool m_LogFollowed = false;
 	long long m_LogSerial = 0;
