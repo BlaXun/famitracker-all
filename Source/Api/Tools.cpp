@@ -30948,8 +30948,42 @@ void WhatNext::Depth()
 	// the key (add_harmony keeps it off semitones against the other parts; a counter-melody of its own moves where the
 	// chords' notes are and rubs against them more often)
 	const int Target = FirstRepeat >= 0 ? FirstRepeat : B;
-	if (!Milestone("second line", !m_Parts.Voices.empty() || (Target < 0 && !Growing) || !Wanted("second_line"), "a second line") &&
-		Target >= 0) {
+	// A calm style's last time round is its fullest (from feat-texture): the last repeat of A (A'' after A' had its harmony)
+	// gets a line of its own too, so the song builds to its end. With the harmony in A' alone, bittersweet and melancholic
+	// walks kept "about one loudness all the way through"
+	int LastRepeat = -1;
+	for (size_t i = 0; i < m_Form.size(); ++i)
+		if (m_Form[i].Named && !m_Form[i].Free && !m_Form[i].Empty)
+			LastRepeat = m_Form[i].Original >= 0 ? static_cast<int>(i) : -1;
+	bool LastLined = true;
+	if (CalmStyle() && LastRepeat >= 0 && LastRepeat != Target && !Growing && !m_Parts.Voices.empty()) {
+		const FormPart &P = m_Form[static_cast<size_t>(LastRepeat)], &O = m_Form[static_cast<size_t>(P.Original)];
+		const int First = S.Time.BarStart(P.FirstBar), End = std::min(S.Time.BarEnd(P.LastBar), Total);
+		const int OFirst = S.Time.BarStart(O.FirstBar), OEnd = std::min(S.Time.BarEnd(O.LastBar), Total);
+		LastLined = false;
+		for (int c = 0; c < S.ChannelCount() && !LastLined; ++c)
+			LastLined = c != m_Melody && IsMelodic(S.Channel(c)) && NoteStartsIn(S, c, First, End) && !NoteStartsIn(S, c, OFirst, OEnd);
+		const int Channel = LastLined ? -1 : FreeChannel(First, End, m_Melody, true);
+		if (Channel < 0)
+			LastLined = true;	// (no channel for it: the song does without)
+		else if (Wanted("second_line")) {
+			Json C = Json::MakeObject();
+			C.Set("section", P.Name);
+			C.Set("melody_channel", ChannelName(m_Melody));
+			C.Set("channel", ChannelName(Channel));
+			if (Calm())
+				C.Set("long_notes_only", true);
+			int Added = 0;
+			if (!TryWrite(S, "add_harmony", C, P.FirstBar, P.LastBar, m_Melody, Added) || Added > 0)
+				LastLined = true;
+			else
+				Step("second_line", "add_harmony", C, Format("%s is the tune's last time round: a harmony a third under its melody there "
+					"too makes it the song's fullest part, so the song builds to its end rather than keeping one loudness.",
+					P.Name.c_str()));
+		}
+	}
+	if (!Milestone("second line", (!m_Parts.Voices.empty() && LastLined) || (Target < 0 && !Growing) || !Wanted("second_line"),
+		"a second line") && Target >= 0 && m_Parts.Voices.empty()) {
 		const FormPart &P = m_Form[static_cast<size_t>(Target)];
 		const int First = S.Time.BarStart(P.FirstBar), End = std::min(S.Time.BarEnd(P.LastBar), Total);
 		const int Channel = FreeChannel(First, End, m_Melody, true);

@@ -658,7 +658,8 @@ is the recipes':
    shape fits and shapes it by hand. Where a hook can't grow (fewer than
    four bars), a phrase to start from comes as `write_notes`.
 4. Depth: a harmony in the repeat (cleaner beside the chords than a
-   counter-melody), the repeats made different (`vary_part`, a variation
+   counter-melody; a calm-styled song's last repeat of A gets one too, so it
+   builds to its end), the repeats made different (`vary_part`, a variation
    that rubs against nothing), a break and an intro that plays once, filled
    with the chords and the bass, an outro of a song that loops filled with
    A's closing bars whole (the melody and the drums leading back in), a

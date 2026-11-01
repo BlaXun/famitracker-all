@@ -2669,7 +2669,11 @@ another lead of the kind's pool ("Highlight lead", `design_instrument`,
 then `set_instrument`) in `SongTexture::Target`, the contrasting part
 (else the climax, else the last); step id and skip word `highlight`. Calm
 styles' intros are filled with the chords alone, the bass joining with A
-(`CalmStyle()` in `Depth`'s filling): the six known failures of gen4's base
+(`CalmStyle()` in `Depth`'s filling), and their last repeat of A (A''
+after A' had its harmony) gets a harmony too (`LastRepeat`, `LastLined`
+in `Depth`'s second line, tried with `TryWrite`; no channel free or a clash
+and the song does without), so the song builds to its end: the six known
+failures of gen4's base
 (bittersweet and melancholic walks keeping "about one loudness all the way
 through", 3 dB) and a cozy walk the rests had added are gone. An outro of a
 song that loops (`IsOutroBase`) is filled with A's closing bars whole, the
