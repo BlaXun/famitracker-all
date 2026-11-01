@@ -20,6 +20,7 @@
 */
 
 #include "WhatNext.h"
+#include "Flavours.h"
 #include "TuneShape.h"
 #include "SongSeed.h"
 
@@ -572,7 +573,8 @@ std::string LeadWhyOf(const NextKind &K, const std::string &Lead)
 
 namespace {
 
-NextPick PickOf(const char *Pool, const std::string &Single, const char *Salt, const std::string &Name, unsigned int Seed)
+NextPick PickOf(const char *Pool, const std::string &Single, const char *Salt, const std::string &Name, unsigned int Seed,
+	const char *Leans = 0)
 {
 	NextPick Out;
 	const std::vector<std::string> All = PoolEntries(Pool);
@@ -581,8 +583,9 @@ NextPick PickOf(const char *Pool, const std::string &Single, const char *Salt, c
 		return Out;
 	}
 	Out.Count = static_cast<int>(All.size());
-	// (no seed: the kind's own, the pool's first, as before songs had seeds, so a song made then keeps its picks)
-	Out.Value = Seed == 0 ? All[0] : All[SeededHash(Salt, Name, Seed) % All.size()];
+	// (no seed: the kind's own, the pool's first, as before songs had seeds, so a song made then keeps its picks; a flavour
+	// given then: the first entry it leans to)
+	Out.Value = WeightedPick(All, Leans, Seed == 0 ? 0u : SeededHash(Salt, Name, Seed), Seed != 0, Out.Leaned);
 	return Out;
 }
 
@@ -593,17 +596,31 @@ double NextPicks::Bpm() const
 	return std::atof(Tempo.Value.c_str());
 }
 
-NextPicks NextPicksOf(int Kind, const std::string &TrackName, unsigned int Seed)
+NextPicks NextPicksOf(int Kind, const std::string &TrackName, unsigned int Seed, int Flavour)
 {
 	const NextKind &K = NextKindInfo(Kind);
+	const FlavourInfo &F = FlavourOf(Flavour);
 	NextPicks P;
 	char Bpm[32];
 	std::snprintf(Bpm, sizeof(Bpm), "%g", K.Bpm);
-	P.Lead = PickOf(K.Leads, K.LeadKind, "lead", TrackName, Seed);
-	P.ChordStyle = PickOf(K.ChordStyles, K.ChordStyle, "chords", TrackName, Seed);
-	P.BassStyle = PickOf(K.BassStyles, K.BassStyle, "bass", TrackName, Seed);
-	P.Groove = PickOf(K.Grooves, K.Groove, "groove", TrackName, Seed);
-	P.Tempo = PickOf(K.Tempos, Bpm, "tempo", TrackName, Seed);
+	P.Lead = PickOf(K.Leads, K.LeadKind, "lead", TrackName, Seed, F.Leads);
+	P.ChordStyle = PickOf(K.ChordStyles, K.ChordStyle, "chords", TrackName, Seed, F.ChordStyles);
+	P.BassStyle = PickOf(K.BassStyles, K.BassStyle, "bass", TrackName, Seed, F.BassStyles);
+	P.Groove = PickOf(K.Grooves, K.Groove, "groove", TrackName, Seed, F.Grooves);
+	if (F.TempoLean != 0) {
+		// (the tempos on the flavour's side of the kind's own, and one a speed past them within the kind's range)
+		std::vector<std::string> Tempos, Pool = PoolEntries(K.Tempos);
+		if (Pool.empty())
+			Pool.push_back(Bpm);
+		std::string Leans;
+		FlavourTempos(Pool, F.TempoLean, K.SlowestBpm, K.FastestBpm, Tempos, Leans);
+		std::string Joined;
+		for (size_t i = 0; i < Tempos.size(); ++i)
+			Joined += (i == 0 ? "" : "|") + Tempos[i];
+		P.Tempo = PickOf(Joined.c_str(), Bpm, "tempo", TrackName, Seed, Leans.c_str());
+	}
+	else
+		P.Tempo = PickOf(K.Tempos, Bpm, "tempo", TrackName, Seed);
 	P.Key = PickOf(K.KeyPool, K.Keys[0], "key", TrackName, Seed);
 	return P;
 }

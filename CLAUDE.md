@@ -3096,6 +3096,46 @@ offered one under A's top). `TestLeadOverActivity`, `TestTriangleBesideSamples`
 (`listen_tests`) and `CheckMelodyContrast` (the climax's top a step to a fifth
 over the tune before it, in every walk) cover them.
 
+Flavours (from `feat-flavours`): a second axis beside the kind. The kind says
+the mood and the form; a flavour the place's material and colour:
+`Source/Api/Flavours.cpp` (portable) has cold, hot, wet, mechanical, nature,
+spooky, airy, ancient and magical (`flavour_id`, append only; `FlavourInfo`:
+aliases, words and pairs that pick it, what it sounds like, the pool entries it
+leans to, a pulse lead's duty and vibrato, drums' intensity and kit, colours,
+a borrowed chord, ambience kinds, the recipe's line, what to listen for).
+`ReadFlavourWords` picks one from words (most words, the table's order on a
+tie, "not cold" none), `FlavourLine` says which and why. A flavour leans,
+never limits: `NextPicksOf` takes it (`WeightedPick`: an entry it leans to
+weighs `FLAVOUR_WEIGHT` 3, every entry of the kind's pool stays possible,
+`NextPick::Leaned`; without a seed the first it leans to) and the tempo leans
+slower or faster (`FlavourTempos`: the pool's entries past the kind's own and
+one even tempo a speed further, within the kind's range); `FLAVOUR_NONE`
+gives every kind's picks as before. `what_next` takes `flavour` (none too),
+else the words in `about`, else the track's name of a song with a seed (a
+song made before seeds keeps its steps, so the kept songs' are unchanged:
+`song_file_checks -v` diffs alike), says it in a `Flavour:` line (JSON
+`flavour`, `flavour_note`), asks again with it (`AgainArgs`) and passes it to
+`song_shape` (given) and `finish_song` (not on the small set, whose
+list keeps `flavour` for `what_next` alone, under its 48000 characters). Its steps say what came from it
+(`PoolNote`'s "the cold flavour leaning to it", `FlavourSays`): the lead's
+duty and vibrato where the kind's call leaves them (pulse channels only), the
+drums (`FlavourDrums`: light, or on the noise alone in place of kit samples),
+the chords' rich colours after the tune (`WhatNext::Colors` for cold, airy and
+magical where the chords were written plain, `ChordColor`), a borrowed chord in
+A's and B's progressions (`FlavourProgression` through `WhatNext::Progression`:
+spooky bII before a dominant in minor, iv for the first IV in major; ancient
+bVII for a V inside a major progression) and an ambience the flavour leans to
+(`FlavourAmbience`, seeded) where no words name one, for the kinds and the free
+noise `WhatNext::Ambience` already asks. `song_shape` and `finish_song` read it
+through `FlavourOfCall` (the reply's line; finish_song's "Listen for" adds the
+flavour's), `get_recipe` adds `FlavourRecipe` and the style guide's topic of
+its name (`cold`, `hot`...; the small set a line), and the instructions name
+it. `TestFlavours` (words, progressions, the pools leaning with every entry
+possible and seeds apart, what_next's line and again-arguments, song_shape,
+get_recipe on both sets, 18 walks of a flavour with a kind on the full set and
+4 on the small set ending done with `CheckDoneReview` clean, a wet floating
+walk's rain or stream) covers it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

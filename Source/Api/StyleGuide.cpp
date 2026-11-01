@@ -589,6 +589,65 @@ const Section SECTIONS[] = {
 		"- Tempo 140-190 BPM, at an even one (150 is speed 6; speed 7 with tempo 191 gives even eighths at 163.7).\n"
 		"- Checks: review_arrangement 8 or more, check_song 0 clicking and 0 vanishing, measure_mix with melody_channel the "
 		"lead for the intro, the sections and the sides. export_for_game at -19 LUFS." },
+	// The flavours (feat-flavours): the place's material beside the kind's mood, each a few lines; what_next's flavour
+	// argument leans the kind's picks this way (Flavours.cpp), any kind with any flavour
+	{ "cold", "Flavour: cold (ice, snow, a frozen place)", "cold ice icy snow snowy frozen frost winter glacier arctic crystal",
+		"Thin and glassy, high and sparse, with a little echo:\n"
+		"- Leads struck like bells (music box, falling strike, keys) at 12.5%, no vibrato; notes up in octave 4-5, few of them.\n"
+		"- Chords broken or arpeggiated, thin; once the tune is there, added ninths sparkle (polish touches colors, colors add).\n"
+		"- A bass on half bars or a pedal; a pace a little slower than the kind's own.\n"
+		"- An echo a beat behind, a little Space (set_mixer); wind on the noise in a quiet place (add_ambience kind wind).\n"
+		"- Drums light, on the noise alone: ticks, no sampled thumps." },
+	{ "hot", "Flavour: hot (lava, a desert, a forge)", "hot heat lava magma volcano desert dune sand forge furnace",
+		"Warm, buzzing and dusty, never hurried:\n"
+		"- A brass, breath or bloom lead, round at 50%, with a gentle, slow vibrato; the VRC6's sawtooth buzzes best for a part.\n"
+		"- Lush chords shimmering like heat, or stabs; a walking bass or root and fifth.\n"
+		"- A lazy pace a little slower than the kind's own; a shuffle where drums play.\n"
+		"- Fire or a dry wind on the noise in a quiet place (add_ambience kind fire or wind)." },
+	{ "wet", "Flavour: wet (rain, a sewer, a swamp)", "wet damp sewer swamp marsh bog drip dripping puddle flooded",
+		"Round sounds that drip, water underneath:\n"
+		"- Leads struck round (falling strike, keys) at 50%; short notes that drip, an echo a beat behind answering off the "
+		"walls.\n"
+		"- Broken chords or arpeggios that trickle; a bass on root and fifth.\n"
+		"- Rain or a stream on the noise in a quiet place (add_ambience kind rain or stream); drums light and soft." },
+	{ "mechanical", "Flavour: mechanical (a factory, clockwork, a mine cart)", "mechanical factory clockwork machine gears "
+		"cogs industrial foundry engine robot conveyor",
+		"Machinery: a steady pulse and parts that repeat:\n"
+		"- An ostinato: stabs or arpeggios repeating a bar's figure; a driving or octave bass (bass_style driving, octaves).\n"
+		"- A bright, exact lead at 25% without a vibrato (stepped lead, lead, keys); a pace a little faster than the kind's own.\n"
+		"- Drums on the noise alone that clank: four on the floor or a driving groove; a noise instrument whose duty "
+		"sequence is 1 plays the noise's short, metallic mode." },
+	{ "nature", "Flavour: nature (a forest, a meadow, a garden)", "nature forest woods woodland meadow garden grove glade "
+		"jungle flowers orchard birds birdsong",
+		"Open and gentle:\n"
+		"- Open fifths: a bass on root and fifth, broken chords; a tune that leans on the pentatonic notes (the fourth and the "
+		"seventh off the strong beats).\n"
+		"- A breath or plain lead with a faint vibrato; birdsong in the rests (a quick high figure on a free pulse).\n"
+		"- A stream or wind on the noise in a quiet place; light drums." },
+	{ "spooky", "Flavour: spooky (haunted, a graveyard, ghosts)", "spooky haunted ghost ghostly graveyard cemetery creepy "
+		"phantom witch vampire zombie skeleton",
+		"A chill rather than a fright:\n"
+		"- A borrowed chord for the chill: bII before the dominant in minor (the Neapolitan), the minor iv in major.\n"
+		"- A tritone or a minor second leaned on in the tune and resolved; a thin lead (12.5%) with a slow, wavering vibrato.\n"
+		"- Slow lush chords that waver like a pad over a pedal bass; a little slower than the kind's own.\n"
+		"- Wind on the noise in a quiet place; drums few and light, on the noise alone." },
+	{ "airy", "Flavour: airy (the sky, the heights, a summit)", "airy sky skies clouds heights summit mountaintop breeze",
+		"Light and high, with space around it:\n"
+		"- A breath or bloom lead at 25% with a faint vibrato, high; broken or lush chords spread wide.\n"
+		"- A bass on half bars or a pedal; rich colours once the tune is there; an echo and Space for width.\n"
+		"- Wind on the noise in a quiet place; drums light or none." },
+	{ "ancient", "Flavour: ancient (a temple, ruins, a shrine)", "ancient temple pyramid shrine relic ancestral primeval "
+		"archaic sanctum",
+		"Old and solemn:\n"
+		"- Modal colour: bVII in place of a V inside a major progression (mixolydian), dorian or aeolian in minor.\n"
+		"- A drone (a pedal bass), a solemn tune of fourths and fifths, a round brass or breath lead; a little slower.\n"
+		"- Wind on the noise in a quiet place; drums like a ritual's, sparse." },
+	{ "magical", "Flavour: magical (enchanted, a wizard's tower, fairies)", "magic magical enchanted fairy wizard sorcery spell "
+		"arcane potion",
+		"Sparkle:\n"
+		"- Fast arpeggios and bell-like leads (music box, bloom lead) with a gentle vibrato.\n"
+		"- Rich colours (added ninths, major sevenths) once the tune is there; a bass that rolls in arpeggios.\n"
+		"- A glint of a high echo." },
 	{ "leads", "Lead sounds and articulations","lead melody sound instrument envelope articulation duty click bloom vibrato",
 		"A lead sounds alive when each note has an attack, a body and an end that aren't flat:\n"
 		"- Duty click: the first frame at a thin 12.5% (or 50% for a thin body) before the body's duty: notes speak, "

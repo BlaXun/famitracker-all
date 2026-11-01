@@ -164,7 +164,8 @@ struct NextKind {
 struct NextPick {
 	std::string Value;
 	int Count;
-	NextPick() : Count(1) {}
+	bool Leaned;	// the flavour leans to it (Flavours.h): picked among entries it weighs more
+	NextPick() : Count(1), Leaned(false) {}
 };
 
 struct NextPicks {
@@ -172,7 +173,9 @@ struct NextPicks {
 	double Bpm() const;
 };
 
-NextPicks NextPicksOf(int Kind, const std::string &TrackName, unsigned int Seed);
+// Flavour (Flavours.h): the pools' entries it leans to weigh more, and the tempo pool takes its lean; FLAVOUR_NONE (0): the
+// kind's own picks, as before flavours
+NextPicks NextPicksOf(int Kind, const std::string &TrackName, unsigned int Seed, int Flavour = 0);
 // A pool's entries ("a|b|c")
 std::vector<std::string> PoolEntries(const char *Pool);
 // "a, b or c"

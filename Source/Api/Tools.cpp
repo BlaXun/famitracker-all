@@ -56,6 +56,7 @@
 #include "Vrc6Plus.h"
 #include "Wavetables.h"
 #include "WhatNext.h"
+#include "Flavours.h"
 #include "SongSeed.h"
 #include "NextSteps.h"
 #include "../Nsf/FdsModulator.h"
@@ -202,6 +203,13 @@ Json WordListProp(const char *Description)
 	Item.Set("type", "string");
 	P.Set("items", Item);
 	return P;
+}
+
+// A flavour (Flavours.h): the place's material beside the kind
+Json FlavourProp()
+{
+	return Prop("string", ("The place's material: " + FlavourNames() + " (default: from about or the track's name; "
+		"none for none). Leans the kind's picks.").c_str());
 }
 
 Json ChannelListProp(const char *Description)
@@ -23335,6 +23343,30 @@ std::vector<std::string> TagsArg(const Json &Args, const char *Name);
 // like's form length and kind (FindLike, after the reference library's tools); Missing says why when none is found
 int LikeBars(SongHost &Host, const std::string &Words, int FrameRate, int RowsPerBeat, int &Kind, std::string &Missing);
 
+// The flavour a call asks for (feat-flavours), as what_next takes it: flavour given (none too), else the words about the
+// place, else the track's name of a song with a seed (a song made before seeds keeps what it was made with). Line: how it
+// was chosen ("" for none)
+int FlavourOfCall(const Json &Args, const std::string &About, const std::string &TrackName, unsigned int Seed, std::string &Line)
+{
+	int Flavour = FLAVOUR_NONE;
+	Line.clear();
+	const std::string Asked = Trim(StringArg(Args, "flavour"));
+	if (!Asked.empty()) {
+		if (!ParseFlavour(Asked, Flavour))
+			throw Problem("flavour should be " + FlavourNames() + ", or none (or leave it out: from about or the track's name).");
+		Line = FlavourLine(Flavour, std::vector<std::string>(), "");
+		return Flavour;
+	}
+	FlavourWords W = ReadFlavourWords(About);
+	std::string Where = "the words";
+	if (W.Flavour == FLAVOUR_NONE && Seed != 0) {
+		W = ReadFlavourWords(TrackName);
+		Where = "the track's name";
+	}
+	Line = FlavourLine(W.Flavour, W.Words, Where);
+	return W.Flavour;
+}
+
 ShapeRequest ShapeRequestOf(Session &S, const Json &Args)
 {
 	ShapeRequest R;
@@ -23383,6 +23415,10 @@ std::string ShapeChoiceText(const ShapeChoice &C)
 std::string SongShapeTool(Session &S, const Json &Args)
 {
 	const ShapeRequest Request = ShapeRequestOf(S, Args);
+	{
+		std::string Checked;	// (a flavour that isn't one is refused before anything changes)
+		FlavourOfCall(Args, Request.About, S.Song.TrackName, S.Song.Seed, Checked);
+	}
 	if (Request.Shape.empty() && Request.About.empty() && Request.Parts.empty()) {
 		if (Arg(Args, "add_bars") != 0 || !Request.Add.empty() || !Request.Drop.empty() || Request.Bars > 0 || Request.Variant > 0)
 			throw Problem("Say which shape with shape (" + SongShapeIds() + "), describe the place with about, or give the parts; "
@@ -23556,6 +23592,13 @@ std::string SongShapeTool(Session &S, const Json &Args)
 	if (!Notes)
 		Text += Format(" The parts are empty: fill %s first (its chords and bass, then the melody), then the others; what_next gives each "
 			"step.", Shape.Parts[static_cast<size_t>(std::min(Shape.LoopPart, static_cast<int>(Shape.Parts.size()) - 1))].Name.c_str());
+	{
+		// The flavour the call or the words ask for: what_next takes it on (feat-flavours)
+		std::string Line;
+		FlavourOfCall(Args, Request.About, S.Song.TrackName, S.Song.Seed, Line);
+		if (!Line.empty())
+			Text += "\n" + Line;
+	}
 	return WithRemarks(S, Text, Warnings);
 }
 
@@ -25927,6 +25970,13 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 	{
 		Session Now(S.Host());
 		Listen = Arranged ? ListenForSong(Now, Melody, Plan.Listen) : std::string(Plan.Listen);
+	}
+	{
+		// The flavour's own (feat-flavours): what the place's material should sound like
+		std::string Line;
+		const int Flavour = Arranged ? FlavourOfCall(Args, std::string(), S.Song.TrackName, S.Song.Seed, Line) : FLAVOUR_NONE;
+		if (Flavour != FLAVOUR_NONE)
+			Listen += std::string("; for a ") + FlavourOf(Flavour).Name + " place, " + FlavourOf(Flavour).Listen;
 	}
 	if (Looping && Arranged) {
 		Session Now(S.Host());
@@ -31319,6 +31369,9 @@ private:
 	std::string m_About;		// words about the place (about), passed on to song_shape
 	const SongShape *m_pShape;	// the shape an empty song gets (its kind's, its name's or the words')
 	NextPicks m_Picks;			// what the kind's pools give this song (NextPicksOf): its lead, chords, bass, groove, tempo, key
+	int m_Flavour;				// the place's flavour (Flavours.h): given, from about, or from a seeded song's track name
+	bool m_FlavourAsked;		// the call gave it (none too)
+	std::string m_FlavourLine;	// how it was chosen, for the reply ("Flavour: cold (from the words ice): ...")
 	LikePicks m_Like;			// like: the reference the song is like, whose study gives the picks it has (feat-like-reference)
 	unsigned int m_Seed;		// the song's seed rolled by the seed argument (RolledSeed), what the picks mix with the name
 	int m_Roll;					// the seed argument, 1 when none
@@ -31362,9 +31415,24 @@ private:
 	{
 		if (P.Count <= 1)
 			return std::string();
-		return Format(" (%s: one of the %d %s a %s song draws from, %s; another fits if the song wants it, and what_next with "
-			"seed %d gives another choice)", P.Value.empty() ? "none" : P.Value.c_str(), P.Count, What, Kind().Name, m_Seed == 0 ?
-			"the kind's own" : "picked for this song", m_Roll + 1);
+		return Format(" (%s: one of the %d %s a %s song draws from, %s%s; another fits if the song wants it, and what_next with "
+			"seed %d gives another choice)", P.Value.empty() ? "none" : P.Value.c_str(), P.Count, What, Kind().Name, P.Leaned ?
+			Format("the %s flavour leaning to it, ", Flavour().Name).c_str() : "", m_Seed == 0 && !P.Leaned ? "the kind's own" : m_Seed == 0 ?
+			"the first it leans to" : "picked for this song", m_Roll + 1);
+	}
+	const FlavourInfo &Flavour() const { return FlavourOf(m_Flavour); }
+	// A step's words on what the flavour gave it ("" without one)
+	std::string FlavourSays(const std::string &What) const
+	{
+		return m_Flavour == FLAVOUR_NONE || What.empty() ? std::string() : Format(" From the %s flavour: %s.", Flavour().Name,
+			What.c_str());
+	}
+	// The flavour's drums on add_drums's arguments: its intensity where none is set, the noise alone in place of kit samples
+	std::string FlavourDrums(Json &A) const;
+	// A progression with the flavour's borrowed chord (FlavourProgression)
+	std::string Progression(bool B) const
+	{
+		return FlavourProgression(m_Flavour, NextProgression(m_KindId, Minor(), B, m_HasKey && m_Key.Mode == 1), Minor());
 	}
 	// Lush chords' frames a note: a calm song's slow shimmer, a lively stage's fast arpeggios (the soundtrack's first
 	// stages looped their chords at 2-3 frames a note)
@@ -31456,7 +31524,7 @@ private:
 
 WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(Song), m_Core(Core),
 	m_All(BoolArg(Args, "all", false)), m_Client(Client),
-	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Melody(-1), m_LeadKnown(false), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
+	m_KindId(NEXT_GENERAL), m_KindAsked(false), m_Flavour(FLAVOUR_NONE), m_FlavourAsked(false), m_Melody(-1), m_LeadKnown(false), m_HasMelody(false), m_HasNotes(false), m_HasKey(false), m_MixDue(-1),
 	m_Finishing(false), m_Music(true), m_Use(TRACK_MUSIC), m_LikeTempo(false), m_LikeKey(false), m_LikeChords(false),
 	m_LikeBass(false), m_LikeGroove(false)
 {
@@ -31612,7 +31680,26 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 	if (S.Song.Seed == 0 && !m_HasNotes && S.Host().MakeSongSeed())
 		S.Load();
 	m_Seed = RolledSeed(S.Song.Seed, m_Roll);
-	m_Picks = NextPicksOf(m_KindId, S.Song.TrackName, m_Seed);
+	// The flavour (feat-flavours): given (none too), else the words about the place, else the track's name on a song with a
+	// seed (a song made before seeds keeps the steps it was made with, as its pools do)
+	const std::string FlavourAsked = Trim(StringArg(Args, "flavour"));
+	if (!FlavourAsked.empty()) {
+		if (!ParseFlavour(FlavourAsked, m_Flavour) && Lowercase(FlavourAsked) != "none")
+			throw Problem("flavour should be " + FlavourNames() + ", or none (or leave it out: from about or the track's name).");
+		m_FlavourAsked = true;
+		m_FlavourLine = FlavourLine(m_Flavour, std::vector<std::string>(), "");
+	}
+	else {
+		FlavourWords W = ReadFlavourWords(m_About);
+		std::string Where = "the words";
+		if (W.Flavour == FLAVOUR_NONE && S.Song.Seed != 0) {
+			W = ReadFlavourWords(S.Song.TrackName);
+			Where = "the track's name";
+		}
+		m_Flavour = W.Flavour;
+		m_FlavourLine = FlavourLine(m_Flavour, W.Words, Where);
+	}
+	m_Picks = NextPicksOf(m_KindId, S.Song.TrackName, m_Seed, m_Flavour);
 	// like: the reference's own picks in place of the pools' (what its study doesn't say stays the kind's)
 	if (m_Like.Found) {
 		auto Take = [](NextPick &P, const std::string &Value) {
@@ -32136,6 +32223,8 @@ void WhatNext::Frame()
 		A.Set("shape", Own.Id);
 		if (!m_About.empty())
 			A.Set("about", m_About);
+		if (m_FlavourAsked && !m_Core)
+			A.Set("flavour", Flavour().Name);
 		if (m_Like.Found && m_Like.Bars > 0)
 			A.Set("like", m_Like.Words);
 		ShapeRequest R;
@@ -32920,8 +33009,7 @@ void WhatNext::GrowForm()
 	for (size_t i = 0; i < m_Form.size(); ++i)
 		Owns += m_Form[i].Named && !m_Form[i].Free && !m_Form[i].Empty && m_Form[i].Original < 0 && static_cast<int>(i) != A &&
 			!IsClimaxName(m_Form[i].Name) ? 1 : 0;
-	B.Set("chords", FitProgression(Owns > 0 ? ShiftedProgression(NextProgression(m_KindId, Minor(), true, m_HasKey && m_Key.Mode == 1)) : NextProgression(m_KindId,
-		Minor(), true, m_HasKey && m_Key.Mode == 1), LaidBars));
+	B.Set("chords", FitProgression(Owns > 0 ? ShiftedProgression(Progression(true)) : Progression(true), LaidBars));
 	B.Set("from_bar", At);
 	B.Set("to_bar", At + LaidBars - 1);
 	const NextParts Here = PartsBeside(S, m_HasMelody ? m_Melody : -1, S.Time.BarStart(First.FirstBar),
@@ -32989,6 +33077,22 @@ void WhatNext::Parts()
 			A.Set("vibrato", "gentle");
 		if (Calm())
 			CalmLeadArgs(A, S.Channel(Lead));
+		// The flavour's pulse width and vibrato, where the kind's call doesn't set them (a cold place's thin, glassy lead)
+		std::string FlavourWhy;
+		if (m_Flavour != FLAVOUR_NONE && m_Like.LeadSound <= 0) {
+			const FlavourInfo &F = Flavour();
+			bool Gave = false;
+			if (F.LeadDuty != 0 && A.Get("duty") == 0 && S.Channel(Lead).Kind == KIND_PULSE) {
+				A.Set("duty", F.LeadDuty);
+				Gave = true;
+			}
+			if (F.LeadVibrato != 0 && A.Get("vibrato") == 0) {
+				A.Set("vibrato", F.LeadVibrato);
+				Gave = true;
+			}
+			if (Gave)
+				FlavourWhy = FlavourSays(F.LeadWords);
+		}
 		// Its vibrato fitted to where the tune will play, the upper part of the offered hooks' range (TuneHome's sixth): a pitch
 		// sequence's step is more cents the higher the note, and the action lead's gentle vibrato swung -75 to +60 cents at
 		// E-5 (Guard Tower, fix-gen4-melody)
@@ -33030,7 +33134,7 @@ void WhatNext::Parts()
 			m_KindId == NEXT_ACTION ? "an action lead that opens up on each note, with a duty click so it speaks: it " + Words + "." :
 			m_KindId == NEXT_COZY ? "a cozy place's lead is warm and friendly and never presses: it " + Words + ", not a night "
 			"song's music box, which rings away." : Later() && K.LeadWhy != 0 ? LeadWhyOf(K, Picked) : "a lead that " + Words +
-			", its vibrato coming in on long notes.") + " Its reply shows its volume a "
+			", its vibrato coming in on long notes.") + FlavourWhy + " Its reply shows its volume a "
 			"frame at a time." + PoolNote(m_Picks.Lead, "leads") + " "
 			"(For another, find_sound " + WriteJson(Find) + " lists the leads that play there; reference_sound makes a study's, with "
 			"name \"" + K.LeadName + "\".)");
@@ -33049,14 +33153,17 @@ void WhatNext::Parts()
 					To = m_Form[i].LastBar;
 					break;
 				}
-			A.Set("chords", FitProgression(NextProgression(m_KindId, Minor(), false, m_HasKey && m_Key.Mode == 1), To - From + 1));
+			A.Set("chords", FitProgression(Progression(false), To - From + 1));
 			A.Set("from_bar", From);
 			A.Set("to_bar", To);
 			const int Chords = FreeChannel(0, S.MaxRows(), Lead, false);
 			if (Chords >= 0 && !(Calm() && S.Song.Vrc6Plus))
 				A.Set("chord_channel", ChannelName(Chords));
 			Why = "The A part starts from its chords and bass: " + (To - From + 1 == 8 ? std::string("eight bars") : Plural(To - From + 1,
-				"bar", "bars")) + " in " + (m_HasKey ? KeyName(m_Key) : std::string("the key")) + ", for the melody to sing over.";
+				"bar", "bars")) + " in " + (m_HasKey ? KeyName(m_Key) : std::string("the key")) + ", for the melody to sing over." +
+				(Progression(false) != NextProgression(m_KindId, Minor(), false, m_HasKey && m_Key.Mode == 1) ? FlavourSays(
+				Flavour().Id == FLAVOUR_SPOOKY ? "a borrowed chord among them, a chromatic chill" : "a modal chord among them (bVII), "
+				"an old colour") : std::string());
 		}
 		else {
 			A.Set("melody_channel", ChannelName(Lead));
@@ -33159,11 +33266,13 @@ void WhatNext::Parts()
 		A.Set("from_bar", P.FirstBar);
 		A.Set("to_bar", P.LastBar);
 		A.Set("intensity", "light");
+		const std::string Flavoured = FlavourDrums(A);
 		std::string Title = K.Title;
 		Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
 		Step("drums", "add_drums", A, Format("%s has no backbeat: a soft tick on the noise in one section alone, the %s groove, "
 			"light, in %s (bars %d-%d), where the song turns; the other parts stay without drums. Optional: skip drums for none.",
-			Title.c_str(), m_Picks.Groove.Value.c_str(), P.Name.c_str(), P.FirstBar, P.LastBar) + PoolNote(m_Picks.Groove, "grooves"));
+			Title.c_str(), m_Picks.Groove.Value.c_str(), P.Name.c_str(), P.FirstBar, P.LastBar) + PoolNote(m_Picks.Groove, "grooves") +
+			Flavoured);
 		return;
 	}
 	int From = -1, To = -1;
@@ -33204,9 +33313,10 @@ void WhatNext::Parts()
 		if (m_KindId == NEXT_COZY) {
 			// Soft and optional: the gentle groove on the noise alone, light (a sampled kick thumps in a small room)
 			A.Set("intensity", "light");
+			const std::string Flavoured = FlavourDrums(A);
 			Step("drums", "add_drums", A, Format("A cozy place can take a soft beat: the %s groove, light, in bars %d-%d, under the "
 				"tune. Optional: skip drums for a room without one.", m_Picks.Groove.Value.c_str(), From, To) + PoolNote(m_Picks.Groove,
-				"grooves"));
+				"grooves") + Flavoured);
 			return;
 		}
 		if (Later()) {
@@ -33214,14 +33324,23 @@ void WhatNext::Parts()
 				A.Set("intensity", K.Intensity);
 			if (K.Samples)
 				A.Set("kit", "samples");
+			const std::string Flavoured = FlavourDrums(A);
+			const std::string Intensity = A.Get("intensity") != 0 ? A.Get("intensity")->String() : std::string();
+			const bool Samples = A.Get("kit") != 0 && A.Get("kit")->String() == "samples";
 			std::string Title = K.Title;
 			Title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(Title[0])));
 			Step("drums", "add_drums", A, Format("%s wants drums: the %s groove%s%s in bars %d-%d, with a fill where each phrase ends.",
-				Title.c_str(), m_Picks.Groove.Value.c_str(), K.Intensity != 0 && *K.Intensity ? (std::string(", ") + K.Intensity).c_str() : "",
-				K.Samples ? " with kit samples" : "", From, To) + PoolNote(m_Picks.Groove, "grooves"));
+				Title.c_str(), m_Picks.Groove.Value.c_str(), !Intensity.empty() ? (", " + Intensity).c_str() : "",
+				Samples ? " with kit samples" : "", From, To) + PoolNote(m_Picks.Groove, "grooves") + Flavoured);
 			return;
 		}
 		A.Set("kit", "samples");
+		const std::string Flavoured = FlavourDrums(A);
+		if (!Flavoured.empty() || m_Picks.Groove.Leaned)
+			Step("drums", "add_drums", A, Format("%s wants drums: the %s groove in bars %d-%d, with a fill where each phrase ends.",
+				m_KindId == NEXT_LIVELY ? "A lively stage" : m_KindId == NEXT_ACTION ? "An action track" : "The song",
+				m_Picks.Groove.Value.c_str(), From, To) + PoolNote(m_Picks.Groove, "grooves") + Flavoured);
+		else
 		Step("drums", "add_drums", A, Format("%s wants drums: %s in bars %d-%d, with a fill where each phrase ends.", m_KindId ==
 			NEXT_LIVELY ? "A lively stage" : m_KindId == NEXT_ACTION ? "An action track" : "The song", m_KindId == NEXT_LIVELY ?
 			"a sampled kick and snare on 2 and 4 under noise hats" : m_KindId == NEXT_ACTION ? "a driving groove with a sampled kick "
@@ -33291,7 +33410,10 @@ void WhatNext::Colors()
 	// (a lively stage's, and every kind's whose chords are written plain before the tune: the Caves' lush chords stayed plain
 	// triads, which the review asked to color right after done: fix-gen4-done)
 	// (not a kind whose chords stay plain all through: StaysPlain)
-	const bool Plain = m_KindId == NEXT_LIVELY || (Kind().Color != 0 && std::string(Kind().Color) == "plain");
+	// (and a flavour's whose chords sparkle, cold, airy and magical, on a kind whose chords were written plain or a cozy one's:
+	// feat-flavours)
+	const bool Plain = m_KindId == NEXT_LIVELY || (Kind().Color != 0 && std::string(Kind().Color) == "plain") || (Flavour().Colors &&
+		std::string(ChordColor(false)) == "plain");
 	if (!Plain || Kind().StaysPlain || !m_HasMelody || m_Unmet.count("melody") != 0 || m_Unmet.count("form") != 0 ||
 		!Wanted("colors"))
 		return;
@@ -33327,7 +33449,9 @@ void WhatNext::Colors()
 			continue;
 		Step("colors", "polish", A, "The chords were written plain, before the melody: now that it's there, each chord gets the rich "
 			"color that fits it (an added ninth, a major seventh, a minor seventh) where that color doesn't rub the melody a "
-			"semitone; colors written before the tune sat a semitone from its notes and rubbed it all through the song.");
+			"semitone; colors written before the tune sat a semitone from its notes and rubbed it all through the song." +
+			(Flavour().Colors && !(m_KindId == NEXT_LIVELY || (Kind().Color != 0 && std::string(Kind().Color) == "plain")) ?
+			FlavourSays("the chords' colours sparkle") : std::string()));
 		return;
 	}
 }
@@ -34479,11 +34603,18 @@ void WhatNext::Ambience()
 		std::find(KINDS, KINDS + sizeof(KINDS) / sizeof(KINDS[0]), m_KindId) == KINDS + sizeof(KINDS) / sizeof(KINDS[0]))
 		return;
 	std::string Word;
-	bool FromName = false;
+	bool FromName = false, FromFlavour = false;
 	int Kind = AmbienceOfWords(m_About, &Word);
 	if (Kind < 0) {
 		Kind = AmbienceOfWords(S.Song.TrackName, &Word);
 		FromName = true;
+	}
+	if (Kind < 0 && m_Flavour != FLAVOUR_NONE) {
+		// The flavour's sound of the place (a cold place's wind, a wet one's rain or stream), one of its own for the song
+		const std::string Own = FlavourAmbience(m_Flavour, m_Seed == 0 ? 0u : SeededHash("ambience", S.Song.TrackName, m_Seed));
+		FromFlavour = !Own.empty() && ParseAmbienceKind(Own, Kind);
+		if (!FromFlavour)
+			Kind = -1;
 	}
 	if (Kind < 0)
 		return;
@@ -34495,10 +34626,36 @@ void WhatNext::Ambience()
 		return;
 	Json A = Json::MakeObject();
 	A.Set("kind", AmbienceKindInfo(Kind).Name);
+	if (FromFlavour)
+		Step("ambience", "add_ambience", A, Format("A %s place has a sound of its own: %s, quietly under the music on the free %s, in "
+			"step with its bars and its loop, as the soundtrack's harbor songs had their waves. skip \"ambience\" leaves it out.",
+			Flavour().Name, AmbienceKindInfo(Kind).What, ChannelName(Noise).c_str()) + FlavourSays(std::string("the ") +
+			AmbienceKindInfo(Kind).Name));
+	else
 	Step("ambience", "add_ambience", A, Format("The %s names a place with a sound of its own (\"%s\"): %s, quietly under the music "
 		"on the free %s, in step with its bars and its loop, as the soundtrack's harbor songs had their waves. skip "
 		"\"ambience\" leaves it out.", FromName ? "track's name" : "words about the place", Word.c_str(),
 		AmbienceKindInfo(Kind).What, ChannelName(Noise).c_str()));
+}
+
+std::string WhatNext::FlavourDrums(Json &A) const
+{
+	if (m_Flavour == FLAVOUR_NONE)
+		return std::string();
+	const FlavourInfo &F = Flavour();
+	std::vector<std::string> Said;
+	if (F.Intensity != 0 && (A.Get("intensity") == 0 || A.Get("intensity")->String() == "normal")) {
+		A.Set("intensity", F.Intensity);
+		Said.push_back(std::string("the drums ") + F.Intensity);
+	}
+	if (F.NoiseKit && A.Get("kit") != 0 && A.Get("kit")->String() == "samples") {
+		A.Set("kit", "noise");
+		Said.push_back("on the noise alone, ticks and clanks rather than sampled thumps");
+	}
+	std::string Out;
+	for (size_t i = 0; i < Said.size(); ++i)
+		Out += (i == 0 ? "" : ", ") + Said[i];
+	return FlavourSays(Out);
 }
 
 // The parts the review hears at one volume, which polish's accents shape (8 notes or more; not the triangle, the
@@ -34674,6 +34831,8 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 	const NextKind &K = Kind();
 	Json A = Json::MakeObject();
 	A.Set("kind", K.Name);
+	if ((m_FlavourAsked || m_Flavour != FLAVOUR_NONE) && !m_Core)
+		A.Set("flavour", Flavour().Name);
 	if (m_HasMelody)
 		A.Set("melody_channel", ChannelName(m_Melody));
 	Json Skip = Json::MakeArray();
@@ -34918,6 +35077,8 @@ Json WhatNext::AgainArgs() const
 		Again.Set("kind", Kind().Name);
 	if (!m_About.empty())
 		Again.Set("about", m_About);
+	if (m_FlavourAsked || m_Flavour != FLAVOUR_NONE)
+		Again.Set("flavour", Flavour().Name);
 	if (m_Like.Asked)
 		Again.Set("like", m_Like.Words);
 	if (m_Roll > 1)
@@ -34985,6 +35146,8 @@ std::string WhatNext::Reply()
 	}
 	if (!m_KindNote.empty())
 		Text += "\nKind: " + m_KindNote + ".";
+	if (!m_FlavourLine.empty())
+		Text += "\n" + m_FlavourLine;
 	if (!Done.empty())
 		Text += "\nDone: " + Done + ".";
 	if (!Left.empty())
@@ -35338,6 +35501,8 @@ std::string WhatNext::JsonReply()
 	Out.Set("track_name", S.Song.TrackName);
 	Out.Set("kind", K.Name);
 	Out.Set("kind_note", m_KindNote.empty() ? Json() : Json(m_KindNote));
+	Out.Set("flavour", m_Flavour == FLAVOUR_NONE ? Json() : Json(Flavour().Name));
+	Out.Set("flavour_note", m_FlavourLine.empty() ? Json() : Json(m_FlavourLine));
 	Out.Set("done", m_Steps.empty());
 	Out.Set("step", Steps.At(0));
 	Out.Set("steps", Steps);
@@ -35808,6 +35973,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"own tune in its place.",
 		Schema()
 			.Add("kind", Prop("string", "A kind of get_recipe's (default: from about or the track's name). Same every time."))
+			.Add("flavour", FlavourProp())
 			.Add("seed", Prop("integer", "2 and on: other picks."))
 			.Add("skip", WordListProp("Steps to leave out, like [\"drums\"] when the user wants none: tempo, key, lead, chords, "
 				"sections, melody, form, drums, second_line, variation, break, intro, loop, tips, colors, echo, polish, mix, seam, save, "
@@ -36735,6 +36901,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Without shape, about or parts it lists the shapes. Needs direct changes; one Ctrl+Z undoes it.",
 		Schema().Add("shape", Prop("string", "stage, night, town, boss, small or jingle (or a word: calm, battle...)."))
 			.Add("about", Prop("string", "Words about the place: \"a dangerous factory, but not hectic\"."))
+			.Add("flavour", FlavourProp())
 			.Add("like", Prop("string", "A studied track to be like (words or its id): its loop's length (without bars)."))
 			.Add("variant", Prop("integer", "Which form, from 1 (default: the track's name picks)."))
 			.Add("seed", Prop("integer", "2 and on: another roll."))
@@ -36838,6 +37005,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"saved.",
 			Schema()
 				.Add("kind", Prop("string", "A kind of get_recipe's (default: general, or calm by the track's name)."))
+				.Add("flavour", FlavourProp())
 				.Add("skip", Skips)
 				.Add("faders", EnumProp("auto (the default: back to 0 dB when they do the mix's work), keep (as the user set them) or "
 					"reset (every fader to 0 dB before the mix).", std::vector<std::string>{ "auto", "keep", "reset" }))
@@ -37326,7 +37494,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"of them and how to choose one. Read it before composing.",
 		Schema()
 			.Add("kind", Prop("string", "A kind (default: how to choose)."))
-			.Add("about", Prop("string", "Instead: words about the place; it picks the kind and says which."))
+			.Add("about", Prop("string", "Instead: words about the place; it picks the kind (and a flavour) and says which."))
+			.Add("flavour", FlavourProp())
 			.Add("idea", Prop("string", "What the song is for, like \"a river stage by day\", for the recipe to name."))
 			.Add("bars", Prop("integer", "How long, in bars (default 40)."))
 			.Add("like", Prop("string", "A studied track to be like (words or its id): its picks first.")),
@@ -38180,7 +38349,8 @@ std::string ToolSet::Instructions()
 		"Start with get_song, then read_notes for the parts you change; look_at_song shows the notes as a picture. "
 		"what_next gives the one next step for the song as it is, with its call ready to send, when you wonder what comes "
 		"next (the user may have taken a step from FamiTracker's What next panel meanwhile: ask it again rather than "
-		"assume); give it, get_recipe and finish_song the same kind every time, the one the user chose. An empty song "
+		"assume); give it, get_recipe and finish_song the same kind every time, the one the user chose, and the same "
+		"flavour (the place's material: cold, hot, wet, mechanical, spooky...) when the place has one. An empty song "
 		"starts from its shape: song_shape lays out its kind's form (stage, night, town, boss, a "
 		"small loop, a jingle), each part a section named for what it does (a track named for a small place, a shop, a "
 		"menu or a house, gets the short loop, and one named for a town or a village the town's, \"Home village\" "
@@ -38934,9 +39104,16 @@ static std::string RecipeTool(const Json &Args, bool Core, SongHost *pHost)
 		else
 			Picked = "Kind: none of the kinds from those words (the general recipe); give kind for one.\n\n";
 	}
+	// The flavour (feat-flavours): given, or from the words about the place; its line after the kind's recipe
+	std::string FlavourPicked;
+	const int Flavour = FlavourOfCall(Args, About, std::string(), 0, FlavourPicked);
+	if (!FlavourPicked.empty())
+		Picked += FlavourPicked + "\n\n";
+	const std::string FlavourText = Flavour == FLAVOUR_NONE ? std::string() : "\n" + FlavourRecipe(Flavour, Core) + "\n" +
+		(Core ? std::string() : "\n" + StyleGuideTopic(FlavourOf(Flavour).Name));
 	if (Core)	// a new song first: the small set has new_song and set_expansion
 		return Picked + "Start: get_song; with no song open, or for another one, new_song with a name (and expansion for the chips).\n" +
-			CoreRecipe(Kind);
+			CoreRecipe(Kind) + FlavourText;
 	const Json *pIdea = Args.Get("idea");
 	const std::string Idea = pIdea != 0 && pIdea->IsString() && !Trim(pIdea->String()).empty() ? Trim(pIdea->String()) :
 		std::string("the song the user asked for");
@@ -38944,13 +39121,13 @@ static std::string RecipeTool(const Json &Args, bool Core, SongHost *pHost)
 	const int Bars = pBars != 0 && pBars->IsNumber() ? std::max(4, std::min(256, static_cast<int>(pBars->Number()))) : 40;
 	const bool OwnIdea = pIdea != 0 && pIdea->IsString() && !Trim(pIdea->String()).empty();
 	if (!Kind.empty() && Kind != "general")
-		return Picked + KindRecipe(Kind, OwnIdea || About.empty() ? Idea : About, std::to_string(Bars));
+		return Picked + KindRecipe(Kind, OwnIdea || About.empty() ? Idea : About, std::to_string(Bars)) + FlavourText;
 	Json Prompt = Json::MakeObject();
 	Prompt.Set("idea", OwnIdea || About.empty() ? Idea : About);
 	Prompt.Set("bars", std::to_string(Bars));
 	std::string Text, Error;
 	ToolSet::PromptText("compose_track", Prompt, Text, Error);
-	return Picked + Text;
+	return Picked + Text + FlavourText;
 }
 
 // explain: a term in plain words, as FamiTracker's glossary (Help > Glossary, Glossary.h) shows it, by any of its names; an
