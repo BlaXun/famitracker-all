@@ -18721,7 +18721,7 @@ void TestDraftFindings()
 	CHECK_EQ(TextOf(pRepeat, "section"), std::string("A2"));
 	CHECK_EQ(TextOf(pRepeat, "repeats"), std::string("A"));
 	CHECK_HAS(TextOf(pRepeat, "message"), "\"A2\" (bars 21-28) repeats \"A\" (bars 5-12) note for note with one slow line added on 2A03 Pulse 1");
-	CHECK_HAS(TextOf(pRepeat, "message"), "Fix: vary_part {\"channel\":\"VRC6 Pulse 1\",\"variation\":\"embellish\",\"section\":\"A2\"}.");
+	CHECK_HAS(TextOf(pRepeat, "message"), "Fix: vary_part {\"channel\":\"VRC6 Pulse 1\",\"variation\":\"embellish\",\"from_bar\":27,\"to_bar\":28}.");
 	const Json *pLoop = FindingOf(Out, "short_loop");
 	CHECK(pLoop != 0 && pLoop->Get("loop_seconds") != 0 && std::fabs(pLoop->Get("loop_seconds")->Number() - 44.8) < 0.05);
 	CHECK_HAS(TextOf(pLoop, "message"), "Fix: copy_bars {\"section\":\"B\",\"at_bar\":33}, then set_loop {\"from_bar\":5,\"to_bar\":40}");
@@ -18733,7 +18733,7 @@ void TestDraftFindings()
 	const std::string Review = Run(Song, "review_arrangement", "{\"style\": \"lively\"}").Text;
 	CHECK_HAS(Review, "; bass on VRC6 Sawtooth (its roots doubled on 2A03 Triangle)");
 	CHECK_HAS(Review, "What would help, most first:\n1. The melody on VRC6 Pulse 1 stops at 23 of its 23 bar lines");
-	CHECK_HAS(Review, "Fix: vary_part {\"channel\":\"VRC6 Pulse 1\",\"variation\":\"embellish\",\"section\":\"A2\"}.");
+	CHECK_HAS(Review, "Fix: vary_part {\"channel\":\"VRC6 Pulse 1\",\"variation\":\"embellish\",\"from_bar\":27,\"to_bar\":28}.");
 	CHECK_LACKS(Review, "hardly pauses");			// the one-bar pieces say it
 	CHECK_LACKS(Review, "The bass mostly holds roots");	// the thin bass says it
 	// Without style lively the loop isn't held to a stage's minute
@@ -20420,6 +20420,44 @@ void SectionMelody(const FakeSong &Song, int Channel, const Section &Part, std::
 		Top = std::max(Top, C.Pitch());
 		if (r - From < Bars2)
 			Opening.push_back(std::make_pair(r - From, C.Pitch()));
+	}
+}
+
+// The hook's head in every return of A (A', A'', and a climax laid out from A's music, where its rhythm opens as A's): A's
+// first three notes, on the same rows and with the same moves (fix-r4-repeats: embellish took the Caves' rising fifth out
+// of A' and A'')
+void CheckHookHeads(const FakeSong &Song, const std::vector<std::string> &Made, const std::string &What, int Line)
+{
+	const int Melody = WalkMelody(Song, Made);
+	const Section *pA = 0;
+	for (const Section &Part : Song.Info.Sections)
+		if (Part.Name == "A" && pA == 0)
+			pA = &Part;
+	if (Melody < 0 || pA == 0)
+		return;
+	std::vector<std::pair<int, int> > Head, Opening;
+	int Top = -1;
+	SectionMelody(Song, Melody, *pA, Head, Top);
+	if (Head.size() < 3)
+		return;
+	Head.resize(3);
+	// (a climax grown from a motif of its own isn't A's music)
+	bool OwnTune = false;
+	for (size_t i = 0; i < Made.size(); ++i)
+		OwnTune = OwnTune || (Made[i].compare(0, 12, "grow_melody ") == 0 && Contains(Made[i], "\"section\":\"Climax\""));
+	for (const Section &Part : Song.Info.Sections) {
+		const bool Repeat = Part.Name.size() > 1 && Part.Name[0] == 'A' && Part.Name.find_first_not_of("'", 1) == std::string::npos;
+		if (&Part == pA || (!Repeat && Part.Name != "Climax"))
+			continue;
+		SectionMelody(Song, Melody, Part, Opening, Top);
+		bool Rows = Opening.size() >= 3, Moves = Rows;
+		for (size_t i = 0; Rows && i < 3; ++i) {
+			Rows = Opening[i].first == Head[i].first;
+			Moves = Moves && Opening[i].second - Opening[0].second == Head[i].second - Head[0].second;
+		}
+		if (!Repeat && (!Rows || OwnTune))
+			continue;	// (a climax with a tune of its own)
+		Check(Rows && Moves, (What + ": the hook's head changed in " + Part.Name).c_str(), Line);
 	}
 }
 
@@ -29292,8 +29330,9 @@ void TestKindPools()
 			bool Finished = false;
 			const std::string Asked = k == NEXT_GENERAL ? std::string("{}") : std::string("{\"kind\": \"") + NextKindInfo(k).Name +
 				"\"}";
-			FollowWhatNext(Song, Asked, 60, Finished, __LINE__);
+			const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 60, Finished, __LINE__);
 			Check(Finished && Song.Info.Seed != 0, (Asked + " " + Name).c_str(), __LINE__);
+			CheckHookHeads(Song, Made, Asked + " " + Name, __LINE__);
 			const std::string Style = std::string(NextKindInfo(k).Style) == "any" ? std::string() : std::string(", \"style\": \"") +
 				NextKindInfo(k).Style + "\"";
 			const Json Found = Parse(Run(Song, "check_song", "{\"format\": \"json\"" + Style + "}").Text);
@@ -29322,9 +29361,10 @@ void TestKindPools()
 		bool Finished = false;
 		const std::string Asked = k == NEXT_GENERAL ? std::string("{}") : std::string("{\"kind\": \"") + NextKindInfo(k).Name +
 			"\"}";
-		FollowWhatNext(Song, Asked, 60, Finished, __LINE__, true);
+		const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 60, Finished, __LINE__, true);
 		Check(Finished, (Asked + " Brook (core)").c_str(), __LINE__);
 		CheckDoneReview(Song, Asked + " Brook (core)", __LINE__);
+		CheckHookHeads(Song, Made, Asked + " Brook (core)", __LINE__);
 	}
 }
 
@@ -29361,6 +29401,102 @@ std::vector<ShapeNote> StepsShape(const std::string &Text)
 		Out.push_back(ShapeNote(N.Step / 8, N.Step, N.Steps, Pitch));
 	}
 	return Out;
+}
+
+// A bar's notes on a channel: where each starts in the bar (rows) and its pitch
+std::vector<std::pair<int, int> > BarNotes(const FakeSong &Song, int Channel, int Bar)
+{
+	std::vector<std::pair<int, int> > Out;
+	const int Rows = 4 * Song.Info.FirstHighlight;
+	for (int r = (Bar - 1) * Rows; r < Bar * Rows && r < static_cast<int>(Song.Rows[static_cast<size_t>(Channel)].size()); ++r) {
+		const Cell &C = Song.Rows[static_cast<size_t>(Channel)][static_cast<size_t>(r)];
+		if (C.HasNote())
+			Out.push_back(std::make_pair(r - (Bar - 1) * Rows, C.Pitch()));
+	}
+	return Out;
+}
+
+// A hook that returns as planned against a phrase pasted (fix-r4-repeats): the review leaves the motif's returns alone and
+// tips a whole phrase pasted in every part; check_song's repeat fix and vary_part's embellish vary a repeat in one place,
+// gently on a sparse line or a calm kind without drums, keeping the motif's head, and two repeats differently
+void TestHookReturns()
+{
+	// The Caves' hook (round 3), its answer, the hook again two bars on... as A (bars 1-8), over a bass a bar a note
+	const std::string HOOK = "D4 - - A4 - - - - | G4 - - E4 - - . .";
+	const std::string A = HOOK + " | F4 - - E4 - - D4 - | E4 - - - - - . . | " + HOOK + " | F4 - - E4 - - C4 - | D4 - - - - - . .";
+	const std::string BASS = "D3 - - - - - - - | C3 - - - - - - - | F3 - - - - - - - | A3 - - - - - - - | "
+		"D3 - - - - - - - | C3 - - - - - - - | F3 - - - - - - - | D3 - - - - - - -";
+	auto Song = [&](int Copies, const std::string &Tune) {
+		std::unique_ptr<FakeSong> pSong(new FakeSong(2 * Copies));
+		pSong->Info.DirectChanges = true;
+		for (int c = 0; c < Copies; ++c) {
+			Run(*pSong, "write_notes", "{\"channel\": \"Pulse 1\", \"instrument\": \"Square\", \"notes\": \"" + std::to_string(8 * c + 1) + ": " +
+				Tune + "\"}");
+			Run(*pSong, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"Bass\", \"notes\": \"" + std::to_string(8 * c + 1) + ": " +
+				BASS + "\"}");
+		}
+		Run(*pSong, "set_key", "{\"key\": \"D dorian\"}");
+		return pSong;
+	};
+	{
+		// The hook back in bar 5 (and in A' after it) is the motif's return: no repeat tip
+		std::unique_ptr<FakeSong> pOne = Song(2, A);
+		const std::string Review = Run(*pOne, "review_arrangement", "{}").Text;
+		CHECK(!Contains(Review, "A repeat with nothing new") && !Contains(Review, "Phrases come back unchanged"));
+		CHECK_HAS(Review, "its motif comes back in");
+		// A' = A in every part, named: check_song's fix varies its end alone, and the hook stays in A'
+		pOne->Info.Sections.push_back(Section("A", 0, 1));
+		pOne->Info.Sections.push_back(Section("A'", 2, 3));
+		const Json Out = Parse(Run(*pOne, "check_song", "{\"format\": \"json\"}").Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "repeat");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		if (!Found.empty() && Found[0]->Get("fix") != 0) {
+			const Json *pArgs = Found[0]->Get("fix")->Get("arguments");
+			CHECK(IntegerOf(pArgs, "from_bar") == 15 && IntegerOf(pArgs, "to_bar") == 16);
+			const std::vector<std::pair<int, int> > Head = BarNotes(*pOne, 0, 9);
+			CHECK(!Run(*pOne, "vary_part", WriteJson(*pArgs)).IsError);
+			CHECK(BarNotes(*pOne, 0, 9) == Head && BarNotes(*pOne, 0, 13) == Head);
+			CHECK(FindingsOf(Parse(Run(*pOne, "check_song", "{\"format\": \"json\"}").Text), "repeat").empty());
+		}
+	}
+	{
+		// Four bars pasted in every part are a phrase pasted: the tip, once, asking for one place
+		const std::string Four = "D4 - - A4 - - - - | G4 - - E4 - - . . | F4 - - E4 - - D4 - | E4 - - - - - . .";
+		std::unique_ptr<FakeSong> pTwo = Song(1, Four + " | " + Four);
+		Run(*pTwo, "write_notes", "{\"channel\": \"Triangle\", \"notes\": \"5: D3 - - - - - - - | C3 - - - - - - - | "
+			"F3 - - - - - - - | A3 - - - - - - -\"}");
+		const std::string Review = Run(*pTwo, "review_arrangement", "{}").Text;
+		CHECK_HAS(Review, "Bars 5-8 repeat the bars four before them in every part.");
+		CHECK_HAS(Review, "in one place");
+	}
+	{
+		// Embellish on the sparse hook, a mysterious song's: at most one note more a bar, the hook's D4 to A4 kept
+		for (int Kept = 0; Kept < 2; ++Kept) {
+			std::unique_ptr<FakeSong> pThree = Song(2, A);
+			if (Kept == 1)
+				pThree->KeepKind(0, "mysterious");
+			const std::vector<std::pair<int, int> > Before9 = BarNotes(*pThree, 0, 9), Before10 = BarNotes(*pThree, 0, 10);
+			const ToolResult Varied = Run(*pThree, "vary_part", "{\"channel\": \"Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 9, "
+				"\"to_bar\": 16}");
+			CHECK(!Varied.IsError);
+			const std::vector<std::pair<int, int> > After9 = BarNotes(*pThree, 0, 9);
+			CHECK(After9.size() >= 2 && After9[0] == Before9[0] && After9[1] == Before9[1]);
+			for (int Bar = 9; Bar <= 16; ++Bar)
+				Check(BarNotes(*pThree, 0, Bar).size() <= BarNotes(*pThree, 0, Bar - 8).size() + 1, ("bar " + std::to_string(Bar)).c_str(),
+					__LINE__);
+			CHECK(BarNotes(*pThree, 0, 10).size() >= Before10.size());
+		}
+	}
+	{
+		// Two repeats embellished differ (or the second is refused and left as it is)
+		std::unique_ptr<FakeSong> pFour = Song(3, A);
+		CHECK(!Run(*pFour, "vary_part", "{\"channel\": \"Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 15, \"to_bar\": 16}").IsError);
+		const ToolResult Second = Run(*pFour, "vary_part", "{\"channel\": \"Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 23, "
+			"\"to_bar\": 24}");
+		if (Second.IsError)
+			CHECK_HAS(Second.Text, "already do");
+		CHECK(BarNotes(*pFour, 0, 23) != BarNotes(*pFour, 0, 15) || BarNotes(*pFour, 0, 24) != BarNotes(*pFour, 0, 16));
+	}
 }
 
 // A catchy tune (its motif stated, moved a step and answered, as the kept songs do) and three the user heard as monotone
@@ -29946,9 +30082,10 @@ void TestGen4Done()
 				CHECK(!Run(Song, "set_expansion", std::string("{\"chips\": ") + U.Chips + "}").IsError);
 			bool Finished = false;
 			const std::string What = std::string(U.Name) + " seed " + std::to_string(Seed);
-			FollowWhatNext(Song, U.Asked, 70, Finished, __LINE__, U.Core);
+			const std::vector<std::string> Made = FollowWhatNext(Song, U.Asked, 70, Finished, __LINE__, U.Core);
 			Check(Finished, What.c_str(), __LINE__);
 			CheckDoneReview(Song, What, __LINE__);
+			CheckHookHeads(Song, Made, What, __LINE__);
 			// The harbor's waves under the music (feat-ambience); the others' words name no such sound (the tower's wind
 			// howls over a fight, which takes none)
 			bool Ambient = false;
@@ -30372,6 +30509,7 @@ int main()
 	TestGen4Done();
 	TestOfferedHooks();
 	TestHooks();
+	TestHookReturns();
 	TestKindShapes();
 	TestLeadVibratoFits();
 	TestGen4Balance();

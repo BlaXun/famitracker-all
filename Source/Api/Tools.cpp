@@ -15506,14 +15506,23 @@ void RepeatFindings(Session &S, int Melody, int From, int To, std::vector<Arrang
 			bool Repeated = false;
 			for (size_t w = 0; w < x && !Repeated; ++w)
 				Repeated = Lowercase(SectionBase(List[w].Name)) == Lowercase(SectionBase(List[x].Name));
+			// The repeat is varied in one place, its ending (its last quarter), so its motif comes back as itself where it
+			// starts (fix-r4-repeats: the whole of A' and A'' embellished took the Caves' hook out of both); a repeat of a
+			// part another repeat varies already (A'' after A') is syncopated there instead
+			for (size_t w = 0; w < y && !Repeated; ++w)
+				Repeated = w != x && Lowercase(SectionBase(List[w].Name)) == Lowercase(SectionBase(List[x].Name));
+			const int EndFrom = YTo - std::max(1, (Bars + 3) / 4) + 1;
 			Json Vary = Json::MakeObject();
 			Vary.Set("channel", S.Channel(Melody).FullName());
 			Vary.Set("variation", Repeated ? "syncopate" : "embellish");
-			Vary.Set("section", List[y].Name);
-			F.Fix = ToolCall("vary_part", Vary, Repeated ? "syncopates the melody in \"" + List[y].Name + "\" (notes on the middle of a "
-				"bar, and on every other bar's first beat, half a beat early), so it differs from \"" + List[x].Name + "\", varied "
-				"already" : "embellishes the melody in \"" + List[y].Name + "\" (passing and neighbour notes, at most two a bar), so "
-				"the repeat isn't pasted");
+			Vary.Set("from_bar", EndFrom);
+			Vary.Set("to_bar", YTo);
+			F.Details.Set("vary_from_bar", EndFrom);
+			F.Fix = ToolCall("vary_part", Vary, (Repeated ? "syncopates the melody at the end of \"" + List[y].Name + "\" (" +
+				RangeText(EndFrom, YTo) + "; notes on the middle of a bar, and on every other bar's first beat, half a beat early), "
+				"so it differs from \"" + List[x].Name + "\" and the repeat varied already" : "embellishes the melody at the end of \"" +
+				List[y].Name + "\" (" + RangeText(EndFrom, YTo) + "; passing and neighbour notes), so the repeat isn't pasted") +
+				" and its motif still comes back as itself");
 			Out.push_back(F);
 			Found.insert(y);
 			break;
@@ -16893,6 +16902,61 @@ std::vector<int> BarsRepeatedInEveryPart(Session &S, int First, int End)
 	return Copies;
 }
 
+// A planned return against a pasted phrase (from fix-r4-repeats). The recipes teach a hook that comes back (a motif, the
+// motif again, an answer), so a bar that plays the bar four (or two) before it again is how a phrase is built, not a lazy
+// repeat: the review's "Phrases come back unchanged" and "A repeat with nothing new" went after every planned return of the
+// hook one bar at a time (round 3's own-hook songs: the Hut's bars 41, 33, 25, 17, 9, the Airship's 9 and 33), and
+// what_next reworked each. What wants something new is a whole phrase pasted: PASTED_RUN bars or more in a row each
+// playing the bar four before it, and then in one place, the end of the first phrase pasted (which the bar four after it
+// repeats too), not bar by bar. Measured on the 44 kept songs (song_file_checks -repeats, the first track of each, 1313
+// melody bars): 3.0% play the bar four before again note for note (0-17% by song), 1.4% the bar two before, 1.1% the bar
+// four before in every part, and each such bar stands alone, but in GreenValley's third track, whose melody pastes four
+// bars and more; the review gave "A repeat with nothing new" to 10 of their 57 tracks, every time on bars alone, and now
+// to none
+const int PASTED_RUN = 4;
+
+// The runs of consecutive bars in Bars (sorted), each its first and last bar
+std::vector<std::pair<int, int> > BarRuns(const std::vector<int> &Bars)
+{
+	std::vector<std::pair<int, int> > Runs;
+	for (size_t i = 0; i < Bars.size(); ++i) {
+		if (!Runs.empty() && Runs.back().second + 1 == Bars[i])
+			Runs.back().second = Bars[i];
+		else if (Runs.empty() || Runs.back().second < Bars[i])
+			Runs.push_back(std::make_pair(Bars[i], Bars[i]));
+	}
+	return Runs;
+}
+
+// Of the bars that play the bar four before them again, those in a whole phrase pasted (runs of PASTED_RUN bars or more):
+// the rest are returns of a motif, as a phrase brings it back
+std::vector<int> PastedBars(const std::vector<int> &Bars)
+{
+	std::vector<int> Out;
+	const std::vector<std::pair<int, int> > Runs = BarRuns(Bars);
+	for (size_t r = 0; r < Runs.size(); ++r)
+		if (Runs[r].second - Runs[r].first + 1 >= PASTED_RUN)
+			for (int b = Runs[r].first; b <= Runs[r].second; ++b)
+				Out.push_back(b);
+	return Out;
+}
+
+// The bars whose melody plays the bar four before it again (by its notes' rows, pitches, lengths and volumes)
+std::vector<int> MelodyBarsAgain(Session &S, int Melody, int First, int End, int Back)
+{
+	std::vector<int> Out;
+	if (Melody < 0)
+		return Out;
+	const std::vector<BarSpan> Bars = SongBarSpans(S, First, End);
+	const std::vector<NoteInfo> &All = S.Notes(Melody);
+	for (size_t b = static_cast<size_t>(Back); b < Bars.size(); ++b) {
+		const std::string Print = BarPrint(All, Bars[b].Row, Bars[b].Row + Bars[b].Rows);
+		if (!Print.empty() && Print == BarPrint(All, Bars[b - Back].Row, Bars[b - Back].Row + Bars[b - Back].Rows))
+			Out.push_back(S.Time.BarOf(Bars[b].Row));
+	}
+	return Out;
+}
+
 // review_arrangement's short form: the score, the parts, the numbers that matter, and the three tips that matter most
 std::string ShortReview(const std::string &Head, const std::string &Cue, const std::string &Parts,
 	const std::vector<std::string> &Numbers, const std::vector<ReviewTip> &Tips)
@@ -17502,18 +17566,16 @@ std::string ReviewTool(Session &S, const Json &Asked)
 		std::string Line = "Melody: " + PitchName(Low) + " to " + PitchName(High) + Format(" (%d semitones), %s, %s", High - Low,
 			Plural(static_cast<int>(Lengths.size()), "note length", "note lengths").c_str(),
 			Rests == 0 ? "no rests" : Plural(Rests, "rest", "rests").c_str());
-		// Phrases that come back note for note
-		std::vector<int> Repeats;
-		const std::vector<NoteInfo> &All = S.Notes(Melody);
-		for (size_t b = 4; b < Bars.size(); ++b) {
-			const std::string Print = BarPrint(All, Bars[b].Row, Bars[b].Row + Bars[b].Rows);
-			if (!Print.empty() && Print == BarPrint(All, Bars[b - 4].Row, Bars[b - 4].Row + Bars[b - 4].Rows))
-				Repeats.push_back(S.Time.BarOf(Bars[b].Row));
-		}
+		// Phrases that come back note for note: a whole phrase pasted (PastedBars), not the motif returning within its
+		// phrases, as the recipes' hooks return (fix-r4-repeats)
+		const std::vector<int> Again = MelodyBarsAgain(S, Melody, First, End, 4);
+		const std::vector<int> Repeats = PastedBars(Again);
 		if (Repeats.size() == 1)
 			Line += Format("; bar %d repeats the bar four before it", Repeats[0]);
 		else if (!Repeats.empty())
 			Line += "; bars " + BarList(Repeats) + " repeat the bars four before them";
+		if (Again.size() > Repeats.size())
+			Line += Format("; its motif comes back in %s", Plural(static_cast<int>(Again.size() - Repeats.size()), "bar", "bars").c_str());
 		// Phrases: the two-bar spans where it pauses, as it sounds. A busy part taken for the melody (a run of broken
 		// chords, arpeggios) isn't one; melody_channel names the melody
 		int Chordal = 0;
@@ -17557,8 +17619,8 @@ std::string ReviewTool(Session &S, const Json &Asked)
 			Tip(1.0, "The melody stays within a few notes: let a phrase climb to a high point (a climax) and fall back.");
 		if (!Repeats.empty() && Repeats.size() * 4 >= static_cast<size_t>(BarCount))
 			Tip(1.0, std::string("Phrases come back unchanged") + (Repeats.size() == 1 ? Format(" in bar %d", Repeats[0]) : " in bars " +
-				BarList(Repeats)) + ": vary the repeat (another ending, an octave up, a counter-melody "
-				"only the second time, busier drums).");
+				BarList(Repeats)) + ": vary the repeat in one place, keeping the motif (another ending to the phrase, an octave up, "
+				"a counter-melody only the second time, busier drums).");
 		if (LongBare > 0)
 			Tip(0.5, Plural(LongBare, "long melody note has", "long melody notes have") + std::string(Calm ? " no vibrato: polish "
 				"with style calm adds the shallowest one, coming in about half a second into each." : " no vibrato: polish adds a "
@@ -17614,6 +17676,11 @@ std::string ReviewTool(Session &S, const Json &Asked)
 		if (Notes.size() >= 8 && Volumes.size() == 1)
 			Flat.push_back(c);
 	}
+	// (an echo at one volume under a melody that has its dynamics is the mix's rounding of its softer copy, not typed
+	// notes: polishing the echo's accents after finish_song's mix left the tense walk's review tip again, fix-r4-repeats)
+	if (Melody >= 0 && std::find(Flat.begin(), Flat.end(), Melody) == Flat.end())
+		for (size_t e = 0; e < Echoes.size(); ++e)
+			Flat.erase(std::remove(Flat.begin(), Flat.end(), Echoes[e]), Flat.end());
 	if (!Flat.empty()) {
 		Lines.push_back("Dynamics: every note at one volume on " + Names(Flat) + ".");
 		// A lively stage's lead at one volume throughout: the later stages' lead played 15 on every note, where the
@@ -17873,12 +17940,13 @@ std::string ReviewTool(Session &S, const Json &Asked)
 	}
 
 	// Everything repeating: the whole arrangement four bars on
-	const std::vector<int> Copies = BarsRepeatedInEveryPart(S, First, End);
+	// (a whole phrase pasted, PastedBars: a bar or three returning is the motif's return, fix-r4-repeats)
+	const std::vector<int> Copies = PastedBars(BarsRepeatedInEveryPart(S, First, End));
 	if (!Copies.empty()) {
 		Lines.push_back(Copies.size() == 1 ? Format("Bar %d repeats the bar four before it in every part.", Copies[0]) :
 			"Bars " + BarList(Copies) + " repeat the bars four before them in every part.");
-		Tip(1.0, "A repeat with nothing new is where a loop starts to sound like a loop: change one or two layers the "
-			"second time (a counter-melody, drums one step busier, chords in another style, the melody an octave up).");
+		Tip(1.0, "A repeat with nothing new is where a loop starts to sound like a loop: change one thing the second time, in "
+			"one place (a new ending to the phrase, a part joining, drums one step busier), and keep the motif as it is.");
 	}
 
 	// Length
@@ -18442,6 +18510,74 @@ std::string SetPanTool(Session &S, const Json &Args)
 
 // vary_part: the same part, a little different (for a repeat)
 
+// A line of GENTLE_NOTES notes a bar or fewer (where it plays; the Caves' hook plays 2) is sparse: embellish adds at most one passing or neighbour
+// note a bar there, no turns, as on a calm kind without drums (fix-r4-repeats; the mysterious recipe's 1-3 notes a bar)
+const double GENTLE_NOTES = 2.5;
+
+// The head of a part's motif (from fix-r4-repeats): its opening's first notes, as many as TuneShape finds coming back in
+// their rhythm (MotifNotes, 3 at least), and on through its first leap of a fourth or more (its signature) within the first
+// six. Each note as its row and pitch from the first's, flattened (0, 0, row, semitones, ...); empty without three notes
+std::vector<int> MotifHead(Session &S, int Channel)
+{
+	std::vector<int> Out;
+	int First = 0, Last = 0;
+	if (!IsMelodic(S.Channel(Channel)) || !TuneBars(S, Channel, 1, S.Time.BarCount(), First, Last))
+		return Out;
+	const std::vector<ShapeNote> Opening = TuneNotes(S, Channel, First, 2);
+	if (Opening.size() < 3)
+		return Out;
+	const int Bars = std::min(8, Last - First + 1);
+	const TuneMeasure M = MeasureTune(TuneNotes(S, Channel, First, Bars), Bars, S.Time.RowsPerBar, S.Time.RowsPerBeat);
+	size_t Count = static_cast<size_t>(std::max(3, M.MotifNotes));
+	for (size_t i = 0; i + 1 < Opening.size() && i + 1 < 6; ++i)
+		if (std::abs(Opening[i + 1].Pitch - Opening[i].Pitch) >= 5) {
+			Count = std::max(Count, i + 2);
+			break;
+		}
+	Count = std::min(Count, Opening.size());
+	for (size_t i = 0; i < Count; ++i) {
+		Out.push_back(Opening[i].Start - Opening[0].Start);
+		Out.push_back(Opening[i].Pitch - Opening[0].Pitch);
+	}
+	return Out;
+}
+
+// The bars of the part elsewhere that play as Notes would in bars From-To (where notes start in each bar, by pitch, as
+// BarsAlike compares them), named ("bars 13-20"); empty where none do
+std::string BarsPlayedElsewhere(Session &S, int Channel, int From, int To, const std::vector<PartNote> &Notes)
+{
+	const int Bars = To - From + 1;
+	auto Mine = [&](int Bar) {
+		std::set<std::pair<int, int> > Out;
+		for (size_t i = 0; i < Notes.size(); ++i)
+			if (Notes[i].Row >= S.Time.BarStart(Bar) && Notes[i].Row < S.Time.BarEnd(Bar) && Notes[i].Volume != 0)
+				Out.insert(std::make_pair(Notes[i].Row - S.Time.BarStart(Bar), Notes[i].Pitch));
+		return Out;
+	};
+	const std::vector<NoteInfo> &All = S.Notes(Channel);
+	const bool Triangle = S.Channel(Channel).Kind == KIND_TRIANGLE;
+	auto Theirs = [&](int Bar) {
+		std::set<std::pair<int, int> > Out;
+		for (size_t i = 0; i < All.size(); ++i)
+			if (All[i].Row >= S.Time.BarStart(Bar) && All[i].Row < S.Time.BarEnd(Bar) && (Triangle || All[i].Volume > 0))
+				Out.insert(std::make_pair(All[i].Row - S.Time.BarStart(Bar), All[i].Pitch));
+		return Out;
+	};
+	std::vector<std::set<std::pair<int, int> > > New;
+	for (int b = 0; b < Bars; ++b)
+		New.push_back(Mine(From + b));
+	for (int w = 1; w + Bars - 1 <= S.Time.BarCount(); ++w) {
+		if (w + Bars - 1 >= From && w <= To)
+			continue;
+		bool Same = true;
+		for (int b = 0; b < Bars && Same; ++b)
+			Same = S.Time.BarLength(w + b) == S.Time.BarLength(From + b) && Theirs(w + b) == New[static_cast<size_t>(b)];
+		if (Same)
+			return RangeText(w, w + Bars - 1);
+	}
+	return std::string();
+}
+
 std::string VaryPartTool(Session &S, const Json &Args)
 {
 	const int Channel = ChannelArg(S, Args, "channel");
@@ -18537,91 +18673,156 @@ std::string VaryPartTool(Session &S, const Json &Args)
 						return true;
 		return false;
 	};
+	// Gently (embellish): a calm kind without drums, as what_next was given for the track, or a sparse line
+	bool Gentle = false;
+	{
+		int KindNow = -1;
+		const std::string Word = S.Host().KeptKind(S.Song.Track);
+		if (!Word.empty() && ParseNextKind(Word, KindNow) && KindNow != NEXT_GENERAL && NextKindInfo(KindNow).Groove[0] == '\0')
+			Gentle = true;
+		std::set<int> Playing;
+		int Heard = 0;
+		for (size_t i = 0; i < Old.size(); ++i)
+			if (Old[i].Row >= First && (Old[i].Volume > 0 || Info.Kind == KIND_TRIANGLE)) {
+				Playing.insert(S.Time.BarOf(Old[i].Row));
+				++Heard;
+			}
+		Gentle = Gentle || (!Playing.empty() && Heard <= GENTLE_NOTES * static_cast<double>(Playing.size()));
+	}
 	std::vector<PartNote> Out;
 	std::string EndingChord;	// the ending: the chord under it, when that hasn't the tonic
 	switch (Variation) {
 	case 0: {	// passing notes between notes a third apart, a neighbour between repeated ones, a turn or a note from beside
 				// into a long note; at most two a bar. On a note of a beat or more the new note takes its second half; a
-				// shorter one (two sixteenths or more, as a lively melody's are) gives its last sixteenth
-		std::map<int, int> PerBar;
-		const int Sixteenth = std::max(1, R / 4);
-		auto Ornament = [&](const PartNote &From, int Row, int Rows, int Pitch) {
-			PartNote B = From;
-			B.Row = Row;
-			B.Rows = Rows;
-			B.Pitch = Pitch;
-			B.Instrument = NO_INSTRUMENT;
-			B.Volume = -1;
-			B.Effects.clear();
-			B.LaterEffects.clear();
-			return B;
-		};
-		for (size_t i = 0; i < Notes.size(); ++i) {
-			PartNote A = Notes[i];
-			const int Bar = S.Time.BarOf(A.Row);
-			const bool Next = i + 1 < Notes.size() && Notes[i + 1].Row == A.Row + A.Rows;
-			const int Gap = Next ? Notes[i + 1].Pitch - A.Pitch : 99;
-			const bool Third = std::abs(Gap) == 3 || std::abs(Gap) == 4;
-			const bool IntoLong = Next && Gap != 0 && Notes[i + 1].Rows >= R + R / 2;
-			if (PerBar[Bar] >= 2 || !Next || A.Rows < 2 * Sixteenth) {
-				Out.push_back(A);
-				continue;
+				// shorter one (two sixteenths or more, as a lively melody's are) gives its last sixteenth. Gently on a calm
+				// kind without drums (mysterious, atmospheric, floating...) or a sparse line (GENTLE_NOTES a bar or fewer): one
+				// passing or neighbour note a bar at most, no turns (the Caves' D4 - - A4 became D4 - - B4 A4 G4 A4, a run
+				// against its recipe's 1-3 notes a bar), and never between the notes of the motif's head (MotifHead) where it
+				// comes back, so the hook stays itself. A result that plays as other bars of the part already do (A' and
+				// A'' embellished alike) leaves the first spots of each bar as they were instead, then the next (fix-r4-repeats)
+		const std::vector<int> HeadShape = MotifHead(S, Channel);
+		std::set<size_t> Head;
+		// (where it comes back: the opening's own statement may be varied, as any phrase)
+		int Opening = -1, OpeningLast = -1;
+		TuneBars(S, Channel, 1, S.Time.BarCount(), Opening, OpeningLast);
+		for (size_t k = 0; HeadShape.size() >= 4 && k < Notes.size(); ++k) {
+			const size_t Count = HeadShape.size() / 2;
+			bool Match = k + Count <= Notes.size() && S.Time.BarOf(Notes[k].Row) != Opening;
+			for (size_t j = 1; Match && j < Count; ++j) {
+				const int Moved = Notes[k + j].Pitch - Notes[k].Pitch, Was = HeadShape[2 * j + 1];
+				Match = Notes[k + j].Row - Notes[k].Row == HeadShape[2 * j] && std::abs(Moved - Was) <= 1 &&
+					(Moved > 0) == (Was > 0) && (Moved < 0) == (Was < 0);
 			}
-			if (A.Rows >= R && (Third || Gap == 0)) {
-				const int Half = std::max(1, (A.Rows / 2) / std::max(1, R / 2) * std::max(1, R / 2));
-				const PartNote B = Ornament(A, A.Row + Half, A.Rows - Half, Gap == 0 ? Step(A.Pitch, 1) : Step(A.Pitch, Gap > 0 ? 1 : -1));
-				if (Rubs(B.Pitch, B.Row, B.Rows)) {
-					++Rubbing;
-					Out.push_back(A);
-					continue;
-				}
-				A.Rows = Half;
-				A.LaterEffects.clear();
-				Out.push_back(A);
-				Out.push_back(B);
-			}
-			else if (IntoLong && A.Rows >= 4 * Sixteenth) {
-				// A turn: above, on and below the long note's pitch in the last three sixteenths, then the long note
-				const int Target = Notes[i + 1].Pitch, Turn[3] = { Step(Target, 1), Target, Step(Target, -1) };
-				const int At = A.Row + A.Rows - 3 * Sixteenth;
-				if (Rubs(Turn[0], At, Sixteenth) || Rubs(Turn[1], At + Sixteenth, Sixteenth) || Rubs(Turn[2], At + 2 * Sixteenth, Sixteenth)) {
-					++Rubbing;
-					Out.push_back(A);
-					continue;
-				}
-				A.Rows -= 3 * Sixteenth;
-				A.LaterEffects.clear();
-				Out.push_back(A);
-				for (int k = 0; k < 3; ++k)
-					Out.push_back(Ornament(A, A.Row + A.Rows + k * Sixteenth, Sixteenth, Turn[k]));
-			}
-			else if (A.Rows < R && (Third || Gap == 0 || IntoLong)) {
-				// The last sixteenth: the step between notes a third apart, the note above between repeats, or the long note's
-				// neighbour (from the far side after a step, as an appoggiatura; from the near side after a leap, halfway)
-				const int Target = Notes[i + 1].Pitch;
-				const int Pitch = Gap == 0 ? Step(A.Pitch, 1) : Third ? Step(A.Pitch, Gap > 0 ? 1 : -1) :
-					std::abs(Gap) <= 2 ? Step(Target, Gap > 0 ? 1 : -1) : Step(Target, Gap > 0 ? -1 : 1);
-				if (Pitch == A.Pitch || Pitch == Target) {
-					Out.push_back(A);
-					continue;
-				}
-				if (Rubs(Pitch, A.Row + A.Rows - Sixteenth, Sixteenth)) {
-					++Rubbing;
-					Out.push_back(A);
-					continue;
-				}
-				A.Rows -= Sixteenth;
-				A.LaterEffects.clear();
-				Out.push_back(A);
-				Out.push_back(Ornament(A, A.Row + A.Rows, Sixteenth, Pitch));
-			}
-			else {
-				Out.push_back(A);
-				continue;
-			}
-			++PerBar[Bar];
-			++Changed;
+			for (size_t j = 0; Match && j + 1 < Count; ++j)
+				Head.insert(k + j);
 		}
+		auto Embellish = [&](int Skip, std::vector<PartNote> &Out, int &Changed, int &Rubbing) {
+			std::map<int, int> PerBar, Eligible;
+			const int Sixteenth = std::max(1, R / 4);
+			auto Ornament = [&](const PartNote &From, int Row, int Rows, int Pitch) {
+				PartNote B = From;
+				B.Row = Row;
+				B.Rows = Rows;
+				B.Pitch = Pitch;
+				B.Instrument = NO_INSTRUMENT;
+				B.Volume = -1;
+				B.Effects.clear();
+				B.LaterEffects.clear();
+				return B;
+			};
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				PartNote A = Notes[i];
+				const int Bar = S.Time.BarOf(A.Row);
+				const bool Next = i + 1 < Notes.size() && Notes[i + 1].Row == A.Row + A.Rows;
+				const int Gap = Next ? Notes[i + 1].Pitch - A.Pitch : 99;
+				const bool Third = std::abs(Gap) == 3 || std::abs(Gap) == 4;
+				const bool IntoLong = Next && Gap != 0 && Notes[i + 1].Rows >= R + R / 2;
+				// (a note of the motif's head runs straight into the next as written; the Skip-th first spots of a bar are left
+			// as they are, so a second repeat embellished differs from the first)
+			if (PerBar[Bar] >= (Gentle ? 1 : 2) || !Next || A.Rows < 2 * Sixteenth || Head.count(i) > 0 ||
+				(Eligible[Bar]++ < Skip)) {
+					Out.push_back(A);
+					continue;
+				}
+				if (A.Rows >= R && (Third || Gap == 0)) {
+					const int Half = std::max(1, (A.Rows / 2) / std::max(1, R / 2) * std::max(1, R / 2));
+					const PartNote B = Ornament(A, A.Row + Half, A.Rows - Half, Gap == 0 ? Step(A.Pitch, 1) : Step(A.Pitch, Gap > 0 ? 1 : -1));
+					if (Rubs(B.Pitch, B.Row, B.Rows)) {
+						++Rubbing;
+						Out.push_back(A);
+						continue;
+					}
+					A.Rows = Half;
+					A.LaterEffects.clear();
+					Out.push_back(A);
+					Out.push_back(B);
+				}
+				else if (IntoLong && A.Rows >= 4 * Sixteenth && !Gentle) {
+					// A turn: above, on and below the long note's pitch in the last three sixteenths, then the long note
+					const int Target = Notes[i + 1].Pitch, Turn[3] = { Step(Target, 1), Target, Step(Target, -1) };
+					const int At = A.Row + A.Rows - 3 * Sixteenth;
+					if (Rubs(Turn[0], At, Sixteenth) || Rubs(Turn[1], At + Sixteenth, Sixteenth) || Rubs(Turn[2], At + 2 * Sixteenth, Sixteenth)) {
+						++Rubbing;
+						Out.push_back(A);
+						continue;
+					}
+					A.Rows -= 3 * Sixteenth;
+					A.LaterEffects.clear();
+					Out.push_back(A);
+					for (int k = 0; k < 3; ++k)
+						Out.push_back(Ornament(A, A.Row + A.Rows + k * Sixteenth, Sixteenth, Turn[k]));
+				}
+				else if (A.Rows < R && (Third || Gap == 0 || IntoLong)) {
+					// The last sixteenth: the step between notes a third apart, the note above between repeats, or the long note's
+					// neighbour (from the far side after a step, as an appoggiatura; from the near side after a leap, halfway)
+					const int Target = Notes[i + 1].Pitch;
+					const int Pitch = Gap == 0 ? Step(A.Pitch, 1) : Third ? Step(A.Pitch, Gap > 0 ? 1 : -1) :
+						std::abs(Gap) <= 2 ? Step(Target, Gap > 0 ? 1 : -1) : Step(Target, Gap > 0 ? -1 : 1);
+					if (Pitch == A.Pitch || Pitch == Target) {
+						Out.push_back(A);
+						continue;
+					}
+					if (Rubs(Pitch, A.Row + A.Rows - Sixteenth, Sixteenth)) {
+						++Rubbing;
+						Out.push_back(A);
+						continue;
+					}
+					A.Rows -= Sixteenth;
+					A.LaterEffects.clear();
+					Out.push_back(A);
+					Out.push_back(Ornament(A, A.Row + A.Rows, Sixteenth, Pitch));
+				}
+				else {
+					Out.push_back(A);
+					continue;
+				}
+				++PerBar[Bar];
+				++Changed;
+			}
+		};
+		std::string Alike;
+		for (int Skip = 0; Skip < 3; ++Skip) {
+			std::vector<PartNote> Tried;
+			int TriedChanged = 0, TriedRubbing = 0;
+			Embellish(Skip, Tried, TriedChanged, TriedRubbing);
+			if (Skip == 0) {
+				Out = Tried;
+				Changed = TriedChanged;
+				Rubbing = TriedRubbing;
+			}
+			if (TriedChanged == 0)
+				break;
+			Alike = BarsPlayedElsewhere(S, Channel, From, To, Tried);
+			if (Alike.empty()) {
+				Out = Tried;
+				Changed = TriedChanged;
+				Rubbing = TriedRubbing;
+				break;
+			}
+		}
+		if (Changed > 0 && !Alike.empty())
+			throw Problem(Format("Embellished, %s would play as %s already do (a repeat varied the same way): vary it another way "
+				"(syncopate, ending), or leave it as it is.", RangeText(From, To).c_str(), Alike.c_str()));
 		break;
 	}
 	case 1:	// only the notes on beats, each held until the next
@@ -30820,10 +31021,19 @@ void WhatNext::MelodyStep()
 				Hooks.push_back(OfferedHook(Missing, Variant));
 				OfferedOf.push_back(true);
 			}
+			// (a climax's offered hook isn't one an earlier part of its own grew from: the Caves' climax took B's, grew B's
+			// tune again over A's chords and the review heard B once more, which a bar of B embellished had hidden before
+			// fix-r4-repeats left a motif's returns alone)
+			std::set<std::string> Earlier;
+			for (size_t k = 0; k < i && IsClimaxName(P.Name); ++k) {
+				const FormPart &Q = m_Form[k];
+				if (Q.Named && !Q.Free && !Q.Empty && Q.Original < 0 && Q.Name != Source)
+					Earlier.insert(SongHook(Q));
+			}
 			// The first that grows without a clash against the parts there (grow_melody keeps a hook as written where it
 			// starts, and the song's may rub against another part's chord)
 			for (size_t h = 0; h < Hooks.size(); ++h) {
-				if (Hooks[h].empty())
+				if (Hooks[h].empty() || (OfferedOf[h] && Earlier.count(Hooks[h]) > 0))
 					continue;
 				const bool Offered = OfferedOf[h];
 				const std::string &Hook = Hooks[h];
@@ -31427,20 +31637,31 @@ void WhatNext::Depth()
 		Varied = false;
 		if (!Looking() || !Wanted("variation"))
 			break;
-		// The first variation that adds no clash with the parts around it (passing notes can rub against a chord)
+		// The first variation that adds no clash with the parts around it (passing notes can rub against a chord), in one
+		// place: the repeat's ending (its last quarter), then its second half, so the motif comes back as itself where the
+		// repeat starts (fix-r4-repeats: the whole of A' and A'' embellished alike took the Caves' hook out of both). A
+		// repeat of a part another repeat has varied already (A'' after A') takes another variation (vary_part refuses an
+		// embellishment that plays as other bars do)
 		static const char *const VARIATIONS[] = { "embellish", "syncopate", "ending" };
+		const int Bars = P.LastBar - P.FirstBar + 1;
+		const int Ends[2] = { P.LastBar - std::max(1, (Bars + 3) / 4) + 1, P.LastBar - std::max(1, Bars / 2) + 1 };
 		bool Given = false;
+		for (int e = 0; e < 2 && !Given; ++e)
 		for (int v = 0; v < 3 && !Given; ++v) {
+			if (e == 1 && (Ends[1] == Ends[0] || v == 2))
+				continue;
 			Json V = Json::MakeObject();
 			V.Set("channel", ChannelName(m_Melody));
 			V.Set("variation", VARIATIONS[v]);
-			V.Set("section", P.Name);
+			V.Set("from_bar", Ends[e]);
+			V.Set("to_bar", P.LastBar);
 			int Added = 0;
-			if (!TryWrite(S, "vary_part", V, P.FirstBar, P.LastBar, m_Melody, Added) || Added > 0)
+			if (!TryWrite(S, "vary_part", V, Ends[e], P.LastBar, m_Melody, Added) || Added > 0)
 				continue;
-			Given = Step("variation", "vary_part", V, Format("%s plays %s's melody note for note: %s makes the repeat different, so the "
-				"loop doesn't sound pasted.", P.Name.c_str(), O.Name.c_str(), v == 0 ? "passing notes and neighbours" : v == 1 ?
-				"syncopation" : "a new ending"));
+			Given = Step("variation", "vary_part", V, Format("%s plays %s's melody note for note: %s at its end (%s) makes the repeat "
+				"different, so the loop doesn't sound pasted, and its motif still comes back as itself.", P.Name.c_str(),
+				O.Name.c_str(), v == 0 ? "passing and neighbour notes" : v == 1 ? "syncopation" : "a new ending",
+				RangeText(Ends[e], P.LastBar).c_str()));
 		}
 		if (!Given) {
 			m_Away.insert("repeats varied");
@@ -32084,82 +32305,61 @@ bool WhatNext::TipStep(const std::string &Tip)
 			Step("tips", "vary_part", A, "review_arrangement: " + Tip);
 	}
 	if (Has("Phrases come back unchanged") || Has("A repeat with nothing new")) {
-		// The bars the review hears repeating the bar four before them in every part ("Bars 9, 25 repeat the bars four before
-		// them in every part."): the melody varied in the last of them, a bar at a time (each named bar ends the list sooner)
-		std::vector<int> Again;
-		bool EveryPart = false;
-		if (Has("A repeat with nothing new")) {
-			const size_t Stop = m_Review.find(" in every part.");
-			if (Stop != std::string::npos) {
-				const size_t Start = m_Review.rfind('\n', Stop) == std::string::npos ? 0 : m_Review.rfind('\n', Stop) + 1;
-				const std::string Line = m_Review.substr(Start, Stop - Start);
-				int Number = -1;
-				for (size_t i = 0; i <= Line.size(); ++i) {
-					if (i < Line.size() && std::isdigit(static_cast<unsigned char>(Line[i])))
-						Number = (Number < 0 ? 0 : Number * 10) + (Line[i] - '0');
-					else if (Number >= 0) {
-						Again.push_back(Number);
-						Number = -1;
-					}
-				}
-				EveryPart = !Again.empty();
-			}
-		}
-		// Else the bars whose melody plays the bar four before it again: the last run of two or more, varied (a whole part
-		// varied alike would keep its two halves alike)
-		if (Again.empty()) {
-			const std::vector<NoteInfo> &Tune = S.Notes(m_Melody);
-			for (int Bar = 5; Bar <= S.Time.BarCount(); ++Bar) {
-				const std::string Print = BarPrint(Tune, S.Time.BarStart(Bar), S.Time.BarEnd(Bar));
-				if (!Print.empty() && Print == BarPrint(Tune, S.Time.BarStart(Bar - 4), S.Time.BarEnd(Bar - 4)))
-					Again.push_back(Bar);
-			}
-		}
-		if (Again.empty() || !Wanted("variation"))
-			return false;
-		std::sort(Again.begin(), Again.end());
-		int From = Again.back();
-		while (!EveryPart && std::find(Again.begin(), Again.end(), From - 1) != Again.end())
-			--From;
-		if (!EveryPart && From == Again.back())
-			return false;	// a bar alone is the hook coming back, as a melody's phrases bring it: varying it bar by bar never ends
-		// (a bar of one held note takes neither passing notes nor syncopation: struck again, or an octave up, the tip's own words)
-		static const char *const VARIATIONS[] = { "embellish", "syncopate", "ending", "restrike", "octave_up" };
-		// A bar repeated in every part: the last whose variation leaves fewer such bars in the song (the same variation in a bar
-		// and the one four before it made them alike again: the cozy walk's bars 29 and 33, both given a new ending, fix-gen4-done)
+		// The bars the review hears as a whole phrase pasted (PastedBars), in every part ("Bars 9-12 repeat the bars four before
+		// them in every part.") or in the melody: one place in each run is varied, the end of its first phrase pasted (which
+		// the bar four after it repeats too), else its last bar; a bar or three coming back is the motif's return, left alone
+		// (fix-r4-repeats: varying every return bar by bar took the hook out of the Hut and the Airship)
 		int SongFrom, SongTo;
 		PlayedBars(S, SongFrom, SongTo);
 		const int SongFirst = S.Time.BarStart(SongFrom), SongEnd = std::min(S.Time.BarEnd(SongTo), Total);
-		const size_t Repeated = EveryPart ? BarsRepeatedInEveryPart(S, SongFirst, SongEnd).size() : 0;
-		// (else the bar four before it, which the review hears as the original)
-		for (size_t a = Again.size(); a-- > 0; )
-		for (int Back = 0; Back < (EveryPart ? 2 : 1); ++Back) {
-			const int Bar = EveryPart ? Again[a] - 4 * Back : From;
-			if ((!EveryPart && a + 1 < Again.size()) || Bar < 1)
-				break;
-			const int To = EveryPart ? Bar : Again.back();
-			// The melody first; a bar repeated in every part where it rests (or where its variations rub) takes another
-			// part's, a second line or the chords (Night Harbor's B, pads alone in bars 21 and 25: fix-gen4-done)
-			std::vector<int> Parts(1, m_Melody);
-			for (int c = 0; EveryPart && c < S.ChannelCount(); ++c)
-				if (c != m_Melody && c != m_Parts.Bass && IsMelodic(S.Channel(c)) && !IsBass(S.Channel(c)) &&
-					HasNotesIn(S, c, S.Time.BarStart(Bar), std::min(S.Time.BarEnd(To), Total)))
-					Parts.push_back(c);
-			for (size_t p = 0; p < Parts.size(); ++p)
-			for (int v = 0; v < (EveryPart ? 5 : 3); ++v) {
-				Json V = Json::MakeObject();
-				V.Set("channel", ChannelName(Parts[p]));
-				V.Set("variation", VARIATIONS[v]);
-				V.Set("from_bar", Bar);
-				V.Set("to_bar", To);
-				int Added = 0;
-				if (TryWriteHearing(S, "vary_part", V, Bar, To, m_Melody, Added, [&](Session &After) {
-						return !EveryPart || BarsRepeatedInEveryPart(After, SongFirst, SongEnd).size() < Repeated; }) && Added <= 0)
-					return Step("variation", "vary_part", V, "review_arrangement: " + Tip + (Bar == To ? Format(" Bar %d plays the "
-						"bar four before it again", Bar) : Format(" Bars %d-%d play the four before them again", Bar, To)) + ": " +
-						(v == 0 ? "passing and neighbour notes" : v == 1 ? "syncopation" : v == 2 ? "a new ending" : v == 3 ? "its notes struck again" :
-						"an octave up") + " there" +
-						(Parts[p] == m_Melody ? std::string(".") : " on " + S.Channel(Parts[p]).FullName() + "."));
+		std::vector<int> Again;
+		if (Has("A repeat with nothing new"))
+			Again = PastedBars(BarsRepeatedInEveryPart(S, SongFirst, SongEnd));
+		const bool EveryPart = !Again.empty();
+		if (Again.empty())
+			Again = PastedBars(MelodyBarsAgain(S, m_Melody, SongFirst, SongEnd, 4));
+		if (Again.empty() || !Wanted("variation"))
+			return false;
+		std::sort(Again.begin(), Again.end());
+		Again.erase(std::unique(Again.begin(), Again.end()), Again.end());
+		auto Pasted = [&](Session &X) {
+			return EveryPart ? PastedBars(BarsRepeatedInEveryPart(X, SongFirst, SongEnd)).size() :
+				PastedBars(MelodyBarsAgain(X, m_Melody, SongFirst, SongEnd, 4)).size();
+		};
+		const size_t Repeated = Pasted(S);
+		// (a bar of one held note takes neither passing notes nor syncopation: struck again, or an octave up, the tip's own words)
+		static const char *const VARIATIONS[] = { "ending", "embellish", "syncopate", "restrike", "octave_up" };
+		const std::vector<std::pair<int, int> > Runs = BarRuns(Again);
+		for (size_t r = Runs.size(); r-- > 0; ) {
+			std::vector<int> Places(1, std::min(Runs[r].second, Runs[r].first + PASTED_RUN - 1));
+			if (Places[0] != Runs[r].second)
+				Places.push_back(Runs[r].second);
+			for (size_t w = 0; w < Places.size(); ++w) {
+				const int Bar = Places[w];
+				// The melody first; a bar repeated in every part where it rests (or where its variations rub) takes another
+				// part's, a second line or the chords (Night Harbor's B, pads alone in bars 21 and 25: fix-gen4-done)
+				std::vector<int> Parts(1, m_Melody);
+				for (int c = 0; EveryPart && c < S.ChannelCount(); ++c)
+					if (c != m_Melody && c != m_Parts.Bass && IsMelodic(S.Channel(c)) && !IsBass(S.Channel(c)) &&
+						HasNotesIn(S, c, S.Time.BarStart(Bar), std::min(S.Time.BarEnd(Bar), Total)))
+						Parts.push_back(c);
+				for (size_t p = 0; p < Parts.size(); ++p)
+				for (int v = 0; v < (EveryPart ? 5 : 3); ++v) {
+					Json V = Json::MakeObject();
+					V.Set("channel", ChannelName(Parts[p]));
+					V.Set("variation", VARIATIONS[v]);
+					V.Set("from_bar", Bar);
+					V.Set("to_bar", Bar);
+					int Added = 0;
+					if (TryWriteHearing(S, "vary_part", V, Bar, Bar, m_Melody, Added, [&](Session &After) {
+							return Pasted(After) < Repeated; }) && Added <= 0)
+						return Step("variation", "vary_part", V, "review_arrangement: " + Tip + Format(" Bars %d-%d play the four "
+							"before them again", Runs[r].first, Runs[r].second) + (EveryPart ? " in every part" : "") + ": " +
+							(v == 0 ? "a new ending" : v == 1 ? "passing and neighbour notes" : v == 2 ? "syncopation" : v == 3 ?
+							"its notes struck again" : "an octave up") + Format(" in bar %d, the end of the phrase pasted, and the "
+							"rest left as it is (the motif's returns stay)", Bar) +
+							(Parts[p] == m_Melody ? std::string(".") : " on " + S.Channel(Parts[p]).FullName() + "."));
+				}
 			}
 		}
 		return false;
@@ -35683,6 +35883,35 @@ std::string ToolSet::TuneShapes()
 			Melody, First, Opening), Opening, S.Time.RowsPerBar, S.Time.RowsPerBeat)) + "\n  whole:   " +
 			TuneMeasureText(MeasureTune(TuneNotes(S, Melody, First, Whole), Whole, S.Time.RowsPerBar, S.Time.RowsPerBeat)) + Blocks(S,
 			Melody, First, Last);
+	}
+	catch (const Problem &P) {
+		return P.Text;
+	}
+}
+
+std::string ToolSet::RepeatShapes()
+{
+	try {
+		Session S(m_Host);
+		const int Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		int From = 0, To = 0;
+		PlayedBars(S, From, To);
+		const int First = S.Time.BarStart(From), End = std::min(S.Time.BarEnd(To), S.Time.TotalRows());
+		if (Melody < 0)
+			return "no melody";
+		int Playing = 0;
+		for (int b = From; b <= To; ++b)
+			Playing += HasNotesIn(S, Melody, S.Time.BarStart(b), S.Time.BarEnd(b)) ? 1 : 0;
+		const std::vector<int> Four = MelodyBarsAgain(S, Melody, First, End, 4), Two = MelodyBarsAgain(S, Melody, First, End, 2);
+		const std::vector<int> Every = BarsRepeatedInEveryPart(S, First, End);
+		int Runs[4] = { 0, 0, 0, 0 };
+		const std::vector<std::pair<int, int> > R = BarRuns(Four);
+		for (size_t i = 0; i < R.size(); ++i)
+			++Runs[std::min(3, R[i].second - R[i].first)];
+		return S.Channel(Melody).FullName() + Format(" bars %d: again 4 before %d, 2 before %d, every part %d; runs 1:%d 2:%d 3:%d 4+:%d;"
+			" pasted melody %d, every part %d", Playing, static_cast<int>(Four.size()), static_cast<int>(Two.size()),
+			static_cast<int>(Every.size()), Runs[0], Runs[1], Runs[2], Runs[3], static_cast<int>(PastedBars(Four).size()),
+			static_cast<int>(PastedBars(Every).size()));
 	}
 	catch (const Problem &P) {
 		return P.Text;

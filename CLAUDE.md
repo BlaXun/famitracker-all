@@ -2775,6 +2775,49 @@ waves, the others none) cover it. Not done: birds on a free pulse (a pitched
 part the clash and key checks would hear), and sharing the noise with drums
 (only in bars where they rest).
 
+Hooks that return, repeats varied in one place (from `fix-r4-repeats`):
+three songs a model composed with hooks of its own (round 3) had the review
+and what_next fight the recipe's hook that returns: "A repeat with nothing
+new" and "Phrases come back unchanged" went after each planned return of
+the hook one bar at a time (the Hut's bars 41, 33, 25, 17, 9; the
+Airship's 9 and 33), and `vary_part` embellish wrote A' and A'' alike and
+turned the Caves' sparse hook (D4 - - A4) into a run (D4 - - B4 A4 G4 A4).
+A bar playing the bar four before it again is now a motif's return unless it
+lies in a run of `PASTED_RUN` (4) such bars, a whole phrase pasted
+(`PastedBars`, `BarRuns`, `MelodyBarsAgain` before `ShortReview`): only those
+get the review's tips (the melody line counts the returns: "its motif comes
+back in N bars"), and `TipStep` varies one place in each run, the end of its
+first phrase pasted (which the bar four after it repeats too), else its last
+bar, with `ending`, `embellish`, `syncopate`, `restrike` or `octave_up`.
+Measured on the 44 kept songs (`song_file_checks -repeats`, which prints
+`ToolSet::RepeatShapes` and the review's repeat lines; the comment before
+`PASTED_RUN`): 3.0% of their melody bars repeat the bar four before, 1.4%
+the bar two before, 1.1% in every part, each alone but in one track; the
+review gave 10 of their 57 tracks "A repeat with nothing new", always on
+bars alone, and now none. check_song's `repeat` (a named section copying
+an earlier one) asks for one place: its fix embellishes the section's last
+quarter (`vary_from_bar`), syncopates it when another repeat of the same
+part exists, and `Depth`'s repeats-varied step tries the last quarter, then
+the second half. `embellish` is gentle (`Gentle`: one passing or neighbour
+note a bar, no turns) on a line of `GENTLE_NOTES` (2.5) notes a bar or fewer
+or for a kept kind without drums (calm, mysterious, floating, bittersweet,
+melancholic, atmospheric); it never puts a note between the notes of the
+part's motif head where they come back (`MotifHead`: `MotifNotes`, at least
+3, through the first leap of a fourth within six notes, matched by rows
+and moves within a semitone, where it comes back after the opening);
+and a result playing as other bars of the
+part already do (`BarsPlayedElsewhere`) leaves each bar's first spots as
+they were (`Skip`), else is refused, so callers take another variation.
+`TestHookReturns` covers it on the Caves' hook, and `CheckHookHeads` holds
+the walks of `TestKindPools` (both sets) and `TestGen4Done` to A's first
+three notes in A', A'' and a climax laid out from A.
+Two things the old bar-by-bar variations had hidden: a climax's offered
+hook is never one an earlier part of its own grew from (`Earlier` in
+`MelodyStep`: the Caves' climax took B's and played B again), and the
+review's flat-dynamics tip leaves out an echo at one volume under a melody
+that has its dynamics (the mix rounds a softer copy to one step; the tense
+walk's echo was polished after finish_song).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
