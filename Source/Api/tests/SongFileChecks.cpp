@@ -180,7 +180,7 @@ int main(int argc, char *argv[])
 					continue;
 				ToolSet Tools(Song);
 				std::printf("%s: %s\n", Files[i].c_str(), Tools.TuneShapes().c_str());
-				// With -tunes -steps, the melody's first 8 bars in steps too
+				// With -tunes -steps [N], the melody's first N bars (8) in steps too
 				const std::string Shapes = Tools.TuneShapes();
 				const size_t At = Shapes.find(" bars ");
 				if (argc > 3 && std::string(argv[3]) == "-steps" && At != std::string::npos) {
@@ -189,7 +189,7 @@ int main(int argc, char *argv[])
 					Args.Set("format", "steps");
 					const int First = std::atoi(Shapes.c_str() + At + 6);
 					Args.Set("from_bar", First);
-					Args.Set("to_bar", std::getenv("TUNE_BARS") ? First + std::atoi(std::getenv("TUNE_BARS")) - 1 : First + 7);
+					Args.Set("to_bar", First + (argc > 4 ? std::max(1, std::atoi(argv[4])) : 8) - 1);
 					std::printf("%s\n", Tools.Call("read_notes", Args).Text.c_str());
 				}
 			}
