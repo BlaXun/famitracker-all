@@ -78,9 +78,11 @@ struct ListenPart {
 	bool Restarts;				// its wave starts over while a note holds when its period's high byte changes (the 2A03's and
 								// the MMC5's pulses, as 0.4.6 plays them): a vibrato across a multiple of 256 clicks
 	bool Melody;				// it carries the tune
+	bool Ambience;				// a layer of the place's sounds under the music (add_ambience: waves, rain): its swells start
+								// quiet and its sound holds by design, and it covers nothing, so none of that is a finding
 	std::vector<float> Samples;	// its render alone, both sides averaged
 	std::vector<ListenNote> Notes;	// in the order they play
-	ListenPart() : Channel(0), Pitched(true), Smooth(false), Rings(false), Restarts(false), Melody(false) {}
+	ListenPart() : Channel(0), Pitched(true), Smooth(false), Rings(false), Restarts(false), Melody(false), Ambience(false) {}
 };
 
 struct ListenSong {
