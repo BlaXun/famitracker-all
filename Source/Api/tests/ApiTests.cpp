@@ -29495,7 +29495,7 @@ void TestGen4Balance()
 		O.Style = BASS_WALKING;
 		O.K = Key(10, MODE_MAJOR);
 		std::vector<ChordAt> Chords;
-		Chord Gm, Eb;
+		ftapi::Chord Gm, Eb;
 		CHECK(ParseChord("Gm", Key(10, MODE_MAJOR), Gm) && ParseChord("Eb", Key(10, MODE_MAJOR), Eb));
 		ChordAt A;
 		A.Row = 0;
