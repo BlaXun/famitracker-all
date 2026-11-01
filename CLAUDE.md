@@ -2576,6 +2576,66 @@ and calm unseeded, each ending with the melody 1-4 dB over its chords, no
 balance tip, nothing outside the key and no sharps in a key spelled with
 flats, and checks the mix and the walking bass on their own.
 
+Done means the review agrees (from `fix-gen4-done`): of six songs made by
+following `what_next` (gen4's second round), four got `review_arrangement`
+tips right after it said done, the kind kept. Each tip is now a step before
+`finish_song`, or the review leaves it out where the kind's design doesn't
+want it; the balance tips (the melody over the chords, `mix`'s) are
+`fix-gen4-balance`'s. A lively stage's climax that doesn't build: `polish`
+in lively style plays a section named the climax (`IsClimaxName`) two steps
+louder than the rest of each melodic channel (`LiftClimax` after `Accents`:
+the other bars softer, never twice, which the lively mix keeps), and
+`WhatNext::Climax`, with a harmony there already, doubles the tune an
+octave under on a free sawtooth there (`Doubled`: add_harmony
+`octave_below`, else `sixth_below` or `fifth_below`, the first a dry run
+finds lifting the song 0.3 dB or more as heard without a clash; an octave
+under put a chord's color a semitone off it, a detail check_song lists).
+`LiftClimax` runs only on a part `Accents` accented then, so a part mixed
+or shaped by hand keeps its volumes. With its harmony the
+walks' climaxes sat 1.0-1.4 dB over their first A; each step of accents
+lifted them about 0.15 dB, the bass in octaves or busier drums there 0.02
+dB on dry runs (neither is a step), the double 0.4-0.9. Parts in the
+melody's register: a harmony voice (`HarmonyVoice`: half its notes or more
+start with the tune's, half of those a third or a sixth under) and a calm
+kind's held pad voice are left out of the check, and `TipStep` moves
+another part it names an octave down (`transpose`; a chord voice with its
+chord's other voices), else the melody an octave up under `CLIMAX_TOP`,
+where that leaves the tune's register and adds no clash (Night Harbor's
+top pad voice on one seed could do neither, hence the pad's exemption). A bass moving in octaves with the melody
+(`BassOctaveMoves`, `BASS_OCTAVES_HOLLOW`) is `TipStep`'s: the bars of each
+move written again by `add_chords_and_bass` with `chord_channel` none on the
+chords' roots (an inversion copied from the song kept the bass on the
+octave), in the kind's bass style, then root_fifth, half and roots, then
+with the chord it lands on over its third, then its fifth (a tune landing
+on the roots meets any bass on them), the first that leaves fewer moves and
+adds no clash. That trying is `TryWriteHearing` (`TryWrite` with a check of
+the song as the call would leave it, before its clashes are counted).
+"A repeat with nothing new" varies the last repeated bar, else the bar four
+before it, on the melody, else on another part playing there (a second
+line, the chords), with embellish, syncopate, ending, restrike or
+octave_up (a bar of one held note takes neither of the first two), the
+first whose variation leaves fewer such bars
+(`BarsRepeatedInEveryPart`; the same new ending in bars 29 and 33 made them
+alike again, and Night Harbor's B rests the tune in bars 21 and 25). "The melody
+has no company" is left out when a kind is known and no melodic channel is
+free (the Caves, on the 2A03 alone, whose second line what_next already
+notes has no channel), and "Every chord is a plain triad" is
+`WhatNext::Colors` (polish `colors` `add`) for every kind whose chords are
+written plain (`NextKind::Color` "plain"), not only lively. "One loudness
+all the way through" is left out for a small loop laid out for a kind, and
+for mysterious, atmospheric and floating songs, which stay over a drone or
+a rolling texture. `LaidOutShape` matches a shape's variants part for part
+before it counts names in common (unless the track's name names another
+shape: a town without its last part is the small loop's variant at twice
+its length), so the Shop's Intro, A, A', B, Break is the small shape, not a
+night (the review's small-shape skip of the company
+tip missed it). `CheckDoneReview` in `ApiTests.cpp` holds every walk to it:
+`TestWhatNextLoop` (its walks may take 34 calls now), its small-set walk,
+`TestCozyKind`'s, `TestLaterKinds`' and `TestKindPools`' walks (each kind
+on three seeded songs, and on the small set) and `TestGen4Done`, the
+round's six setups (kinds, words and chips) each on its own seed and two
+more, on the set the round used.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

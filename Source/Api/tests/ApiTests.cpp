@@ -20333,6 +20333,31 @@ int ReviewScore(const std::string &Text)
 	return std::atoi(Text.substr(From, Out - From).c_str());
 }
 
+// Once what_next says done, review_arrangement for the same track without arguments (the kind what_next kept) gives no tip
+// the tools could act on: each was a step before done, or the review leaves it out for the kind (fix-gen4-done: the Airship,
+// the Caves, the Hut and the Shop got tips right after done). The balance's tips (the melody over the chords, which mix
+// gives) are fix-gen4-balance's, left out here
+void CheckDoneReview(FakeSong &Song, const std::string &What, int Line)
+{
+	const std::string Review = Run(Song, "review_arrangement", "{}").Text;
+	const char *const HEADING = "What would help, most first:\n";
+	const size_t At = Review.find(HEADING);
+	if (At == std::string::npos)
+		return;
+	std::string Tips;
+	size_t From = At + std::strlen(HEADING);
+	while (From < Review.size()) {
+		size_t Stop = Review.find('\n', From);
+		if (Stop == std::string::npos)
+			Stop = Review.size();
+		const std::string Tip = Review.substr(From, Stop - From);
+		From = Stop + 1;
+		if (!Tip.empty() && !Contains(Tip, "The melody sits about"))
+			Tips += Tip + "\n";
+	}
+	Check(Tips.empty(), (What + ": after done, the review's tips:\n" + Tips + Review).c_str(), Line);
+}
+
 // A new song as FamiTracker's template starts it (speed 6, tempo 120: rows of 7 and 8 frames), changes allowed
 void NewSong(FakeSong &Song)
 {
@@ -20473,7 +20498,9 @@ void TestWhatNextLoop()
 		Reused += Motifs["A"] == Motifs[Other] ? 1 : 0;
 		CheckMelodyContrast(Song, Made, K.Asked, __LINE__);
 		CHECK(CallIndex(Made, "add_counter_melody") < 0);
-		Check(Made.size() >= 18 && Made.size() <= 30, K.Asked, __LINE__);
+		// (up to 36: the review's tips that are steps now, a bass moving its own way bar by bar: fix-gen4-done)
+		Check(Made.size() >= 18 && Made.size() <= 36, (std::string(K.Asked) + " " + std::to_string(Made.size()) + " calls").c_str(),
+			__LINE__);
 		// Clean: nothing vanishes, clicks, clashes, plays out of range or is too busy for the NES (what_next's own steps, a
 		// harmony and a varied repeat, don't make a part so); the review hears depth
 		const std::string Style = *K.Style ? std::string("\"style\": \"") + K.Style + "\"" : std::string();
@@ -20502,6 +20529,7 @@ void TestWhatNextLoop()
 		if (std::string(K.Style) == "calm" || std::string(K.Style) == "atmospheric")
 			Check(!Contains(Judged, "Flat dynamics sound typed") && !Contains(Judged, "The bass mostly holds roots") &&
 				!Contains(Judged, "No drums: add_drums"), Judged.c_str(), __LINE__);
+		CheckDoneReview(Song, K.Asked, __LINE__);
 		// Done now, and the same after a restart (a new connection: it reads the song, not the calls before)
 		const std::string Again = Run(Song, "what_next", K.Asked).Text;
 		const WhatNextAnswer Last = ReadWhatNext(Again);
@@ -20534,6 +20562,7 @@ void TestWhatNextLoop()
 	bool Finished = false;
 	FollowWhatNext(Song, "{\"kind\": \"lively\"}", 60, Finished, __LINE__, true);
 	CHECK(Finished);
+	CheckDoneReview(Song, "lively (core)", __LINE__);
 	// Without drums and an echo, as the user asked: none written; and without the lead's sound designed first, the melody
 	// on the song's own lead, which stays (a lively stage's lead may hold a level)
 	FakeSong Plain(1);
@@ -20675,7 +20704,7 @@ void TestWhatNextStates()
 		FakeSong Song = Done;
 		for (size_t r = 0; r < Song.Rows[0].size(); ++r)
 			if (Song.Rows[0][r].HasNote())
-				Song.Rows[0][r].Volume = 4;
+				Song.Rows[0][r].Volume = 2;	// (2: at 4 the climax's lift, which the song had, left them within the mix's 2 dB)
 		FakeSong ByHand = Song;
 		// Changed since it was heard: finish_song listens again itself, after its mix
 		WhatNextAnswer A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
@@ -28415,7 +28444,7 @@ void TestWhatNextShapeVariations()
 	CHECK_HAS(A.Text, "as the words about the place ask");
 	CHECK_HAS(A.Text, "\"about\":\"a sleepy village at night\"");	// asked again with them
 }
-
+
 // fix-finish-details: what six songs made by following what_next showed at their finish
 
 // An intro's note ringing into the loop's start the first time, where nothing sounds on repeat (Guard Tower's intro chord
@@ -28774,6 +28803,7 @@ void TestCozyKind()
 		NewSong(Small);
 		FollowWhatNext(Small, "{\"kind\": \"cozy\"}", 60, Finished, __LINE__, true);
 		CHECK(Finished);
+		CheckDoneReview(Small, "cozy (core)", __LINE__);
 		// A shop: the small shape, one short part that loops, without a part for a second line; the review called after
 		// what_next said done asks none of it (fix-gen4-review: the Odds and Ends Shop got "The melody has no company")
 		FakeSong Shop(1);
@@ -28784,6 +28814,7 @@ void TestCozyKind()
 		const std::string ShopReview = Run(Shop, "review_arrangement", "{}").Text;
 		Check(!Contains(ShopReview, "The melody has no company") && !Contains(ShopReview, "Flat dynamics sound typed") &&
 			Contains(ShopReview, "Judged as a cozy song"), ShopReview.c_str(), __LINE__);
+		CheckDoneReview(Shop, "a cozy little shop (core)", __LINE__);
 	}
 	// The recipes and the guide
 	FakeSong Song(1);
@@ -28899,6 +28930,7 @@ void TestLaterKinds()
 		Check(CallIndex(Made, "finish_song") >= 0 && Contains(Made[static_cast<size_t>(CallIndex(Made, "finish_song"))],
 			(std::string("\"kind\":\"") + NextKindInfo(k).Name + "\"").c_str()), Asked.c_str(), __LINE__);
 		CHECK(!StyleGuideTopic(NextKindInfo(k).Name).empty());
+		CheckDoneReview(Song, Asked + " (core)", __LINE__);
 	}
 }
 
@@ -29092,7 +29124,21 @@ void TestKindPools()
 					Style.substr(2)) + "}").Text.c_str());
 			const std::string Review = Run(Song, "review_arrangement", "{" + (Style.empty() ? std::string() : Style.substr(2)) + "}").Text;
 			Check(ReviewScore(Review) >= 8, (Asked + " " + Name + ": " + Review).c_str(), __LINE__);
+			CheckDoneReview(Song, Asked + " " + Name, __LINE__);
 		}
+	// And on the small set, each kind on a seeded song (fix-gen4-done)
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k) {
+		FakeSong Song(1);
+		NewSong(Song);
+		Song.GivesSeeds = true;
+		Song.Info.TrackName = Song.Tracks[0].Name = "Brook";
+		bool Finished = false;
+		const std::string Asked = k == NEXT_GENERAL ? std::string("{}") : std::string("{\"kind\": \"") + NextKindInfo(k).Name +
+			"\"}";
+		FollowWhatNext(Song, Asked, 60, Finished, __LINE__, true);
+		Check(Finished, (Asked + " Brook (core)").c_str(), __LINE__);
+		CheckDoneReview(Song, Asked + " Brook (core)", __LINE__);
+	}
 }
 
 // The offered hooks drawn from pools (fix-gen4-melody): the six songs of gen4 shared one rhythm, and a hut and a shop the
@@ -29519,6 +29565,46 @@ void TestGen4Balance()
 	}
 }
 
+// The round's six songs (fix-gen4-done: kinds, words and chips as gen4's second round made them, each on its own seed and
+// two more), walked to done on the set the round used: the review without arguments, right after, gives no tip the tools
+// could act on (the Airship's climax that didn't build, the Caves' company, triads and one loudness, the Hut's bass in
+// octaves with the tune, the Shop's company and one loudness)
+void TestGen4Done()
+{
+	struct Setup {
+		const char *Name, *Chips, *Asked;
+		bool Core;
+		unsigned int Seed;
+	};
+	const Setup SETUPS[] = {
+		{ "Flying the Airship", "[\"VRC6\"]", "{\"kind\": \"adventure\", \"about\": \"flying an airship high over green fields, "
+			"bright and adventurous\"}", false, 1385385324u },
+		{ "The Caves", "", "{\"kind\": \"mysterious\", \"about\": \"a dim cave with glowing crystals, curious rather than "
+			"scary\"}", false, 3322503023u },
+		{ "Hut in a Field", "[\"VRC6\"]", "{\"kind\": \"cozy\", \"about\": \"a cozy wooden hut in a sunny field, an old woman "
+			"sells odds and ends\"}", false, 2953778645u },
+		{ "Night Harbor", "[\"VRC6 Plus\"]", "{\"kind\": \"calm\", \"about\": \"a quiet harbor at night, boats creaking, lanterns "
+			"on the water\"}", true, 3304668381u },
+		{ "Odds and Ends Shop", "", "{\"about\": \"a small cluttered shop with a cheerful shopkeeper\"}", true, 3625273605u },
+		{ "Guard Tower", "[\"VRC6\"]", "{\"kind\": \"action\", \"about\": \"a tense fight on top of a guard tower at night, wind "
+			"howling\"}", true, 3456037547u },
+	};
+	for (const Setup &U : SETUPS)
+		for (unsigned int Seed : { U.Seed, 77u, 4242u }) {
+			FakeSong Song(1);
+			NewSong(Song);
+			Song.Info.TrackName = Song.Tracks[0].Name = U.Name;
+			Song.Info.Seed = Seed;
+			if (*U.Chips)
+				CHECK(!Run(Song, "set_expansion", std::string("{\"chips\": ") + U.Chips + "}").IsError);
+			bool Finished = false;
+			const std::string What = std::string(U.Name) + " seed " + std::to_string(Seed);
+			FollowWhatNext(Song, U.Asked, 70, Finished, __LINE__, U.Core);
+			Check(Finished, What.c_str(), __LINE__);
+			CheckDoneReview(Song, What, __LINE__);
+		}
+}
+
 int main()
 {
 	TestJson();
@@ -29803,6 +29889,7 @@ int main()
 	TestReviewKeepsItsStyle();
 	TestMinorLeadingTone();
 	TestWhatNextMelodyRoles();
+	TestGen4Done();
 	TestOfferedHooks();
 	TestKindShapes();
 	TestLeadVibratoFits();
