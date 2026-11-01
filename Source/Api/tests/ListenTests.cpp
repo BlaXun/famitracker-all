@@ -388,6 +388,43 @@ void TestClicks()
 	CHECK_EQ(CountKind(ListenToSong(SongOf(std::vector<ListenPart>(1, Part("Pulse 1", Plain, Still)))), LISTEN_CLICK), 0);
 }
 
+// The loop's seam (fix-r4-finish): a part silent before the seam and before the loop's first start starts a note there both
+// times, at whatever place its wave was (Guard Tower's lead, heard popping at bar 5 in one listen of four): no pop. A part
+// that sounds into the seam and steps there pops
+void TestSeam()
+{
+	const long long Loop = 2 * RATE, Seam = 6 * RATE;
+	ListenPart Quiet;
+	Quiet.Name = "Pulse 1";
+	Quiet.Samples.assign(static_cast<size_t>(8 * RATE), 0.0f);
+	// A pulse's output, from 0 to its level: low for its first half cycle the first time, high at once at the seam
+	for (long long n = 0; n < RATE; ++n) {
+		const double Phase = std::fmod(n * 220.0 / RATE, 1.0);
+		Quiet.Samples[static_cast<size_t>(Loop + n)] = Phase < 0.5 ? 0.0f : 0.3f;
+		Quiet.Samples[static_cast<size_t>(Seam + n)] = Phase < 0.5 ? 0.3f : 0.0f;
+	}
+	ListenSong S = SongOf(std::vector<ListenPart>(1, Quiet));
+	S.LoopStart = Loop;
+	S.Seam = Seam;
+	std::vector<ListenFinding> Found = ListenToSong(S);
+	const ListenFinding *pF = FindKind(Found, LISTEN_CLICK);
+	CHECK(pF == 0 || pF->What != "seam");
+
+	ListenPart Steps = Quiet;
+	for (size_t n = 0; n < Steps.Samples.size(); ++n)
+		Steps.Samples[n] = static_cast<float>(0.01 * std::sin(2.0 * PI * 220.0 * static_cast<double>(n) / RATE));
+	for (long long n = Seam; n < Seam + RATE; ++n)
+		Steps.Samples[static_cast<size_t>(n)] += 0.3f;
+	S = SongOf(std::vector<ListenPart>(1, Steps));
+	S.LoopStart = Loop;
+	S.Seam = Seam;
+	Found = ListenToSong(S);
+	bool Pops = false;
+	for (size_t i = 0; i < Found.size(); ++i)
+		Pops = Pops || (Found[i].Kind == LISTEN_CLICK && Found[i].What == "seam");
+	CHECK(Pops);
+}
+
 // A sound that holds on after its release (a release that ends above silence) is a drone; one that fades isn't
 void TestDrone()
 {
@@ -464,6 +501,7 @@ int main()
 	TestOutOfTune();
 	TestBeating();
 	TestClicks();
+	TestSeam();
 	TestDrone();
 	TestHarsh();
 	TestWords();

@@ -8484,103 +8484,246 @@ int EchoVolume(const Session &S, const ChannelInfo &Source, const NoteInfo &N, c
 	return Best;
 }
 
-// Which echo notes double another part (not its own channel): the same pitch as it sounds, or octaves apart, for half the
-// note or more. A detune there beats against it (listen's beating); Doubled names the parts' notes. The source counts too:
-// a held note longer than the delay still sounds when its echo comes in at its pitch (Hut in a Field's echo a beat behind
-// the melody's long notes, P81, beat against them 18 cents apart in bars 21-29)
-std::vector<bool> EchoDoubles(Session &S, Draft &D, const EchoPlan &Plan, const std::vector<PartNote> &Notes, std::string &Doubled)
+// Doubles in tune (from fix-r4-finish): where two parts sound one pitch together (or octaves of it), each plays it as its
+// own chip's register rounds it (ListenNoteTuning): the 2A03's and the VRC6's pulses alike, the VRC6's sawtooth (its
+// period counts 14 steps) and the triangle (32) otherwise, and up high a step of a period is a big share of a semitone, so
+// the two can sit 15-17 cents apart with no Pxx written: the Airship's climax, its lead on VRC6 Pulse 1 at A-5 over the
+// sawtooth's A-4 15 cents flat of it, the echo's B-5 on a 2A03 pulse against the sawtooth's B-4 17 cents. A fine pitch
+// (Pxx) on one of them takes it to the other's pitch as its chip plays it, which a P80 alone can't. A note doubles
+// another when they sound together for half the note or DOUBLE_SECONDS (listen's beating hears that long: the Airship's
+// echo of A-4 at P81 rang 2 of its 6 rows with the melody's A-4, which half the note left detuned); a note off its
+// partner by under DOUBLE_LEAST_CENTS keeps its fine pitch (a step low down moves a note 2-7 cents)
+const double DOUBLE_SECONDS = 0.25, DOUBLE_LEAST_CENTS = 4.0;
+const int DOUBLE_MOST_STEPS = 8;
+
+// Where a note written on a channel sounds at a fine pitch (Pxx's value, 0 for none: P80), in Hz as its chip's register
+// plays it; 0 where that isn't worked out (the VRC7, the N163 whose waves' cycles count, a sound without a pitch)
+double DoubledHz(const Session &S, const ChannelInfo &Info, int Pitch, int Fine)
 {
-	std::vector<bool> Out(Notes.size(), false);
-	std::vector<std::string> Names;
-	const int Lifted = Written(S.Channel(Plan.Target), 0);
-	for (int c = 0; c < S.ChannelCount(); ++c) {
-		if (c == Plan.Target || !IsMelodic(S.Channel(c)))
-			continue;
-		const int Lift = Written(S.Channel(c), 0);
-		const std::vector<NoteInfo> Theirs = D.Notes(c);
-		bool Any = false;
-		for (size_t i = 0; i < Notes.size(); ++i) {
-			const PartNote &E = Notes[i];
-			int Together = 0;
-			for (size_t k = 0; k < Theirs.size(); ++k) {
-				const int From = std::max(E.Row, Theirs[k].Row), To = std::min(E.Row + E.Rows, Theirs[k].Row + Theirs[k].Rows);
-				if (To > From && (Theirs[k].Pitch - Lift - (E.Pitch - Lifted)) % 12 == 0)
-					Together += To - From;
-			}
-			if (Together > 0 && 2 * Together >= E.Rows) {
-				Out[i] = true;
-				Any = true;
-			}
-		}
-		if (Any)
-			Names.push_back(S.Channel(c).FullName() + (c == Plan.Source ? "'s own held notes" : "'s notes"));
-	}
-	Doubled.clear();
-	for (size_t i = 0; i < Names.size(); ++i)
-		Doubled += (i == 0 ? "" : (i + 1 == Names.size() ? " and " : ", ")) + Names[i];
-	return Out;
+	if (!IsMelodic(Info) || Info.Chip == "N163" || Info.Chip == "VRC7")
+		return 0.0;
+	return ListenNoteTuning(Info.Chip, Info.Kind, Pitch, (Fine == 0 ? 0x80 : Fine) - 0x80, Info.ChipChannels, 16, S.Song.Pal).ChipHz;
 }
 
-// polish's unison touch, the call of listen's beating: Channel's notes in [First, End) that play a fine pitch off the middle
-// (a Pxx other than P80: a detuned echo's chorus, a part tuned apart) while another part sounds their pitch, or octaves of
-// it, for half the note or more get P80, and the next note that doesn't gets its fine pitch back. Detuned there, the two
-// beat and sound sour (Hut in a Field's echo, P81, against the melody's own held notes). How many notes; Lost when one had
-// no free effect column; With names the parts they double
-int TuneUnisons(Session &S, Draft &D, int Channel, int First, int End, bool &Lost, std::string &With)
+// How far Hz is from Other (octaves of it apart counted), in cents
+double DoubledCents(double Hz, double Other)
 {
-	std::vector<Cell> &Cells = D.Cells(Channel);
-	const std::vector<NoteInfo> Mine = D.Notes(Channel);
-	const std::vector<int> Fine = StickyAt(Cells, Mine, EFFECT_COLUMNS, EFF_PITCH);
-	const int Lift = Written(S.Channel(Channel), 0);
-	std::vector<bool> Doubled(Mine.size(), false);
-	std::vector<std::string> Names;
+	double Cents = 1200.0 * std::log2(Other / Hz);
+	Cents -= 1200.0 * std::floor(Cents / 1200.0 + 0.5);
+	return Cents;
+}
+
+// The fine pitch that puts a note of Pitch on Info nearest Hz as the chips play them, within DOUBLE_MOST_STEPS of P80:
+// Fine (0 counted as P80) where it's within DOUBLE_LEAST_CENTS already or nothing comes nearer
+int FineToMatch(const Session &S, const ChannelInfo &Info, int Pitch, int Fine, double Hz)
+{
+	const int Now = Fine == 0 ? 0x80 : Fine;
+	const double Mine = DoubledHz(S, Info, Pitch, Now);
+	if (Mine <= 0.0 || Hz <= 0.0)
+		return Now;
+	const double Off = std::fabs(DoubledCents(Mine, Hz));
+	if (Off < DOUBLE_LEAST_CENTS)
+		return Now;
+	int Best = Now;
+	double BestOff = Off;
+	for (int Step = 0; Step <= DOUBLE_MOST_STEPS; ++Step) {	// nearest P80 first, so a tie keeps the middle
+		for (int Sign = -1; Sign <= 1; Sign += 2) {
+			if (Step == 0 && Sign > 0)
+				continue;
+			const int Try = 0x80 + Sign * Step;
+			const double Played = DoubledHz(S, Info, Pitch, Try);
+			if (Played <= 0.0)
+				continue;
+			const double Away = std::fabs(DoubledCents(Played, Hz));
+			if (Away < BestOff - 1.0) {
+				BestOff = Away;
+				Best = Try;
+			}
+		}
+	}
+	return Best;
+}
+
+// A note as the doubling sees it: where it sounds, its pitch as written on its channel and the fine pitch it plays at
+struct DoubledNote {
+	int Row, Rows, Pitch, Fine;
+};
+
+// For each of Mine (notes of Channel, as they'll be written), the fine pitch that puts it on the pitch of the part it
+// doubles, its own Fine where it doubles none: of the parts sounding its pitch or octaves of it (Others: each channel's
+// cells as they'll be, the song's where a channel isn't there), Melody's first, else the one sounding longest with it.
+// Names: the parts doubled; Doubled marks the notes that double one
+std::vector<int> DoubledFines(Session &S, int Channel, const std::vector<DoubledNote> &Mine, int Melody,
+	const std::map<int, const std::vector<Cell> *> &Others, std::vector<bool> &Doubled, std::string &Names)
+{
+	std::vector<int> Out(Mine.size(), 0);
+	Doubled.assign(Mine.size(), false);
+	for (size_t i = 0; i < Mine.size(); ++i)
+		Out[i] = Mine[i].Fine == 0 ? 0x80 : Mine[i].Fine;
+	const ChannelInfo &Info = S.Channel(Channel);
+	const int Lift = Written(Info, 0);
+	const double SecondsPerRow = FramesPerRow(S) / std::max(1, S.Song.FrameRate);
+	const int LeastRows = std::max(1, static_cast<int>(std::ceil(DOUBLE_SECONDS / std::max(1e-6, SecondsPerRow) - 1e-9)));
+	std::vector<int> Partner(Mine.size(), -1), Together(Mine.size(), 0);
+	std::vector<double> PartnerHz(Mine.size(), 0.0);
+	std::vector<std::string> Parts;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (c == Channel || !IsMelodic(S.Channel(c)))
 			continue;
+		const std::map<int, const std::vector<Cell> *>::const_iterator It = Others.find(c);
+		const std::vector<Cell> &Cells = It != Others.end() ? *It->second : S.Cells(c);
+		const std::vector<NoteInfo> Theirs = ReadNotes(Cells, S.Channel(c).EffectColumns);
+		const std::vector<int> TheirFine = StickyAt(Cells, Theirs, EFFECT_COLUMNS, EFF_PITCH);
 		const int TheirLift = Written(S.Channel(c), 0);
-		const std::vector<NoteInfo> Theirs = D.Notes(c);
 		bool Any = false;
 		for (size_t i = 0; i < Mine.size(); ++i) {
-			const NoteInfo &N = Mine[i];
-			if (N.Row < First || N.Row >= End || Fine[i] == 0 || Fine[i] == 0x80 || Doubled[i])
-				continue;
-			int Together = 0;
+			const DoubledNote &N = Mine[i];
+			int Longest = 0;
+			size_t With = 0;
 			for (size_t k = 0; k < Theirs.size(); ++k) {
 				const int From = std::max(N.Row, Theirs[k].Row), To = std::min(N.Row + N.Rows, Theirs[k].Row + Theirs[k].Rows);
-				if (To > From && (Theirs[k].Pitch - TheirLift - (N.Pitch - Lift)) % 12 == 0)
-					Together += To - From;
+				if (To > From && (Theirs[k].Pitch - TheirLift - (N.Pitch - Lift)) % 12 == 0 && To - From > Longest) {
+					Longest = To - From;
+					With = k;
+				}
 			}
-			if (Together > 0 && 2 * Together >= N.Rows)
-				Doubled[i] = Any = true;
+			if (Longest == 0 || (2 * Longest < N.Rows && Longest < LeastRows))
+				continue;
+			Any = true;
+			// The melody's note first, else the part sounding longest with it
+			const bool Better = Partner[i] < 0 || (c == Melody && Partner[i] != Melody) || (Partner[i] != Melody && Longest > Together[i]);
+			if (!Better)
+				continue;
+			Partner[i] = c;
+			Together[i] = Longest;
+			PartnerHz[i] = DoubledHz(S, S.Channel(c), Theirs[With].Pitch, TheirFine[With]);
 		}
 		if (Any)
-			Names.push_back(S.Channel(c).FullName());
+			Parts.push_back(S.Channel(c).FullName());
 	}
-	int Count = 0;
-	bool Changed = false;	// the note before was put in tune: the next one plays its own fine pitch again
 	for (size_t i = 0; i < Mine.size(); ++i) {
-		const int Row = Mine[i].Row;
+		if (Partner[i] < 0)
+			continue;
+		Doubled[i] = true;
+		// The same chip's table and the partner at P80: the middle, as before (a P80 for a detuned echo's doubles)
+		const int Fine = FineToMatch(S, Info, Mine[i].Pitch, 0x80, PartnerHz[i]);
+		const double At = DoubledHz(S, Info, Mine[i].Pitch, Fine), Now = DoubledHz(S, Info, Mine[i].Pitch, Out[i]);
+		if (At > 0.0 && Now > 0.0 && std::fabs(DoubledCents(At, PartnerHz[i])) + 1.0 < std::fabs(DoubledCents(Now, PartnerHz[i])))
+			Out[i] = Fine;
+		else if (At <= 0.0 || PartnerHz[i] <= 0.0)
+			Out[i] = 0x80;	// pitches the chips' tables don't give: in the middle, as the partner's
+	}
+	Names.clear();
+	for (size_t i = 0; i < Parts.size(); ++i)
+		Names += (i == 0 ? "" : (i + 1 == Parts.size() ? " and " : ", ")) + Parts[i];
+	return Out;
+}
+
+// Which echo notes double another part (not its own channel), and the fine pitch each plays: in tune with the part it
+// doubles (DoubledFines; the melody's own held notes count, since a note held longer than the delay still sounds when its
+// echo comes in: Hut in a Field's echo a beat behind the melody's long notes, P81, beat against them 18 cents apart in
+// bars 21-29), 0x80 + the echo's detune elsewhere. Doubled names the parts' notes
+std::vector<int> EchoFines(Session &S, Draft &D, const EchoPlan &Plan, const std::vector<PartNote> &Notes, std::vector<bool> &InTune,
+	std::string &Doubled)
+{
+	std::vector<DoubledNote> Mine;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const DoubledNote N = { Notes[i].Row, Notes[i].Rows, Notes[i].Pitch, 0x80 + Plan.Detune };
+		Mine.push_back(N);
+	}
+	std::map<int, const std::vector<Cell> *> Others;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (c != Plan.Target)
+			Others[c] = &D.View(c);
+	std::vector<int> Out = DoubledFines(S, Plan.Target, Mine, Plan.Source, Others, InTune, Doubled);
+	// The parts named as the reply names them: the melody's "own held notes"
+	const std::string Source = S.Channel(Plan.Source).FullName();
+	const size_t At = Doubled.find(Source);
+	if (At != std::string::npos)
+		Doubled.replace(At, Source.size(), Source + "'s own held notes");
+	return Out;
+}
+
+// A part's notes in tune with the parts they double, as the tools write it (add_harmony): each note's fine pitch where it
+// changes, put back to the middle once it ends (its EndEffects). How many notes it put off P80
+int TuneDoubledPart(Session &S, int Channel, int Melody, std::vector<PartNote> &Notes)
+{
+	std::vector<DoubledNote> Mine;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const DoubledNote N = { Notes[i].Row, Notes[i].Rows, Notes[i].Pitch, 0x80 };
+		Mine.push_back(N);
+	}
+	std::vector<bool> Doubled;
+	std::string Names;
+	const std::vector<int> Fines = DoubledFines(S, Channel, Mine, Melody, std::map<int, const std::vector<Cell> *>(), Doubled, Names);
+	int Count = 0, Now = 0x80;
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		Count += Fines[i] != 0x80 ? 1 : 0;
+		if (Fines[i] == Now && Now == 0x80)
+			continue;	// (each tuned note carries its own: BuildPart keeps the notes after a change as they played)
+		for (size_t e = 0; e < Notes[i].Effects.size(); ++e)
+			if (Notes[i].Effects[e].first == EFF_PITCH)
+				Notes[i].Effects.erase(Notes[i].Effects.begin() + static_cast<std::ptrdiff_t>(e--));
+		Notes[i].Effects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), Fines[i]));
+		Now = Fines[i];
+	}
+	if (Now != 0x80 && !Notes.empty())
+		Notes.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80));
+	return Count;
+}
+
+// polish's unison touch, the call of listen's beating: Channel's notes in [First, End) that double another part (its pitch
+// or octaves of it, for half the note or DOUBLE_SECONDS) get the fine pitch that puts them on that part's pitch as the two
+// chips play it (DoubledFines: P80 for a detuned echo beside its melody on the same chip, a step or two either way across
+// chips up high), and the next note that doesn't gets its fine pitch back. Detuned there, the two beat and sound sour
+// (Hut in a Field's echo, P81, against the melody's own held notes; the Airship's echo and lead against its sawtooth). How
+// many notes changed; Lost when one had no free effect column; With names the parts they double
+int TuneUnisons(Session &S, Draft &D, int Channel, int First, int End, int Melody, bool &Lost, std::string &With)
+{
+	std::vector<Cell> &Cells = D.Cells(Channel);
+	const std::vector<NoteInfo> Notes = D.Notes(Channel);
+	const std::vector<int> Fine = StickyAt(Cells, Notes, EFFECT_COLUMNS, EFF_PITCH);
+	std::vector<DoubledNote> Mine;
+	std::vector<size_t> Index;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		if (Notes[i].Row >= First && Notes[i].Row < End) {
+			const DoubledNote N = { Notes[i].Row, Notes[i].Rows, Notes[i].Pitch, Fine[i] };
+			Mine.push_back(N);
+			Index.push_back(i);
+		}
+	std::map<int, const std::vector<Cell> *> Others;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (c != Channel)
+			Others[c] = &D.View(c);
+	std::vector<bool> Doubled;
+	const std::vector<int> Wanted = DoubledFines(S, Channel, Mine, Melody, Others, Doubled, With);
+	std::vector<int> Want(Notes.size(), -1);
+	for (size_t m = 0; m < Index.size(); ++m)
+		Want[Index[m]] = Wanted[m];
+	int Count = 0, Playing = -1;	// the fine pitch the note before plays, as written now (-1: as it was)
+	for (size_t i = 0; i < Notes.size(); ++i) {
+		const int Row = Notes[i].Row;
 		if (Row < First || Row >= static_cast<int>(Cells.size()))
 			continue;
-		const bool Inside = Row < End;
-		if (Inside && Doubled[i]) {
-			if (AddEffect(Cells[static_cast<size_t>(Row)], EFF_PITCH, 0x80, EFFECT_COLUMNS)) {
-				++Count;
-				Changed = true;
-			}
+		const int Was = Fine[i] == 0 ? 0x80 : Fine[i];
+		const int Is = Row < End && Want[i] >= 0 ? Want[i] : Was;
+		if (Row >= End && (Playing < 0 || Playing == Was))
+			break;
+		// Written where it changes, on every note it tunes (the change's write keeps the notes after it as they played, so a
+		// fine pitch carried on from the note before would be put back), and over a note's own Pxx that says otherwise (a
+		// line with P82 on every note)
+		const Cell &Here = Cells[static_cast<size_t>(Row)];
+		bool Own = false;
+		for (int k = 0; k < EFFECT_COLUMNS; ++k)
+			Own = Own || (Here.Effect[k] == EFF_PITCH && Here.Param[k] != Is);
+		if (Is != (Playing < 0 ? Was : Playing) || Is != Was || Own) {
+			if (AddEffect(Cells[static_cast<size_t>(Row)], EFF_PITCH, Is, EFFECT_COLUMNS))
+				Count += Is != Was ? 1 : 0;
 			else
 				Lost = true;
-			continue;
 		}
-		if (Changed && Fine[i] != 0 && Fine[i] != 0x80 && !AddEffect(Cells[static_cast<size_t>(Row)], EFF_PITCH, Fine[i], EFFECT_COLUMNS))
-			Lost = true;
-		Changed = false;
-		if (!Inside)
-			break;
+		Playing = Is;
 	}
-	With.clear();
-	for (size_t i = 0; i < Names.size(); ++i)
-		With += (i == 0 ? "" : (i + 1 == Names.size() ? " and " : ", ")) + Names[i];
 	return Count;
 }
 
@@ -8642,25 +8785,34 @@ int MakeEcho(Session &S, Draft &D, const EchoPlan &Plan, int First, int End, std
 		return 0;
 	// On the N163, a sound another N163 channel plays there (the melody's own, from another soft channel) as a copy of its own
 	OwnWaveSounds(S, &D, Plan.Target, First + Plan.Delay, Stop, Notes);
-	if (Plan.Detune != 0) {
+	{
 		// A little off the melody's pitch, so the two shimmer where they overlap; back in tune after. Where an echo note
 		// doubles another part (its pitch or an octave, as a harmony voice landing on the melody's note a beat late does),
-		// it plays in tune: detuned there, the two beat and sound sour (listen's beating, which the Airship's echo had)
+		// it plays in tune: detuned there, the two beat and sound sour (listen's beating, which the Airship's echo had). In
+		// tune is the other part's pitch as its chip plays it (EchoFines), so an echo without a detune gets a fine pitch too
+		// where the chips round the note apart
 		std::string Doubled;
-		const std::vector<bool> InTune = EchoDoubles(S, D, Plan, Notes, Doubled);
-		int Kept = 0, Now = 0x80;
+		std::vector<bool> InTune;
+		const std::vector<int> Fines = EchoFines(S, D, Plan, Notes, InTune, Doubled);
+		bool Write = Plan.Detune != 0;
+		int Kept = 0, Matched = 0, Now = 0x80;
 		for (size_t i = 0; i < Notes.size(); ++i) {
-			const int Want = InTune[i] ? 0x80 : 0x80 + Plan.Detune;
+			Write = Write || Fines[i] != 0x80;
 			Kept += InTune[i] ? 1 : 0;
+			Matched += InTune[i] && Fines[i] != 0x80 ? 1 : 0;
+		}
+		for (size_t i = 0; i < Notes.size() && Write; ++i) {
+			const int Want = Fines[i];
 			if (Want != Now || i == 0)
 				Notes[i].Effects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), Want));
 			Now = Want;
 		}
 		if (Now != 0x80)
 			Notes.back().EndEffects.push_back(std::make_pair(static_cast<int>(EFF_PITCH), 0x80));
-		if (Kept > 0)
-			Warnings.push_back(Format("Where the echo doubles %s, %s in tune (P80): detuned there, the two would beat "
-				"and sound sour.", Doubled.c_str(), Plural(Kept, "note plays", "notes play").c_str()));
+		if (Kept > 0 && (Plan.Detune != 0 || Matched > 0))
+			Warnings.push_back(Format("Where the echo doubles %s, %s in tune (%s): detuned there, the two would beat "
+				"and sound sour.", Doubled.c_str(), Plural(Kept, "note plays", "notes play").c_str(), Matched == 0 ? "P80" :
+				Format("%s a step or two off P80, where the two chips round the pitch apart", Plural(Matched, "note", "notes").c_str()).c_str()));
 	}
 	// Its place between the speakers, on the notes where it changes (the ones between keep it)
 	int Last = -1;
@@ -12097,6 +12249,13 @@ std::string AddHarmonyTool(Session &S, const Json &Args)
 	}
 	if (HasNotesIn(S, Target, First, End))
 		Warnings.push_back(S.Channel(Target).FullName() + "'s own notes in those bars were replaced.");
+	// Where the voice lands on another part's pitch (or octaves of it) on another chip that rounds it apart (a sawtooth an
+	// octave under a pulse lead up high: the Airship's), a fine pitch puts it on that part's pitch, so the two don't beat
+	const int Tuned = TuneDoubledPart(S, Target, Melody, Notes);
+	if (Tuned > 0)
+		Warnings.push_back(Format("Where it doubles another part's pitch on another chip, %s a fine pitch (Pxx) that puts %s on "
+			"that part's pitch as the chips play it: without it, the two would beat.", Plural(Tuned, "note gets", "notes get").c_str(),
+			Tuned == 1 ? "it" : "them"));
 	Change C;
 	C.Channel = Target;
 	BuildPart(S.Cells(Target), First, End, Notes, OptionsFor(S, Target, Direct(S, AsClip)), C.Cells, Warnings);
@@ -12553,7 +12712,7 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 	if (Pick > 0) {
 		// Written as write_notes writes a line
 		Json Write = Json::MakeObject();
-		Write.Set("channel", Json(Channel + 1));
+		Write.Set("channel", S.Channel(Channel).FullName());
 		Write.Set("notes", Lines[static_cast<size_t>(Pick) - 1]);
 		Write.Set("from_bar", Json(From));
 		if (Arg(Args, "step") != 0)
@@ -14078,17 +14237,21 @@ std::string PolishTool(Session &S, const Json &Args)
 			Warnings.push_back(ClashesLeftText(S, ClashesLeft));
 	}
 	if (What.count("unison")) {
-		// A detuned part (an echo's P81) in tune where it doubles another part's pitch: listen's beating
+		// A part in tune where it doubles another part's pitch (an echo's P81, or two chips rounding a high note apart):
+		// listen's beating. Without channels named, the melody stays as it is and the others follow it
 		bool Lost = false;
 		for (size_t i = 0; i < Channels.size(); ++i) {
+			if (Channels[i] == Melody && Arg(Args, "channels") == 0)
+				continue;
 			std::string With;
-			const int Count = TuneUnisons(S, D, Channels[i], First, End, Lost, With);
+			const int Count = TuneUnisons(S, D, Channels[i], First, End, Melody, Lost, With);
 			if (Count > 0)
-				Done.push_back(Format("%s on %s in tune (P80) where %s %s's pitch, the fine pitch back after", Plural(Count, "note",
-					"notes").c_str(), S.Channel(Channels[i]).FullName().c_str(), Count == 1 ? "it doubles" : "they double", With.c_str()));
+				Done.push_back(Format("%s on %s in tune where %s %s's pitch (P80, or the fine pitch that puts %s on it as the "
+					"chips play it), the fine pitch back after", Plural(Count, "note", "notes").c_str(), S.Channel(Channels[i]).FullName().c_str(),
+					Count == 1 ? "it doubles" : "they double", With.c_str(), Count == 1 ? "it" : "them"));
 		}
 		if (Lost)
-			Warnings.push_back("A note that beats had no free effect column for its P80, so it still beats.");
+			Warnings.push_back("A note that beats had no free effect column for its fine pitch (Pxx), so it still beats.");
 	}
 	if (What.count("clicks")) {
 		// Last, so it hears the other touches too: notes on the 2A03's and MMC5's pulses whose vibrato clicks, nudged
@@ -14144,8 +14307,8 @@ std::string PolishTool(Session &S, const Json &Args)
 				Plural(ColorsLeft, "chord rubs", "chords rub").c_str()) : "There was no color there that rubs the melody: no "
 				"chord part's added ninth, seventh or sixth a semitone from its notes for three quarters of a beat or more.");
 		if (What.size() == 1 && What.count("unison"))
-			throw Problem("There was nothing to tune there: no note playing a fine pitch other than P80 while another part sounds its "
-				"pitch or an octave of it for half the note or more.");
+			throw Problem("There was nothing to tune there: every note sounding another part's pitch (or an octave of it) for half "
+				"the note or a quarter of a second plays it within a few cents already, as the two chips play it.");
 		if (What.size() == 1 && What.count("clashes"))
 			throw Problem(ClashesLeft.empty() ? "There was no clash there: no two parts a semitone apart for half a beat or more, as "
 				"check_song hears one." : "No clash there could move: " + ClashesLeftText(S, ClashesLeft));
@@ -19558,7 +19721,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 			if (Pitches[Pitches.size() / 2] < 48 || Pitches[0] - 12 < 24)	// C-4 and up, above C-2 after
 				continue;
 			Json Move = Json::MakeObject();
-			Move.Set("channel", c + 1);
+			Move.Set("channel", S.Channel(c).FullName());
 			Move.Set("semitones", -12);
 			Moves.Push(Move);
 		}
@@ -19577,7 +19740,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 		if (Melody >= 0 && Arg(Args, "vibrato") == 0) {
 			// Slower and wider than a day's, and later into the note
 			Json Vibrato = Json::MakeObject();
-			Vibrato.Set("channel", Melody + 1);
+			Vibrato.Set("channel", S.Channel(Melody).FullName());
 			Vibrato.Set("speed", "slow");
 			Vibrato.Set("depth", "medium");
 			Vibrato.Set("delay_beats", 0.5);
@@ -19590,7 +19753,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 				if (!HasPresets(S.Channel(c)) || IsBass(S.Channel(c)))
 					continue;
 				Json Sound = Json::MakeObject();
-				Sound.Set("channel", c + 1);
+				Sound.Set("channel", S.Channel(c).FullName());
 				if (c == Melody)
 					Sound.Set("instrument", "soft lead");
 				else if (PlaysChords(S, c) && !ArpeggioChords(S, c))
@@ -19616,8 +19779,8 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 			else if (InstrumentChip(S.Channel(Target)) == InstrumentChip(S.Channel(Melody)) || HasPresets(S.Channel(Target))) {
 				// Longer and softer than a day's
 				Json Echo = Json::MakeObject();
-				Echo.Set("channel", Melody + 1);
-				Echo.Set("to_channel", Target + 1);
+				Echo.Set("channel", S.Channel(Melody).FullName());
+				Echo.Set("to_channel", S.Channel(Target).FullName());
 				Echo.Set("delay_beats", 1.5);
 				Echo.Set("volume", 4);		// 3 once the version is quieter
 				if (InstrumentChip(S.Channel(Target)) != InstrumentChip(S.Channel(Melody)))
@@ -19639,7 +19802,7 @@ std::string MakeVersionTool(Session &S, const Json &Args)
 		}
 		if (Melody >= 0 && Arg(Args, "sounds") == 0 && HasPresets(S.Channel(Melody)) && !IsBass(S.Channel(Melody))) {
 			Json Sound = Json::MakeObject();
-			Sound.Set("channel", Melody + 1);
+			Sound.Set("channel", S.Channel(Melody).FullName());
 			Sound.Set("instrument", "bright lead");
 			Json Sounds = Json::MakeArray();
 			Sounds.Push(Sound);
@@ -23636,6 +23799,9 @@ int N163HighestWhole(int Channels, int WaveSize)
 	return static_cast<int>(std::floor(12.0 * std::log2(Hz / 32.7032) + 0.2));	// C-0 is 32.7 Hz; a skip in 100 steps is nothing
 }
 
+// The highest a melody of the soundtrack reaches, as it sounds: F-6 (check_song's melody range, from fix-r4-finish)
+const int MELODY_HIGHEST = 77;
+
 // Why a note (as written, on the instrument it plays) is outside what its channel plays well, as check_song lists it
 // and write_notes warns of it as it writes; empty when it's fine
 std::string NoteRangeReason(const Session &S, const ChannelInfo &Info, int Pitch, int Instrument)
@@ -24310,16 +24476,17 @@ std::string ReplyLine(const std::string &Text, const char *Label)
 
 std::string ListenTool(Session &S, const Json &Args, std::string *pJson);
 
-// A listen finding (its JSON) whose fix finish_song's Heard lines and what_next's steps give: a high one with a call, or a
-// part beating against another with one (medium: polish's unison touch, which changes nothing else). Hut in a Field's echo
-// beat against the melody 18 cents apart, and what_next said done with only a P80 in words to fix it
+// A listen finding (its JSON) whose fix finish_song's Heard lines and what_next's steps give: a high or a medium one with a
+// call (listen gives a call only where a dry run of it changes something, else advice), so what_next isn't done while one
+// that a call fixes is open. Hut in a Field's echo beat against the melody 18 cents apart, and what_next said done with
+// only a P80 in words to fix it; the Airship's climax beat in four places (medium) after done. A low one is a detail to
+// hear with the user, without a call
 bool HeardFixDue(const Json &F)
 {
-	const Json *pSeverity = F.Get("severity"), *pKind = F.Get("kind"), *pFix = F.Get("fix");
+	const Json *pSeverity = F.Get("severity"), *pFix = F.Get("fix");
 	if (pSeverity == 0 || !pSeverity->IsString() || pFix == 0 || !pFix->IsObject())
 		return false;
-	return pSeverity->String() == "high" || (pSeverity->String() == "medium" && pKind != 0 && pKind->IsString() &&
-		pKind->String() == "beating");
+	return pSeverity->String() == "high" || pSeverity->String() == "medium";
 }
 
 // finish_song's lines on its listen (listen's JSON, kept for what_next): what it heard, then each high finding with a fix
@@ -24373,6 +24540,127 @@ void FinishListenLines(const std::string &Heard, const std::string &Again, std::
 	}
 	Lines.push_back(Line);
 	Lines.insert(Lines.end(), High.begin(), High.end());
+}
+
+// finish_song's "Listen for:" (from fix-r4-finish): the kind's line, its clauses kept only where the song has what they
+// name, so the line describes the song rather than the recipe (the Caves' said "the tune's long notes over the drone, the
+// echo answering in the gaps" with neither: no channel was free for an echo, and its bass played roots). A clause naming
+// several things needs them all; none left: the melody over its parts
+bool PitchLoops(const SequenceInfo &Seq);
+std::string ListenForSong(Session &S, int Melody, const std::string &Line)
+{
+	const int Total = S.Time.TotalRows();
+	bool Echo = false, Drums = false, Bass = false, Chords = false, Second = false, Drone = false, Triangle = false;
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		const ChannelInfo &Info = S.Channel(c);
+		const std::vector<NoteInfo> &Notes = S.Notes(c);
+		if (Notes.empty())
+			continue;
+		if (Info.Kind == KIND_DPCM) {
+			Drums = true;
+			continue;
+		}
+		Triangle = Triangle || Info.Kind == KIND_TRIANGLE;
+		const int Role = MixRole(S, c, Melody, 0, Total);
+		const bool Low = IsMelodic(Info) && c != Melody && PlaysBassPart(S, c, 0, Total);
+		Bass = Bass || Low;
+		// A drone: a part under the melody whose notes hold a bar or more (the median) through half the song's bars
+		if (IsMelodic(Info) && c != Melody && Role != ROLE_ECHO && Notes.size() >= 2) {
+			std::vector<int> Lengths;
+			std::set<int> Bars;
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				Lengths.push_back(Notes[i].Rows);
+				for (int Row = Notes[i].Row; Row < std::min(Total, Notes[i].Row + Notes[i].Rows); Row += S.Time.RowsPerBar)
+					Bars.insert(S.Time.BarOf(Row));
+			}
+			std::sort(Lengths.begin(), Lengths.end());
+			Drone = Drone || (Lengths[Lengths.size() / 2] >= S.Time.RowsPerBar && 2 * static_cast<int>(Bars.size()) >= S.Time.BarCount());
+		}
+	}
+	// The parts' roles as the mix and the review hear them (voiced chords, an echo, a second line, the drums)
+	if (Melody >= 0 && Melody < S.ChannelCount()) {
+		std::vector<MixSpan> Spans = MixSpans(S, Melody, 0, Total, std::set<int>());
+		std::vector<int> Voiced = ChordVoicesIn(S, 0, Total, Melody);
+		HeardRoles(S, Voiced, Spans);
+		Chords = Chords || !Voiced.empty();
+		for (size_t i = 0; i < Spans.size(); ++i) {
+			Echo = Echo || Spans[i].Role == ROLE_ECHO;
+			Drums = Drums || Spans[i].Role == ROLE_DRUMS;
+			Chords = Chords || Spans[i].Role == ROLE_CHORDS;
+			Second = Second || Spans[i].Role == ROLE_LINE;
+		}
+	}
+	else
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			const int Role = S.Notes(c).empty() ? ROLE_NONE : MixRole(S, c, Melody, 0, Total);
+			Drums = Drums || Role == ROLE_DRUMS;
+			Chords = Chords || Role == ROLE_CHORDS;
+		}
+	bool Vibrato = false, Accents = false;
+	if (Melody >= 0) {
+		const std::vector<NoteInfo> &Notes = S.Notes(Melody);
+		std::set<int> Volumes;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			Volumes.insert(Notes[i].Volume);
+			for (size_t e = 0; e < Notes[i].Effects.size() && !Vibrato; ++e)
+				Vibrato = Notes[i].Effects[e].second.first == EFF_VIBRATO && (Notes[i].Effects[e].second.second & 15) != 0;
+			const InstrumentInfo *pInfo = FindInstrument(S.Song, Notes[i].Instrument);
+			Vibrato = Vibrato || (pInfo != 0 && PitchLoops(pInfo->Pitch));
+		}
+		Accents = Volumes.size() >= 2;
+	}
+	bool Climax = false, Break = false;
+	for (size_t i = 0; i < S.Song.Sections.size(); ++i) {
+		const std::string Base = Lowercase(SectionBase(S.Song.Sections[i].Name));
+		Climax = Climax || IsClimaxName(S.Song.Sections[i].Name);
+		Break = Break || Base == "break";
+	}
+	struct Word { const char *Text; bool Has; };
+	const Word WORDS[] = { { "echo", Echo }, { "drone", Drone }, { "drum", Drums }, { "climax", Climax }, { "break", Break },
+		{ "second voice", Second }, { "harmony", Second }, { "counter", Second }, { "pad", Chords }, { "chord", Chords },
+		{ "bass", Bass }, { "vibrato", Vibrato }, { "accent", Accents }, { "triangle", Triangle }, { "tune", Melody >= 0 },
+		{ "melody", Melody >= 0 }, { "lead", Melody >= 0 }, { "motif", Melody >= 0 } };
+	// The clauses: between commas and semicolons outside parentheses, an "and " before the last
+	std::vector<std::string> Clauses;
+	{
+		std::string Now;
+		int Depth = 0;
+		for (size_t i = 0; i < Line.size(); ++i) {
+			const char C = Line[i];
+			Depth += C == '(' ? 1 : C == ')' ? -1 : 0;
+			if (Depth == 0 && (C == ',' || C == ';') && i + 1 < Line.size() && Line[i + 1] == ' ') {
+				Clauses.push_back(Now);
+				Now.clear();
+				++i;
+				continue;
+			}
+			Now += C;
+		}
+		Clauses.push_back(Now);
+	}
+	std::vector<std::string> Kept;
+	for (size_t i = 0; i < Clauses.size(); ++i) {
+		std::string Clause = Clauses[i];
+		if (Clause.compare(0, 4, "and ") == 0)
+			Clause = Clause.substr(4);
+		const std::string Lower = Lowercase(Clause);
+		bool Keep = true;
+		for (size_t w = 0; w < sizeof(WORDS) / sizeof(WORDS[0]) && Keep; ++w)
+			if (Lower.find(WORDS[w].Text) != std::string::npos && !WORDS[w].Has)
+				Keep = false;
+		if (!Keep)
+			continue;
+		const size_t IfAny = Clause.find(" (if any)");
+		if (IfAny != std::string::npos)
+			Clause.erase(IfAny, 9);
+		Kept.push_back(Clause);
+	}
+	if (Kept.empty())
+		return Melody >= 0 ? "the melody over its parts" : "the parts together";
+	std::string Out;
+	for (size_t i = 0; i < Kept.size(); ++i)
+		Out += (i == 0 ? "" : i + 1 == Kept.size() ? (Kept.size() == 2 ? " and " : ", and ") : ", ") + Kept[i];
+	return Out;
 }
 
 std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std::vector<ToolFile> &Files)
@@ -24492,7 +24780,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 	};
 
 	std::vector<std::string> Lines;
-	bool Changed = false;
+	bool Changed = false, Polished = false, MixRan = false;
 	{
 		struct Grouped {
 			SongHost &Host;
@@ -24511,11 +24799,11 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 				const std::string Text = PolishTool(Step, A);
 				const std::string Touches = WithoutAsides(ReplyLine(Text, "\nTouches: "));
 				Lines.push_back("Polish: " + (Touches.empty() ? std::string("done.") : Touches));
-				Changed = true;
+				Changed = Polished = true;
 			}
 			catch (const Problem &P) {
-				Lines.push_back(P.Text.find("nothing to polish") != std::string::npos ? "Polish: nothing to change." :
-					"Polish: not done: " + P.Text);
+				Polished = P.Text.find("nothing to polish") != std::string::npos;
+				Lines.push_back(Polished ? "Polish: nothing to change." : "Polish: not done: " + P.Text);
 			}
 		}
 
@@ -24559,6 +24847,7 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 					Lines.push_back(FaderLine);
 				const bool Mixed = Text.find("Changed the song") != std::string::npos || A.Get("faders") != 0;
 				Changed = Changed || Mixed;
+				MixRan = true;
 				Session After(S.Host());
 				const std::string Balance = FinishBalance(After, Melody, std::string(Recipe.MixStyle) == "lively");
 				Lines.push_back(Format("Mix (%s): %s", Recipe.MixStyle, Mixed ? "" : "mixed that way already; ") + (Balance.empty() ? std::string(
@@ -24613,6 +24902,17 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 				Lines.push_back(Line);
 			}
 		}
+	}
+
+	// The steps that ran, kept with the song's print as they left it, for what_next (SongHost::KeepFinishStep): a mix done
+	// isn't asked again while the song stays so, nor polish counted as done where it never ran
+	{
+		Session After(S.Host());
+		const std::string Print = SoundPrint(After);
+		if (Polished)
+			S.Host().KeepFinishStep(After.Song.Track, "polish", Print);
+		if (MixRan)
+			S.Host().KeepFinishStep(After.Song.Track, "mix", Print);
 	}
 
 	// listen: the song as it sounds now, after the steps, kept on the host as the listen tool keeps one, so what_next takes the
@@ -24716,7 +25016,11 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 		if (Changed && Now.Song.Modified && !Now.Song.FileName.empty())
 			Text += " save_song keeps them in the song's file.";
 	}
-	std::string Listen = Plan.Listen;
+	std::string Listen;
+	{
+		Session Now(S.Host());
+		Listen = Arranged ? ListenForSong(Now, Melody, Plan.Listen) : std::string(Plan.Listen);
+	}
 	if (Looping && Arranged) {
 		Session Now(S.Host());
 		const SongFlow F = Flow(Now);
@@ -26403,22 +26707,27 @@ Json ListenCallOf(Session &S, const ListenReport &R, const ListenFinding &F, std
 			"pitch (Pxx) the other way, puts it back.";
 		return Json();
 	case LISTEN_BEATING: {
-		// The part of the two whose notes there play a fine pitch off P80 (a detuned echo) is put in tune where it doubles
-		// the other: polish's unison touch (Hut in a Field's echo, P81, beat against the melody's own held notes)
-		Json Which = Json::MakeArray();
-		const int First = S.Time.BarStart(FromBar), End = std::min(S.Time.BarEnd(ToBar), S.Time.TotalRows());
+		// The two in tune where one doubles the other: polish's unison touch on the part that follows (not the melody; both
+		// when neither is), each note to the pitch of the part it doubles as the two chips play it (Hut in a Field's echo,
+		// P81, beat against the melody's own held notes; the Airship's climax, its lead and echo on pulses against its
+		// sawtooth, which rounds high notes 15-17 cents apart). Given only where a dry run of the touch changes a note, so a
+		// fix that would find nothing to tune isn't offered
+		std::vector<int> Tune;
 		for (int p = 0; p < 2; ++p) {
 			const int Index = p == 0 ? F.Part : F.Other;
-			if (Index < 0)
-				continue;
-			const int Channel = R.Song.Parts[static_cast<size_t>(Index)].Channel;
-			const std::vector<NoteInfo> &Notes = S.Notes(Channel);
-			const std::vector<int> Fine = StickyAt(S.Cells(Channel), Notes, EFFECT_COLUMNS, EFF_PITCH);
-			bool Detuned = false;
-			for (size_t i = 0; i < Notes.size() && !Detuned; ++i)
-				Detuned = Notes[i].Row >= First && Notes[i].Row < End && Fine[i] != 0 && Fine[i] != 0x80;
-			if (Detuned)
-				Which.Push(Channel + 1);
+			if (Index >= 0 && R.Song.Parts[static_cast<size_t>(Index)].Channel != R.Melody)
+				Tune.push_back(R.Song.Parts[static_cast<size_t>(Index)].Channel);
+		}
+		const int First = S.Time.BarStart(FromBar), End = std::min(S.Time.BarEnd(ToBar), S.Time.TotalRows());
+		Json Which = Json::MakeArray();
+		{
+			Draft D(S);
+			bool Lost = false;
+			for (size_t i = 0; i < Tune.size(); ++i) {
+				std::string With;
+				if (TuneUnisons(S, D, Tune[i], First, End, R.Melody, Lost, With) > 0)
+					Which.Push(S.Channel(Tune[i]).FullName());
+			}
 		}
 		if (Which.Size() > 0) {
 			Json Touches = Json::MakeArray();
@@ -26427,11 +26736,12 @@ Json ListenCallOf(Session &S, const ListenReport &R, const ListenFinding &F, std
 			A.Set("channels", Which);
 			A.Set("from_bar", FromBar);
 			A.Set("to_bar", ToBar);
-			return ToolCall("polish", A, "plays the detuned part in tune (P80) where it doubles the other's pitch, its fine pitch "
-				"back after, so the two no longer beat");
+			return ToolCall("polish", A, "puts the part that doubles the other on its pitch as the two chips play it (P80, or a "
+				"step or two of Pxx where the chips round the note apart), its fine pitch back after, so the two no longer beat");
 		}
-		Advice = "A fine pitch (Pxx) on one of them makes it: P80 there puts them in tune, or a chorus a few cents apart (P81-P82) "
-			"beats slowly enough to sound wide rather than sour.";
+		Advice = "Each note there sounds the other part's pitch as near as a fine pitch (Pxx) can bring it: another octave for "
+			"one of them, or a sound on the other's chip, stops it; or a chorus a few cents apart (P81-P82) beats slowly enough "
+			"to sound wide rather than sour.";
 		return Json();
 	}
 	case LISTEN_CLICK:
@@ -26439,7 +26749,7 @@ Json ListenCallOf(Session &S, const ListenReport &R, const ListenFinding &F, std
 			S.Channel(pPart->Channel).Kind == KIND_PULSE) {
 			Json Touches = Json::MakeArray(), Which = Json::MakeArray();
 			Touches.Push("clicks");
-			Which.Push(pPart->Channel + 1);
+			Which.Push(S.Channel(pPart->Channel).FullName());
 			A.Set("touches", Touches);
 			A.Set("channels", Which);
 			A.Set("from_bar", FromBar);
@@ -26447,8 +26757,21 @@ Json ListenCallOf(Session &S, const ListenReport &R, const ListenFinding &F, std
 			return ToolCall("polish", A, "nudges the notes that click a hair (Pxx), so their vibrato stays clear of where the pulse "
 				"restarts its wave");
 		}
-		if (F.What == "seam")
-			return ToolCall("fix_loop", Json::MakeObject(), "writes what makes the loop's repeats start as its first time does");
+		if (F.What == "seam") {
+			// Only where check_loop finds something at the seam for fix_loop to write: else the call would change nothing
+			const LoopPlay P = PlayLoop(S);
+			bool Writes = false;
+			if (!P.Played.Halts() && P.First < P.Rows.size() && P.Second < P.Rows.size()) {
+				const std::vector<Seam> Seams = FindSeams(S, P.Cells, P.Columns, P.Rows, P.First, P.Second, P.LoopRow);
+				for (size_t i = 0; i < Seams.size() && !Writes; ++i)
+					Writes = Seams[i].What != SEAM_NONE && !Seams[i].Done.empty();
+			}
+			if (Writes)
+				return ToolCall("fix_loop", Json::MakeObject(), "writes what makes the loop's repeats start as its first time does");
+			Advice = "check_loop finds every channel starting the loop the same way both times, so fix_loop has nothing to write: "
+				"play the seam with the user (play from the last bar); a note that starts there with a softer first frame rounds it off.";
+			return Json();
+		}
 		Advice = F.What == "start" ? "A sound whose volume starts a step or two lower for a frame (a softer attack) rounds the pop off." :
 			"A gentler vibrato, or the notes on another channel, stops it.";
 		return Json();
@@ -26959,6 +27282,46 @@ std::string CheckTool(Session &S, const Json &Asked)
 		}
 	}
 
+	// A melody reaching higher than any of the soundtrack's (from fix-r4-finish): measured on the user's 44 kept songs, their
+	// leads (as GuessMelodyChannel finds them, as they sound) peak at A-4 to E-5 mostly, and up to C#6 (Ironworks), D-6
+	// (Mud Caves, Night ambience) and F-6 (Artifact, 2.4% of its notes' time at C#6 or over). The Airship's climb to B-5 is
+	// within that (Autumn Woods: the same B-5 over a middle of A-4), so it isn't flagged; Mud Caves II's lead, at A#6 with a
+	// third of its time over G-5, is. One finding for the melody, its notes over MELODY_HIGHEST listed; advice, no call
+	{
+		const int Lead = Arg(Args, "melody_channel") != 0 ? ChannelArg(S, Args, "melody_channel") : GuessMelodyChannel(S, First, End);
+		if (Lead >= 0 && IsMelodic(S.Channel(Lead))) {
+			const ChannelInfo &Info = S.Channel(Lead);
+			std::vector<NoteInfo> Kept;
+			const std::vector<NoteInfo> &Notes = PitchedNotes(S, Lead, Kept);
+			std::vector<CheckNote> High;
+			int Top = -1, TopRow = 0;
+			for (size_t i = 0; i < Notes.size(); ++i) {
+				const NoteInfo &N = Notes[i];
+				const int Sounds = LandedPitch(N) - Written(Info, 0);
+				if (N.Row < First || N.Row >= End || N.Volume == 0 || Sounds <= MELODY_HIGHEST || !NoteRangeReason(S, Info, N.Pitch,
+					N.Instrument).empty())
+					continue;
+				const CheckNote Note = { Lead, N.Row, N.Rows, N.Pitch };
+				High.push_back(Note);
+				if (LandedPitch(N) > Top) {
+					Top = LandedPitch(N);
+					TopRow = N.Row;
+				}
+			}
+			if (!High.empty()) {
+				++OutOfRange;
+				CheckFinding &F = Report(FOUND_RANGE, Lead, High.front().Row, High.back().Row + High.back().Rows - High.front().Row,
+					Format("Range: the melody (%s) reaches %s at %s, with %s over %s: higher than any lead of the soundtrack (they peak "
+					"at A-4 to E-5, the highest at %s), where a lead turns thin and shrill. An octave down there (vary_part octave_down "
+					"over those bars), or a line that turns back sooner, keeps it singing.", Info.FullName().c_str(), PitchName(Top).c_str(),
+					S.Time.Position(TopRow).c_str(), Plural(static_cast<int>(High.size()), "note", "notes").c_str(),
+					PitchName(MELODY_HIGHEST + Written(Info, 0)).c_str(), PitchName(MELODY_HIGHEST).c_str()),
+					Format("the melody reaches %s, very high for a lead", PitchName(Top).c_str()));
+				F.Notes = High;
+				F.Details.Set("reason", "melody very high");
+			}
+		}
+	}
 	// Clashes (ClashRuns): two channels a semitone (or a semitone plus octaves) apart for half a beat or more, as they
 	// sound, a note of a chord's arpeggio counted too. ClashKind tells the ones worth fixing at once from the details that
 	// may be meant (severity low), and where polish's clashes touch moves a note off one (over the bars its two notes play
@@ -27014,14 +27377,14 @@ std::string CheckTool(Session &S, const Json &Asked)
 			++ClashFixes;
 			Json Touches = Json::MakeArray(), Channels = Json::MakeArray(), Arguments = Json::MakeObject();
 			Touches.Push("clashes");
-			Channels.Push(a + 1);
-			Channels.Push(b + 1);
+			Channels.Push(S.Channel(a).FullName());
+			Channels.Push(S.Channel(b).FullName());
 			Arguments.Set("touches", Touches);
 			Arguments.Set("channels", Channels);
 			Arguments.Set("from_bar", FromBar);
 			Arguments.Set("to_bar", ToBar);
 			if (Lead >= 0)
-				Arguments.Set("melody_channel", Lead + 1);
+				Arguments.Set("melody_channel", S.Channel(Lead).FullName());
 			F.Fix = ToolCall("polish", Arguments, Format("moves %s on %s at %s to %s, a note of the %s the other parts play there",
 				PitchName(pMove->From).c_str(), S.Channel(pMove->Channel).FullName().c_str(), S.Time.Position(pMove->Row).c_str(),
 				PitchName(pMove->To).c_str(), pMove->Chord.c_str()));
@@ -27086,7 +27449,7 @@ std::string CheckTool(Session &S, const Json &Asked)
 			// The note's bar on its channel, polished for clicks alone: one Ctrl+Z
 			Json Touches = Json::MakeArray(), Channels = Json::MakeArray(), Arguments = Json::MakeObject();
 			Touches.Push("clicks");
-			Channels.Push(c + 1);
+			Channels.Push(S.Channel(c).FullName());
 			Arguments.Set("touches", Touches);
 			Arguments.Set("channels", Channels);
 			Arguments.Set("from_bar", S.Time.BarOf(F.Row));
@@ -29391,7 +29754,7 @@ int ClashesIn(Session &S, int FromBar, int ToBar, int Melody)
 	Asked.Set("from_bar", FromBar);
 	Asked.Set("to_bar", ToBar);
 	if (Melody >= 0)
-		Asked.Set("melody_channel", Melody + 1);
+		Asked.Set("melody_channel", S.Channel(Melody).FullName());
 	Json Report;
 	try {
 		if (!ParseJson(CheckTool(S, Asked), Report))
@@ -29588,6 +29951,7 @@ private:
 	bool Listened();
 	bool ListenWanted() const;
 	bool KeptHeard(Json &Heard);
+	bool HeardBefore();
 	bool HeardFixes(const Json &Heard);
 	void Finish();
 	bool TipStep(const std::string &Tip);
@@ -29982,7 +30346,7 @@ void WhatNext::Breakers()
 	if (std::string(Kind().Style) != "any")
 		Asked.Set("style", Kind().Style);
 	if (m_HasMelody)
-		Asked.Set("melody_channel", m_Melody + 1);
+		Asked.Set("melody_channel", ChannelName(m_Melody));
 	Json Report;
 	if (!ParseJson(CheckTool(S, Asked), Report) || Report.Get("findings") == 0)
 		return;
@@ -30055,13 +30419,17 @@ void WhatNext::Breakers()
 		else if (Kind == "range") {
 			// An octave the other way over the bars of that channel's notes out of range, when every note there fits after
 			const std::string Reason = F.Get("reason") != 0 && F.Get("reason")->IsString() ? F.Get("reason")->String() : std::string();
+			// The melody reaching higher than the soundtrack's leads is the composer's to hear (a climax may be meant): no step
+			if (Reason == "melody very high")
+				continue;
 			const bool Up = Reason.compare(0, 5, "below") == 0;
 			int To = Bar;
 			bool Earlier = false;
 			for (size_t j = 0; j < Findings.Size(); ++j) {
 				const Json &G = Findings.At(j);
 				if (G.Get("kind") == 0 || G.Get("kind")->String() != "range" || G.Get("channel") == 0 || !G.Get("channel")->IsNumber() ||
-					static_cast<int>(G.Get("channel")->Number()) - 1 != Channel || G.Get("bar") == 0)
+					static_cast<int>(G.Get("channel")->Number()) - 1 != Channel || G.Get("bar") == 0 || (G.Get("reason") != 0 &&
+					G.Get("reason")->IsString() && G.Get("reason")->String() == "melody very high"))
 					continue;
 				Earlier = Earlier || j < i;
 				To = std::max(To, static_cast<int>(G.Get("bar")->Number()));
@@ -32420,6 +32788,15 @@ Json WhatNext::MixArgs() const
 // mixed stage can tip a part between two steps, which is rounding, not a mix to make again
 bool WhatNext::MixDue()
 {
+	// A mix (finish_song's or one alone) that left the song as it is now is done: a calm mix run again moves a part by
+	// rounding (Hut in a Field's echo 6.2 dB under, then 6.7), which isn't a mix to make again
+	if (m_MixDue < 0 && !S.Host().KeptFinishStep(S.Song.Track, "mix").empty() && S.Host().KeptFinishStep(S.Song.Track, "mix") ==
+		SoundPrint(S))
+		m_MixDue = 0;
+	// Nor after a fix the last listen gave, made on a mixed song (a fader down for a covered melody): that's the mix's last
+	// word, which a mix again would undo
+	if (m_MixDue < 0 && !S.Host().KeptFinishStep(S.Song.Track, "mix").empty() && HeardBefore())
+		m_MixDue = 0;
 	if (m_MixDue < 0)
 		m_MixDue = m_HasMelody && WouldChange(S, "mix", MixArgs(), std::string(Kind().MixStyle) == "lively" ? 2.0 : 1.5) ? 1 : 0;
 	return m_MixDue == 1;
@@ -32450,6 +32827,13 @@ void WhatNext::Polish()
 	}
 	else if (Due && CalmStyle())
 		Due = WouldChange(S, "polish", A);
+	// Nothing to polish in a song polish never ran on (no finish_song's polish, no polish called alone): not a step done
+	// but none to take (Hut in a Field's finish skipped polish, which would change nothing, and what_next listed it as
+	// "polished"); out of the count
+	if (!Due && Wanted("polish") && S.Host().KeptFinishStep(S.Song.Track, "polish").empty()) {
+		m_Away.insert("polish");
+		return;
+	}
 	if (Milestone("polish", !Wanted("polish") || !Due, "polished"))
 		return;
 	const std::string Why = std::string("Finishing touches before the mix: ") + (Calm() ? "a faint vibrato that comes in late on "
@@ -32533,7 +32917,7 @@ bool WhatNext::FinishStep(const std::string &From, const std::string &Why)
 			HeardFixes(Heard);
 		}
 		else
-			Milestone("listened", false);
+			Milestone("listened", HeardBefore(), "listened");
 	}
 	else
 		Listened();
@@ -32585,7 +32969,7 @@ bool WhatNext::Listened()
 	}
 	Json Heard;
 	if (!KeptHeard(Heard)) {
-		Milestone("listened", false);
+		Milestone("listened", HeardBefore(), "listened");
 		Json L = Json::MakeObject();
 		if (std::string(Kind().Style) == "atmospheric")
 			L.Set("style", "atmospheric");
@@ -32603,6 +32987,15 @@ bool WhatNext::Listened()
 bool WhatNext::ListenWanted() const
 {
 	return Wanted("listen") && !(m_Core && !ToolSet::IsCoreTool("listen"));
+}
+
+// Whether the song is as a fix the last listen gave left it (fix-r4-finish): that fix (a fader, a fine pitch) changes the
+// song, so the listen kept is of the song before it; the listen stays counted as done (the steps done never fall back)
+// while the next listen, the finish's or one before the file, hears the song again. AfterCall keeps the print ("heard_fix")
+bool WhatNext::HeardBefore()
+{
+	const std::string Print = S.Host().KeptFinishStep(S.Song.Track, "heard_fix");
+	return !Print.empty() && Print == SoundPrint(S);
 }
 
 // The listen kept with the song (a listen call's over the whole track, or finish_song's), into Heard: true when it's of
@@ -35391,6 +35784,47 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 				"undid the change before it. " + Result.Text;
 		m_FailedCall.clear();
 		return;
+	}
+	// polish with its finishing touches (not only fixes' touches: unison, clicks, clashes, colors) and the mix, kept with the
+	// song's print after them for what_next (SongHost::KeepFinishStep; finish_song keeps its own)
+	if (!Result.IsError && (Name == "polish" || Name == "mix")) {
+		bool Finishing = Name == "mix";
+		const Json *pTouches = Args.Get("touches");
+		if (Name == "polish") {
+			Finishing = pTouches == 0 || !pTouches->IsArray();
+			for (size_t i = 0; !Finishing && i < pTouches->Size(); ++i) {
+				const std::string Touch = pTouches->At(i).IsString() ? pTouches->At(i).String() : std::string();
+				Finishing = Touch != "unison" && Touch != "clicks" && Touch != "clashes" && Touch != "colors";
+			}
+		}
+		if (Finishing) {
+			try {
+				Session Now(m_Host);
+				m_Host.KeepFinishStep(Now.Song.Track, Name, SoundPrint(Now));
+			}
+			catch (const Problem &) {
+			}
+		}
+	}
+	// A fix the last listen gave, made as given: the song as it left it, for what_next (WhatNext::HeardBefore)
+	if (!Result.IsError && !m_Host.LastListen().empty()) {
+		Json Heard;
+		const Json *pFindings = ParseJson(m_Host.LastListen(), Heard) ? Heard.Get("findings") : 0;
+		bool Fix = false;
+		for (size_t i = 0; pFindings != 0 && pFindings->IsArray() && i < pFindings->Size() && !Fix; ++i) {
+			const Json *pFix = pFindings->At(i).Get("fix");
+			const Json *pTool = pFix != 0 && pFix->IsObject() ? pFix->Get("tool") : 0;
+			const Json *pArgs = pFix != 0 && pFix->IsObject() ? pFix->Get("arguments") : 0;
+			Fix = pTool != 0 && pTool->IsString() && pTool->String() == Name && pArgs != 0 && WriteJson(*pArgs) == WriteJson(Args);
+		}
+		if (Fix) {
+			try {
+				Session Now(m_Host);
+				m_Host.KeepFinishStep(Now.Song.Track, "heard_fix", SoundPrint(Now));
+			}
+			catch (const Problem &) {
+			}
+		}
 	}
 	// The calls that change the song's notes, its sounds or its form (not files, studies or the track worked on)
 	static const char *const ASIDE[] = { "export_for_game", "save_song", "soundtrack_notes", "study_nsf", "study_module",
