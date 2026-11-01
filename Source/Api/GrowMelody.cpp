@@ -341,7 +341,8 @@ const double SHAPE_KEPT = 2.5;
 class Grower {
 public:
 	Grower(const GrowRequest &Q, int Form, uint32_t Seed) : m_Q(Q), m_Form(Form), m_Seed(Seed), m_R(Seed), m_Ladder(Q.K),
-		m_SPB(Q.StepsPerBar), m_SPBeat(Q.StepsPerBeat), m_Beats(Q.StepsPerBar / std::max(1, Q.StepsPerBeat)), m_Calm(Q.Kind == GROW_CALM)
+		m_SPB(Q.StepsPerBar), m_SPBeat(Q.StepsPerBeat), m_Beats(Q.StepsPerBar / std::max(1, Q.StepsPerBeat)), m_Calm(Q.Kind == GROW_CALM),
+		m_Phrased(Q.Kind == GROW_CALM || Q.Kind == GROW_COZY), m_Table(Q.Kind == GROW_COZY ? GROW_LIVELY : std::max(0, std::min(2, Q.Kind)))
 	{
 		m_MotifMin = 1000;
 		m_MotifMax = -1;
@@ -392,6 +393,8 @@ private:
 	ScaleLadder m_Ladder;
 	int m_SPB, m_SPBeat, m_Beats;
 	bool m_Calm;
+	bool m_Phrased;	// calm's phrases: a calm or a cozy tune
+	int m_Table;	// the kind's row of the tables by kind (a cozy tune's lively's)
 	int m_MotifMin, m_MotifMax, m_MotifBars, m_Centre, m_Low, m_MotifWay;
 	bool m_MotifBreathes;
 	std::vector<BarPlan> m_Plan;
@@ -507,13 +510,13 @@ private:
 		m_Plan.clear();
 		for (size_t s = 0; s < Starts.size(); ++s) {
 			const int Count = (s + 1 < Starts.size() ? Starts[s + 1] : m_Q.Bars) - Starts[s];
-			SectionPlan(Count, m_MotifBars, m_MotifBreathes, m_Form, m_Calm, static_cast<int>(s), m_Plan);
+			SectionPlan(Count, m_MotifBars, m_MotifBreathes, m_Form, m_Phrased, static_cast<int>(s), m_Plan);
 		}
 		m_Plan.resize(static_cast<size_t>(m_Q.Bars));
 		// The rests where phrases end: a beat, in a calm song now and then two
 		for (size_t b = 0; b < m_Plan.size(); ++b)
 			if (m_Plan[b].End)
-				m_Plan[b].RestSteps = m_Calm && m_Beats >= 4 && !(b > 0 && m_Plan[b - 1].Role == BAR_CLIMB) && m_R.Chance(40) ?
+				m_Plan[b].RestSteps = m_Phrased && m_Beats >= 4 && !(b > 0 && m_Plan[b - 1].Role == BAR_CLIMB) && m_R.Chance(40) ?
 					2 * m_SPBeat : m_SPBeat;
 	}
 
@@ -561,7 +564,7 @@ private:
 		case 6: pFigures = SIX; Count = 5; break;
 		default: break;
 		}
-		const int Kind = std::max(0, std::min(2, m_Q.Kind));
+		const int Kind = m_Table;
 		for (int Beat = From; Beat < To; Beat += m_SPBeat) {
 			const int Length = std::min(m_SPBeat, To - Beat);
 			if (Beat > 0 && !EveryBeat && !Out.empty() && Out.back().Step + Out.back().Steps == Beat && Out.back().Model == MODEL_NONE &&
@@ -701,7 +704,7 @@ private:
 			static const int EARLY[3] = { 55, 35, 25 };	// percent: the last note from the bar's start
 			int Final = 0;
 			const bool AfterPeak = b > 0 && m_Plan[static_cast<size_t>(b) - 1].Role == BAR_CLIMB;
-			if (Half > 0 && Half + m_SPBeat <= Stop && (AfterPeak || !m_R.Chance(EARLY[std::max(0, std::min(2, m_Q.Kind))])))
+			if (Half > 0 && Half + m_SPBeat <= Stop && (AfterPeak || !m_R.Chance(EARLY[m_Table])))
 				Final = Half;
 			if (Final > 0)
 				Figures(0, Final, H, AfterPeak && m_Calm);
@@ -750,7 +753,7 @@ private:
 			if (At < 0)
 				continue;
 			static const int RISE[3] = { 3, 4, 6 };	// semitones over the motif's top, by kind
-			const int Wanted = RISE[std::max(0, std::min(2, m_Q.Kind))];
+			const int Wanted = RISE[m_Table];
 			const std::vector<const Chord *> Chords = StrongChords(At, Length);
 			int Best = -1;
 			double BestCost = NEVER;
@@ -975,7 +978,7 @@ private:
 	void Tie()
 	{
 		static const int HOLD_OVER[3] = { 35, 45, 25 }, EARLY[3] = { 0, 35, 50 };	// percent, by kind
-		const int Kind = std::max(0, std::min(2, m_Q.Kind));
+		const int Kind = m_Table;
 		for (int b = 0; b + 1 < static_cast<int>(m_Plan.size()); ++b) {
 			const BarPlan &Here = m_Plan[static_cast<size_t>(b)], &Next = m_Plan[static_cast<size_t>(b) + 1];
 			if (Here.End || (Here.Role == BAR_MOTIF && Here.Exact) || (Next.Role == BAR_MOTIF && Next.Exact) || Here.Section != Next.Section)
@@ -1282,7 +1285,7 @@ private:
 			{ 0.5, 0.1, 0.0, 0.4, 0.4, 0.7, 3.5, 0.9, 2.2, 2.4, 3.5, 4.5, 1.6 },
 		};
 		const int d = std::abs(b - a);
-		double Cost = d <= 12 ? COST[std::max(0, std::min(2, m_Q.Kind))][d] : 14.0 + d - 12;
+		double Cost = d <= 12 ? COST[m_Table][d] : 14.0 + d - 12;
 		if (d == 3) {
 			const int x = ClassOf(a - m_Q.K.Tonic), y = ClassOf(b - m_Q.K.Tonic);
 			if ((x == 8 && y == 11) || (x == 11 && y == 8))
@@ -1312,7 +1315,7 @@ private:
 		double Cost = 0.0;
 		if (std::abs(d1) >= 5 && d2 != 0) {
 			if ((d1 > 0) == (d2 > 0))
-				Cost += m_Calm ? 3.0 : 1.6;
+				Cost += m_Phrased ? 3.0 : 1.6;
 			else if (std::abs(d2) <= 2)
 				Cost -= 0.4;
 		}

@@ -239,6 +239,14 @@ std::vector<TuneNote> HookTune(const Key &K, int FirstBar, int BeatsPerBar, int 
 // The highest note a kind's offered hooks reach (HookTune's Top): B-4 for the kinds whose recipes ask for a tune mostly in
 // octave 3 (general, lively, action, cozy, adventure), else 0
 int HookTop(int Kind);
+// The melody's register by kind (fix-r6-bugs, measured on the user's kept songs: their calm openings' middle notes
+// around E-3 to A#3, the lively ones' around D#4 to A-4): 3 for the calm kinds (calm, cozy, mysterious, floating,
+// melancholic, bittersweet, atmospheric, tense), 4 for the lively ones (lively, adventure, action, festive, playful), 0 for
+// general (either)
+int MelodyOctave(int Kind);
+// Its words for a recipe or a step: "mostly in octave 3, reaching into octave 4 at its high points" or "mostly in octave 4
+// (its middle around C-4 to E-4), reaching into octave 5 at its high points"
+const char *MelodyRegisterText(int Kind);
 // How many hook figures each pace draws from (HookTune's pools), for the tests
 int HookFigures(int Pace);
 

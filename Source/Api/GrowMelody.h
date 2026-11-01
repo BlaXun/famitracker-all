@@ -59,7 +59,9 @@ struct GrowOther {
 	int Pitch;
 };
 
-enum grow_kind { GROW_CALM, GROW_LIVELY, GROW_ACTION };
+// GROW_COZY (appended): lively's notes and leaps in calm's phrases (rests of two beats now and then where phrases end, a
+// leap won back by step), so a cozy tune keeps its lilt and breathes as a cozy song does (fix-r6-bugs)
+enum grow_kind { GROW_CALM, GROW_LIVELY, GROW_ACTION, GROW_COZY };
 
 struct GrowRequest {
 	std::vector<GrowNote> Motif;	// in order, in its first bar or two

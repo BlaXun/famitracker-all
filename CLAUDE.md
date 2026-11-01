@@ -3021,6 +3021,43 @@ flagged. FakeSong's `ChipRounding` renders notes at their registers' pitch.
 `TestCrossChipDoubles`, `TestFinishStepsKept`, `TestMelodyVeryHigh` and
 `TestSeam` (`listen_tests`) cover them.
 
+Round 5's bugs (from `fix-r6-bugs`): `TestR6Hut`, `TestR6Caves` and
+`TestR6Airship` in `Source/Api/tests/ApiTests.cpp` run the calls a local
+composer made in round 5 (`R6_*_CALLS`, song_shape with the variant its
+track's name picked) on a song in memory. The Hut's finish skipped a polish
+that never ran: calm's touches changed nothing there, `WhatNext::Polish`
+took it out of the count (`m_Away`) and `FinishStep` still pushed it into
+`skip`; now `skip` names polish only where it ran or would follow the mix
+(the finish runs it as a no-op and keeps it). A cozy song's notes stay at
+one volume by design (calm's polish, no accents); staccato for its bass
+was tried and left out, since `BassFindings` then hears the bass as thin.
+`grow_melody` grows cozy as its own kind, `GROW_COZY` (appended): lively's
+notes and leaps in calm's phrases (`Grower::m_Phrased` for `SectionPlan`,
+the rests and the leaps won back; `m_Table` for the tables by kind).
+`what_next`'s form milestone counts every part with its music, intro and
+break too ("7 parts, 48 bars"), and B's step says "and its repeat" only
+where A's repeat comes before it. A lift tip that a lively polish answers
+(a section named as the climax, polish still to come) is a note of what the
+finish does, not a tip left over (`WhatNext::LiftedByPolish`). check_song's
+quiet intro gets a fix: the bass (else the drums) of the main part's bar
+matching the intro's last, copied there while it isn't (`IntroFinding`), and
+`Depth` gives that fix as the intro's step where the intro it laid out is
+flagged (the Caves' chords alone, 12.4 dB under A). Broken chords (single
+notes stepping through each bar's chord, steady, mostly leaps:
+`PlaysBrokenChords` before `MixRole`) are chords for `MixRole`,
+`HeardRoles` and the review's Parts line, not "another line".
+The melody's register by kind (`MelodyOctave`, `MelodyRegisterText` in
+`WhatNext.cpp`; the kept songs' openings: calm ones' middle notes around E-3
+to A#3, lively ones' D#4 to A-4): octave 3 for calm, cozy, mysterious,
+floating, melancholic, bittersweet, atmospheric and tense, octave 4 (its
+middle around C-4 to E-4) for lively, adventure, action, festive and
+playful. The recipes (`KindRecipe`, `LaterKindRecipe` and `LaterCoreRecipe`
+through `RegisterAfter`), the instructions, what_next's melody step, the
+offered hooks (`HookTop`: free for the lively kinds, under B-4 for the
+others; under F#4 put the calm kinds' hooks into the chords' register) and write_notes' high-melody warning
+(`GUARD_CALM_LEAD_MIDDLE` and `_TOP` for the calm kinds, by the kind
+`what_next` was given) follow it; the chords' registers don't change.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

@@ -392,7 +392,7 @@ const NextKind KINDS[] = {
 		"open fields, travel, an airship flight", "wide and hopeful: the road ahead, a tune that leaps upward over a rolling bass "
 		"and a steady march",
 		"wide: a leap up of a fifth or a sixth (an octave at the high point) and steps back down, phrases of 2 or 4 bars that "
-		"end on a held note, a dotted rhythm that marches, mostly octave 3, reaching into 4 at each part's high point",
+		"end on a held note, a dotted rhythm that marches, mostly octave 4, reaching into 5 at each part's high point",
 		"a harmony a third or sixth under the tune in the repeat, the drums busier, the bass in octaves for the last time "
 		"round, a fill and a crash into each part",
 		"bloom lead|lead|brass", "broken|arpeggio|stabs", "arpeggio|octaves", "basic|four_on_floor", "128.6|112.5", "D major|G major|Bb major|A major|F major", false },
@@ -984,9 +984,33 @@ unsigned int Mixed(unsigned int Value, unsigned int Salt)
 
 }	// namespace
 
+int MelodyOctave(int Kind)
+{
+	switch (Kind) {
+	case NEXT_LIVELY: case NEXT_ADVENTURE: case NEXT_ACTION: case NEXT_FESTIVE: case NEXT_PLAYFUL:
+		return 4;
+	case NEXT_GENERAL:
+		return 0;
+	default:
+		return 3;
+	}
+}
+
+const char *MelodyRegisterText(int Kind)
+{
+	return MelodyOctave(Kind) == 4 ? "mostly in octave 4 (its middle around C-4 to E-4), reaching into octave 5 at its high points" :
+		MelodyOctave(Kind) == 3 ? "mostly in octave 3, reaching into octave 4 at its high points" :
+		"mostly in octave 3 for a calm song, octave 4 for a lively one";
+}
+
+// The offered hook's highest note: general's and cozy's under B-4, so its home sits no higher than E-4; the lively kinds'
+// free, its home up to F#4 (TuneHome; before fix-r6-bugs, lively, action and adventure were held under B-4 with cozy); the
+// other calm kinds' free as before. Under F#4 (or B-4) for the calm kinds was tried: in D major (F major) their hooks dropped
+// to octave 3, into the register the chords what_next writes before the melody sit in, and the review asked to move the
+// chords an octave down, or the clashes polish moved never settled (the chords' registers stay as they are)
 int HookTop(int Kind)
 {
-	return Kind == NEXT_GENERAL || Kind == NEXT_LIVELY || Kind == NEXT_ACTION || Kind == NEXT_COZY || Kind == NEXT_ADVENTURE ? 59 : 0;
+	return MelodyOctave(Kind) == 4 ? 0 : Kind == NEXT_GENERAL || Kind == NEXT_COZY ? 59 : 0;
 }
 
 int HookFigures(int Pace)

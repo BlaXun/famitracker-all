@@ -18946,15 +18946,20 @@ void TestIntroFindings()
 		CHECK_HAS(TextOf(pIntro, "message"), "; and it plays ");
 		std::string Reply;
 		CHECK(pIntro != 0 && RunFix(Song, *pIntro, &Reply));
-		// The beat leads in now; the intro is still far too quiet: advice alone, no call
+		// The beat leads in now; the intro is still far too quiet: the bass of A's matching bar in its last bar (fix-r6-bugs),
+		// then advice alone, no call
+		const Json Quieter = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
+		const Json *pBass = FindingOf(Quieter, "intro");
+		CHECK(pBass != 0 && pBass->Get("fix") != 0 && !pBass->Get("pulse_jumps")->Bool());
+		CHECK_HAS(TextOf(pBass, "message"), "Fix: copy_bars {\"from_bar\":8,\"at_bar\":4,");
+		CHECK(pBass != 0 && RunFix(Song, *pBass, &Reply));
+		// (with the bass in its last bar the intro leads in: no finding, or advice without a call that would change nothing)
 		const Json After = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
 		const Json *pQuiet = FindingOf(After, "intro");
-		CHECK(pQuiet != 0 && pQuiet->Get("fix") == 0 && !pQuiet->Get("pulse_jumps")->Bool());
-		CHECK_HAS(TextOf(pQuiet, "summary"), "dB under the main part");
-		CHECK_LACKS(TextOf(pQuiet, "message"), "Fix:");
+		CHECK(pQuiet == 0 || (pQuiet->Get("fix") == 0 && !pQuiet->Get("pulse_jumps")->Bool()));
+		CHECK(pQuiet == 0 || !Contains(TextOf(pQuiet, "message"), "Fix:"));
 		const std::string Review = Run(Song, "review_arrangement", "{}").Text;
 		CHECK_LACKS(Review, "dB under the rest: more than 10 dB under reads as silence");	// the finding says it
-		CHECK_HAS(Review, "doesn't lead into the main part");
 	}
 	{
 		// The problems panel reads it as a kind of its own
@@ -28985,6 +28990,281 @@ void TestMelodyVeryHigh()
 	CHECK_LACKS(Run(High, "what_next", "{}").Text, "octave_down");
 }
 
+// Round 5's songs as a local composer made them (fix-r6-bugs): the calls it made, in order, from new_song to where a bug
+// showed, run again on a song in memory (write_log and get_recipe left out; song_shape with the variant its track's name
+// picked there)
+static const char *const R6_HUT_CALLS[][2] = {
+	{ "new_song", "{\"name\": \"Hut in a Field (r5)\", \"expansion\": \"VRC6\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "set_tempo", "{\"bpm\": 112.5}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "set_key", "{\"key\": \"D major\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "song_shape", "{\"variant\": 2, \"shape\": \"town\", \"about\": \"A cozy wooden hut in a sunny field by day; an old woman sells odds and ends. Warm and friendly, never sad.\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "design_instrument", "{\"name\": \"Cozy lead\", \"kind\": \"breath\", \"channel\": \"VRC6 Pulse 1\", \"words\": \"soft, round\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "add_chords_and_bass", "{\"chords\": \"| I | vi | IV | V | I | vi | ii | V |\", \"from_bar\": 5, \"to_bar\": 12, \"chord_channel\": \"2A03 Pulse 1\", \"chord_style\": \"broken\", \"color\": \"plain\", \"bass_style\": \"root_fifth\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "grow_melody", "{\"motif\": \"A3 - - B3 F#4 - - - | D4 - - C#4 B3 - . .\", \"section\": \"A\", \"kind\": \"cozy\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Cozy lead\"}" },
+	{ "grow_melody", "{\"motif\": \"A3 - - B3 F#4 - - - | D4 - - C#4 B3 - . .\", \"section\": \"A\", \"kind\": \"cozy\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Cozy lead\", \"variant\": 3, \"pick\": 3}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "copy_bars", "{\"section\": \"A\", \"at_bar\": 13}" },
+	{ "check_song", "{}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 19, \"to_bar\": 20}" },
+	{ "add_chords_and_bass", "{\"chords\": \"| IV | I | ii | V | IV | I | vi | V |\", \"from_bar\": 21, \"to_bar\": 28, \"chord_channel\": \"2A03 Pulse 1\", \"bass_channel\": \"2A03 Triangle\", \"chord_style\": \"broken\", \"color\": \"plain\", \"bass_style\": \"root_fifth\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "grow_melody", "{\"motif\": \". B3 D4 G4 - - . . | F#4 E4 D4 - - - . .\", \"section\": \"B\", \"kind\": \"cozy\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Cozy lead\"}" },
+	{ "grow_melody", "{\"motif\": \". B3 D4 G4 - - . . | F#4 E4 D4 - - - . .\", \"section\": \"B\", \"kind\": \"cozy\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Cozy lead\", \"variant\": 3, \"pick\": 3}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "copy_bars", "{\"section\": \"B\", \"at_bar\": 29}" },
+	{ "check_song", "{}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 35, \"to_bar\": 36}" },
+	{ "copy_bars", "{\"section\": \"A\", \"at_bar\": 37}" },
+	{ "check_song", "{}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"syncopate\", \"from_bar\": 43, \"to_bar\": 44}" },
+	{ "add_drums", "{\"groove\": \"lively\", \"from_bar\": 5, \"to_bar\": 44, \"intensity\": \"light\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "add_harmony", "{\"section\": \"A'\", \"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Pulse 2\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "add_harmony", "{\"section\": \"A''\", \"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Pulse 2\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "copy_bars", "{\"from_bar\": 5, \"to_bar\": 8, \"at_bar\": 1, \"channels\": [\"2A03 Pulse 1\"]}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "copy_bars", "{\"from_bar\": 9, \"to_bar\": 12, \"at_bar\": 45, \"channels\": [\"2A03 Pulse 1\", \"2A03 Triangle\"]}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "copy_bars", "{\"from_bar\": 7, \"to_bar\": 8, \"at_bar\": 3, \"channels\": [\"2A03 Triangle\"]}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "copy_bars", "{\"from_bar\": 12, \"at_bar\": 4, \"channels\": [\"2A03 Noise\"]}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"2A03 Pulse 2\", \"delay_beats\": 1, \"volume\": 5, \"detune\": 1, \"pan\": \"opposite\", \"instrument\": \"soft lead\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+	{ "what_next", "{\"kind\": \"cozy\"}" },
+};
+static const char *const R6_CAVES_CALLS[][2] = {
+	{ "new_song", "{\"name\": \"The Caves (r5)\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "set_tempo", "{\"bpm\": 90}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "set_key", "{\"key\": \"D dorian\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "song_shape", "{\"variant\": 3, \"shape\": \"night\", \"about\": \"The player just stepped into a cave-system. It's a bit dark, not scary, but not lively either. There is an atmosphere in here, you can feel you are in a confined place.\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "design_instrument", "{\"name\": \"Mystery lead\", \"kind\": \"breath\", \"channel\": \"2A03 Pulse 1\", \"words\": \"hollow, round\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "add_chords_and_bass", "{\"chords\": \"| i | IV | III | VII | i | IV | v | VII |\", \"from_bar\": 5, \"to_bar\": 12, \"chord_channel\": \"2A03 Pulse 2\", \"chord_style\": \"broken\", \"color\": \"plain\", \"bass_style\": \"roots\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "grow_melody", "{\"motif\": \". . . A3 D4 - - - | E4 - D4 B3 - - . .\", \"section\": \"A\", \"kind\": \"mysterious\", \"channel\": \"2A03 Pulse 1\", \"instrument\": \"Mystery lead\"}" },
+	{ "grow_melody", "{\"motif\": \". . . A3 D4 - - - | E4 - D4 B3 - - . .\", \"section\": \"A\", \"kind\": \"mysterious\", \"channel\": \"2A03 Pulse 1\", \"instrument\": \"Mystery lead\", \"variant\": 3, \"pick\": 3}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "add_chords_and_bass", "{\"chords\": \"| III | IV | i | v | III | IV | v | v |\", \"from_bar\": 13, \"to_bar\": 20, \"chord_channel\": \"2A03 Pulse 2\", \"bass_channel\": \"2A03 Triangle\", \"chord_style\": \"broken\", \"color\": \"plain\", \"bass_style\": \"roots\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "grow_melody", "{\"motif\": \"A4 - - - - - G4 F4 | B4 - - - . . . .\", \"section\": \"B\", \"kind\": \"mysterious\", \"channel\": \"2A03 Pulse 1\", \"instrument\": \"Mystery lead\"}" },
+	{ "grow_melody", "{\"motif\": \"A4 - - - - - G4 F4 | B4 - - - . . . .\", \"section\": \"B\", \"kind\": \"mysterious\", \"channel\": \"2A03 Pulse 1\", \"instrument\": \"Mystery lead\", \"variant\": 3, \"pick\": 3}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "copy_bars", "{\"section\": \"A\", \"at_bar\": 21}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "check_song", "{}" },
+	{ "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 27, \"to_bar\": 28}" },
+	{ "copy_bars", "{\"section\": \"A\", \"at_bar\": 33}" },
+	{ "check_song", "{}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "vary_part", "{\"channel\": \"2A03 Pulse 1\", \"variation\": \"syncopate\", \"from_bar\": 39, \"to_bar\": 40}" },
+	{ "add_drums", "{\"groove\": \"calm\", \"from_bar\": 13, \"to_bar\": 20, \"intensity\": \"light\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "copy_bars", "{\"from_bar\": 5, \"to_bar\": 8, \"at_bar\": 1, \"channels\": [\"2A03 Pulse 2\"]}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "copy_bars", "{\"from_bar\": 9, \"to_bar\": 12, \"at_bar\": 29, \"channels\": [\"2A03 Pulse 2\", \"2A03 Triangle\"]}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"lullaby bell\", \"from_bar\": 30, \"to_bar\": 30, \"notes\": \". . . A4v7 D5 - - -\"}" },
+	{ "what_next", "{\"kind\": \"mysterious\"}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+};
+static const char *const R6_AIRSHIP_CALLS[][2] = {
+	{ "new_song", "{\"name\": \"Flying the Airship (r5)\", \"expansion\": \"VRC6\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "set_tempo", "{\"bpm\": 128.6}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "set_key", "{\"key\": \"D major\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "song_shape", "{\"variant\": 2, \"shape\": \"stage\", \"about\": \"The airship just launched! It's exciting, high energy and so much fun: flying off over the clouds towards somewhere new.\", \"add\": [\"climax\"]}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "design_instrument", "{\"name\": \"Adventure lead\", \"kind\": \"bloom lead\", \"channel\": \"VRC6 Pulse 1\", \"vibrato_at\": \"B4\", \"words\": \"bright\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "add_chords_and_bass", "{\"chords\": \"| I | V | IV | V | I | vi | IV | V |\", \"from_bar\": 5, \"to_bar\": 12, \"chord_channel\": \"2A03 Pulse 1\", \"chord_style\": \"broken\", \"color\": \"plain\", \"bass_style\": \"arpeggio\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "grow_melody", "{\"motif\": \"D4 - A4 - - G4 F#4 - | E4 - - - . . . .\", \"section\": \"A\", \"kind\": \"adventure\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Adventure lead\"}" },
+	{ "grow_melody", "{\"motif\": \"D4 - A4 - - G4 F#4 - | E4 - - - . . . .\", \"section\": \"A\", \"kind\": \"adventure\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Adventure lead\", \"variant\": 2, \"pick\": 1}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "copy_bars", "{\"section\": \"A\", \"at_bar\": 13}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "add_chords_and_bass", "{\"chords\": \"| IV | I | V | vi | IV | I | ii | V |\", \"from_bar\": 21, \"to_bar\": 28, \"chord_channel\": \"2A03 Pulse 1\", \"bass_channel\": \"2A03 Triangle\", \"chord_style\": \"broken\", \"color\": \"plain\", \"bass_style\": \"arpeggio\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "grow_melody", "{\"motif\": \". . B4 A4 B4 - - G4 | D4 - - - . . . .\", \"section\": \"B\", \"kind\": \"adventure\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Adventure lead\"}" },
+	{ "grow_melody", "{\"motif\": \". . B4 A4 B4 - - G4 | D4 - - - . . . .\", \"section\": \"B\", \"kind\": \"adventure\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Adventure lead\", \"variant\": 2, \"pick\": 1}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 19, \"to_bar\": 20}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "copy_bars", "{\"section\": \"B\", \"at_bar\": 29}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "check_song", "{}" },
+	{ "vary_part", "{\"channel\": \"VRC6 Pulse 1\", \"variation\": \"embellish\", \"from_bar\": 35, \"to_bar\": 36}" },
+	{ "copy_bars", "{\"section\": \"A\", \"at_bar\": 37, \"channels\": [\"2A03 Pulse 1\", \"2A03 Triangle\"]}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "grow_melody", "{\"motif\": \"A4 - F#5 - - E5 D5 - | C#5 - - - . . . .\", \"section\": \"Climax\", \"kind\": \"adventure\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Adventure lead\"}" },
+	{ "grow_melody", "{\"motif\": \"A4 - F#5 - - E5 D5 - | C#5 - - - . . . .\", \"section\": \"Climax\", \"kind\": \"adventure\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Adventure lead\", \"variant\": 3}" },
+	{ "grow_melody", "{\"motif\": \"A4 - F#5 - - E5 D5 - | C#5 - - - . . . .\", \"section\": \"Climax\", \"kind\": \"adventure\", \"channel\": \"VRC6 Pulse 1\", \"instrument\": \"Adventure lead\", \"variant\": 2, \"pick\": 1}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "add_drums", "{\"groove\": \"basic\", \"from_bar\": 5, \"to_bar\": 44, \"kit\": \"samples\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "add_harmony", "{\"section\": \"A'\", \"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Pulse 2\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "copy_bars", "{\"from_bar\": 5, \"to_bar\": 8, \"at_bar\": 1, \"channels\": [\"2A03 Pulse 1\", \"2A03 Triangle\"]}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "copy_bars", "{\"from_bar\": 9, \"to_bar\": 12, \"at_bar\": 45, \"channels\": [\"2A03 Pulse 1\", \"2A03 Triangle\"]}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "copy_bars", "{\"from_bar\": 12, \"at_bar\": 4, \"channels\": [\"2A03 Noise\", \"2A03 DPCM\"]}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "add_harmony", "{\"section\": \"Climax\", \"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"VRC6 Pulse 2\"}" },
+	{ "check_song", "{}" },
+	{ "review_arrangement", "{}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+	{ "add_echo", "{\"channel\": \"VRC6 Pulse 1\", \"to_channel\": \"2A03 Pulse 2\", \"delay_beats\": 1, \"volume\": 6, \"detune\": 1, \"pan\": \"opposite\", \"instrument\": \"soft lead\"}" },
+	{ "what_next", "{\"kind\": \"adventure\"}" },
+};
+
+// Runs Calls[0..Count) on Song; each must succeed. The last text each tool answered is kept in Last
+void ReplayCalls(FakeSong &Song, const char *const Calls[][2], size_t Count, std::map<std::string, std::string> &Last, int Line)
+{
+	for (size_t i = 0; i < Count; ++i) {
+		const ToolResult R = Run(Song, Calls[i][0], Calls[i][1]);
+		Check(!R.IsError, (std::string(Calls[i][0]) + " " + Calls[i][1] + ": " + R.Text).c_str(), Line);
+		Last[Calls[i][0]] = R.Text;
+	}
+}
+
+// Hut in a Field (r5, cozy): what_next gave finish_song with "skip":["polish"] though polish had never run: calm's touches
+// changed nothing there (Polish took it out of the count, m_Away), and FinishStep skipped it as if it had run. Now skip
+// names only what ran, and the finish runs polish (a no-op there) and keeps it. Its grow_melody grew "as lively"; its form
+// was "5 parts, 40 bars" in 48
+void TestR6Hut()
+{
+	FakeSong Song;
+	NewSong(Song);
+	std::map<std::string, std::string> Last;
+	ReplayCalls(Song, R6_HUT_CALLS, sizeof(R6_HUT_CALLS) / sizeof(R6_HUT_CALLS[0]), Last, __LINE__);
+	CHECK_LACKS(Last["grow_melody"], "grown as");
+	CHECK_HAS(Last["grow_melody"], "cozy");
+	const std::string Text = Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text;
+	CHECK_HAS(Text, "the form (7 parts, 48 bars)");
+	const WhatNextAnswer Next = ReadWhatNext(Text);
+	Check(Next.Tool == "finish_song", Text.c_str(), __LINE__);
+	CHECK_LACKS(WriteJson(Next.Arguments), "polish");
+	CHECK(Song.KeptFinishStep(Song.Info.Track, "polish").empty());
+	const ToolResult Did = Run(Song, "finish_song", WriteJson(Next.Arguments));
+	Check(!Did.IsError, Did.Text.c_str(), __LINE__);
+	CHECK_HAS(Did.Text, "Polish: ");
+	CHECK(!Song.KeptFinishStep(Song.Info.Track, "polish").empty());
+	const std::string After = Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text;
+	Check(ReadWhatNext(After).Tool != "finish_song", After.c_str(), __LINE__);
+	CHECK_HAS(After, "polished");
+
+	// Every kind's finish skips polish only where it ran (or would come after the mix): a song whose polish would change
+	// nothing and never ran is polished as a no-op, not skipped
+	FakeSong Plain;
+	Plain.Info.DirectChanges = true;
+	for (int r = 0; r < 128; r += 8)
+		Plain.Put(5, r, r % 16 == 0 ? "E-4" : "G-4", 0, 12);
+	for (int r = 0; r < 128; r += 16)
+		Plain.Put(0, r, "C-3", 2, 8);
+	for (const char *Kind : { "calm", "lively", "cozy", "playful", "mysterious" }) {
+		const WhatNextAnswer A = AskWhatNext(Plain, std::string("{\"kind\": \"") + Kind + "\"}");
+		if (A.Tool == "finish_song" && Plain.KeptFinishStep(Plain.Info.Track, "polish").empty() && Contains(WriteJson(A.Arguments), "polish"))
+			Check(false, (std::string(Kind) + ": " + WriteJson(A.Arguments)).c_str(), __LINE__);
+	}
+}
+
+// The Caves (r5, mysterious): the intro what_next laid out (A's chords alone) was then flagged by check_song "plays 12.4 dB
+// under bar 5" with no call, and what_next went on to the finish. The finding carries the bass of A's matching bar as its
+// fix, and what_next gives it as the intro's step. B's step said "After A and its repeat" where B follows A
+void TestR6Caves()
+{
+	FakeSong Song;
+	NewSong(Song);
+	std::map<std::string, std::string> Last;
+	const size_t Count = sizeof(R6_CAVES_CALLS) / sizeof(R6_CAVES_CALLS[0]);
+	bool BTold = false;
+	for (size_t i = 0; i < Count; ++i) {
+		const ToolResult R = Run(Song, R6_CAVES_CALLS[i][0], R6_CAVES_CALLS[i][1]);
+		Check(!R.IsError, R.Text.c_str(), __LINE__);
+		if (std::string(R6_CAVES_CALLS[i][0]) == "what_next" && Contains(R.Text, "gives the song somewhere to go")) {
+			CHECK_LACKS(R.Text, "and its repeat");
+			CHECK_HAS(R.Text, "After A, B");
+			BTold = true;
+		}
+	}
+	CHECK(BTold);
+	const std::string Checked = Run(Song, "check_song", "{}").Text;
+	CHECK_HAS(Checked, "The intro (bars 1-4) doesn't lead into the main part");
+	CHECK_HAS(Checked, "copy_bars {\"from_bar\":8,\"at_bar\":4,\"channels\":[\"2A03 Triangle\"]}");
+	const std::string Text = Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text;
+	const WhatNextAnswer Next = ReadWhatNext(Text);
+	Check(Next.Tool == "copy_bars" && WriteJson(Next.Arguments) == "{\"from_bar\":8,\"at_bar\":4,\"channels\":[\"2A03 Triangle\"]}",
+		Text.c_str(), __LINE__);
+	CHECK_HAS(Text, "wakes up into A");
+	CHECK(!Run(Song, Next.Tool.c_str(), WriteJson(Next.Arguments)).IsError);
+	CHECK_LACKS(Run(Song, "check_song", "{}").Text, "doesn't lead into the main part");
+	const std::string Then = Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text;
+	Check(ReadWhatNext(Then).Tool != "copy_bars", Then.c_str(), __LINE__);
+}
+
+// Flying the Airship (r5, adventure): the review and the mix called the broken chords on 2A03 Pulse 1 "another line" and
+// the melody "with no chords" (PlaysBrokenChords); what_next listed "The song doesn't build" beside "the review's tips" done,
+// a lift its finish's polish makes (LiftedByPolish)
+void TestR6Airship()
+{
+	FakeSong Song;
+	NewSong(Song);
+	std::map<std::string, std::string> Last;
+	ReplayCalls(Song, R6_AIRSHIP_CALLS, sizeof(R6_AIRSHIP_CALLS) / sizeof(R6_AIRSHIP_CALLS[0]), Last, __LINE__);
+	const std::string Review = Run(Song, "review_arrangement", "{}").Text;
+	CHECK_HAS(Review, "chords on 2A03 Pulse 1");
+	CHECK_LACKS(Review, "another line on 2A03 Pulse 1");
+	CHECK_LACKS(Review, "with no chords");
+	const std::string Text = Run(Song, "what_next", "{\"kind\": \"adventure\"}").Text;
+	CHECK_HAS(Text, "the review's tips");
+	CHECK_LACKS(Text, "The song doesn't build");
+	CHECK_HAS(Text, "the finish's polish plays Climax two steps louder");
+	CHECK_HAS(Text, "the form (7 parts, 48 bars)");
+	const WhatNextAnswer Next = ReadWhatNext(Text);
+	Check(Next.Tool == "finish_song", Text.c_str(), __LINE__);
+	const ToolResult Did = Run(Song, "finish_song", WriteJson(Next.Arguments));
+	Check(!Did.IsError, Did.Text.c_str(), __LINE__);
+	CHECK_LACKS(Did.Text, "with no chords");
+	CHECK_LACKS(Run(Song, "review_arrangement", "{}").Text, "The song doesn't build");
+}
+
 // review_arrangement, check_song and measure_mix judge a song as its kind (fix-gen4-review): Hut in a Field and the Odds and
 // Ends Shop (cozy) got "Flat dynamics sound typed", a walking bass and "The melody has no company" from a review called right
 // after what_next said done, though a cozy song is polished as calm (no accents) over a bass that holds, and a small shape
@@ -31360,6 +31640,9 @@ int main()
 	TestCrossChipDoubles();
 	TestFinishStepsKept();
 	TestMelodyVeryHigh();
+	TestR6Hut();
+	TestR6Caves();
+	TestR6Airship();
 	TestKindJudged();
 	TestVibratoAcrossRegister();
 	TestReviewKeepsItsStyle();
