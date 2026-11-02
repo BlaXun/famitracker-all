@@ -266,8 +266,8 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "to_bar", "Last bar (default from_bar)." },
 			{ "section", "A section to rename (with name) or clear." },
 			{ "clear", "Take the name away." } } },
-		{ "song_shape", "Lays out a song's form as named sections in frames: stage, night, town, boss, small or jingle, "
-			"varied with add, drop, bars or parts. Without arguments it lists them.", {
+		{ "song_shape", "Lays out a song's form as sections: stage, night, town, boss, small or jingle, varied with add, "
+			"drop, bars or parts; alone, lists them.", {
 			{ "shape", "stage, night, town, boss, small or jingle." },
 			{ "about", "Words about the place." },
 			{ "variant", "Which form, from 1." },
@@ -277,7 +277,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "parts", "The whole list: \"Intro 4, A 8, A' 8, B 8, Break 4\"." },
 			{ "like", "A studied track's loop length." },
 			{ "flavour", 0 },
-			{ "kind", "what_next's kind." },
+			{ "kind", "The kind." },
 			{ "add_bars", "A track with notes: add the bars the form lacks." } } },
 		{ "set_key", "Chooses the track's key, which every tool then uses. It moves no notes. Needs direct changes.", {
 			{ "key", "Like \"D dorian\", \"A minor\", \"C major pentatonic\"; \"auto\" finds it from the notes." } } },

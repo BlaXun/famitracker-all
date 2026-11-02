@@ -4389,7 +4389,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes, colors, unison or strong_beats");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, fades_under, scoops, falls, staccato, duty, clicks, clashes, colors, unison or strong_beats");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -5080,7 +5080,7 @@ void TestProtocol()
 	CHECK(pMessages != 0 && pMessages->Size() == 1 && pMessages->At(0).Get("role")->String() == "user");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "for this: a snowy village at night.");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "the form for 24 bars");
-	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "an intro of 2-4 bars with one or two quiet parts");
+	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "an intro of 2-4 bars with 3-4 parts");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "name a composer, a game or a reference, look it up");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "set_meter before any notes");
 	CHECK_HAS(pMessages->At(0).Get("content")->Get("text")->String(), "export_for_game with the loudness of the game's other tracks");
@@ -18754,7 +18754,7 @@ void TestDraftFindings()
 	CHECK_HAS(TextOf(pLoop, "message"), "Fix: copy_bars {\"section\":\"B\",\"at_bar\":33}, then set_loop {\"from_bar\":5,\"to_bar\":40}");
 	// The text lists them all, each with its call, after the count
 	const std::string Text = Run(Song, "check_song", "{\"style\": \"lively\"}").Text;
-	CHECK_HAS(Text, ", 0 vanishing. In the arrangement: 7 findings, each with the call that fixes it.");
+	CHECK_HAS(Text, ", 0 vanishing. In the arrangement: 8 findings, each with the call that fixes it.");
 	CHECK_HAS(Text, "\nTwo channels play the bass's roots: 2A03 Triangle (12 notes) doubles VRC6 Sawtooth, the bass");
 	// The review: the same, as tips with their calls, most first; the sawtooth is the bass, its roots doubled on the triangle
 	const std::string Review = Run(Song, "review_arrangement", "{\"style\": \"lively\"}").Text;
@@ -19175,7 +19175,7 @@ void TestShortReplies()
 	// check_song: the counts, then the findings heard worst first (here the arrangement's: the melody's pieces, the bass)
 	const std::string CheckFull = Run(Song, "check_song", LIVELY + "}").Text, CheckShort = Run(Song, "check_song", LIVELY + SHORT).Text;
 	CHECK(CheckShort.size() * 2 < CheckFull.size());
-	CHECK_HAS(CheckShort, ", 0 vanishing. In the arrangement: 7 findings, each with the call that fixes it.\nMost of all (3 of 7; format "
+	CHECK_HAS(CheckShort, ", 0 vanishing. In the arrangement: 8 findings, each with the call that fixes it.\nMost of all (3 of 8; format "
 		"text lists them):\n1. The melody stops at 23 of its 23 bar lines: one-bar pieces, not phrases (bars 5-28). Fix: read_notes");
 	CHECK_HAS(CheckShort, "\n2. 2A03 Triangle doubles the bass's roots now and then (a thump, not a part) (bars 5-27). Fix: write_notes "
 		"{\"channel\":\"2A03 Triangle\",\"from_bar\":5,\"to_bar\":27,\"notes\":[]}.");
@@ -19232,7 +19232,7 @@ void TestProblemListArrangement()
 	CHECK_EQ(List.Count(PROBLEM_FADERS), 1);
 	CHECK_EQ(List.Count(PROBLEM_REPEAT), 1);
 	CHECK_EQ(List.Count(PROBLEM_LOOP), 1);
-	CHECK_EQ(List.Total(), 7);
+	CHECK_EQ(List.Total(), 8);	// (and the draft is thin for the NES: feat-depth-back)
 	CHECK_EQ(std::string(ProblemKindId(PROBLEM_LOOP)), std::string("short_loop"));
 	CHECK_EQ(std::string(ProblemKindTitle(PROBLEM_PHRASES)), std::string("A melody in one-bar pieces"));
 	CHECK_EQ(ProblemSeverity(PROBLEM_BASS), 2);
@@ -19240,7 +19240,7 @@ void TestProblemListArrangement()
 	for (size_t i = 0; i < List.Findings().size(); ++i) {
 		const ProblemFinding &F = List.Findings()[i];
 		CHECK(!F.FixTool.empty());
-		CHECK_EQ(F.FixCalls, F.Kind == PROBLEM_PHRASES || F.Kind == PROBLEM_LOOP ? 2 : 1);
+		CHECK_EQ(F.FixCalls, F.Kind == PROBLEM_PHRASES || F.Kind == PROBLEM_LOOP || F.Kind == PROBLEM_THIN ? 2 : 1);
 		if (F.Kind == PROBLEM_FADERS)
 			CHECK(F.Channel == -1 && F.FixTool == "mix" && F.FixArguments == "{\"style\":\"lively\",\"faders\":\"reset\"}");
 		if (F.Kind == PROBLEM_SOUND)
@@ -20688,13 +20688,14 @@ void TestWhatNextLoop()
 		const char *Loudness;
 		bool Drums;
 	};
-	const Kind KINDS[] = { { "{\"kind\": \"lively\"}", "lively", "-20", true }, { "{\"kind\": \"calm\"}", "calm", "-22", false },
+	// (every kind plays drums, a quiet kind soft ticks: feat-depth-back)
+	const Kind KINDS[] = { { "{\"kind\": \"lively\"}", "lively", "-20", true }, { "{\"kind\": \"calm\"}", "calm", "-22", true },
 		{ "{\"kind\": \"action\"}", "", "-19", true }, { "{}", "", "-20", true }, { "{\"kind\": \"cozy\"}", "calm", "-20", true },
-		{ "{\"kind\": \"mysterious\"}", "calm", "-21", false }, { "{\"kind\": \"adventure\"}", "lively", "-20", true },
-		{ "{\"kind\": \"floating\"}", "calm", "-21", false }, { "{\"kind\": \"playful\"}", "", "-20", true },
-		{ "{\"kind\": \"festive\"}", "lively", "-19", true }, { "{\"kind\": \"bittersweet\"}", "calm", "-22", false },
-		{ "{\"kind\": \"tense\"}", "", "-20", true }, { "{\"kind\": \"melancholic\"}", "calm", "-22", false },
-		{ "{\"kind\": \"atmospheric\"}", "atmospheric", "-22", false } };
+		{ "{\"kind\": \"mysterious\"}", "calm", "-21", true }, { "{\"kind\": \"adventure\"}", "lively", "-20", true },
+		{ "{\"kind\": \"floating\"}", "calm", "-21", true }, { "{\"kind\": \"playful\"}", "", "-20", true },
+		{ "{\"kind\": \"festive\"}", "lively", "-19", true }, { "{\"kind\": \"bittersweet\"}", "calm", "-22", true },
+		{ "{\"kind\": \"tense\"}", "", "-20", true }, { "{\"kind\": \"melancholic\"}", "calm", "-22", true },
+		{ "{\"kind\": \"atmospheric\"}", "atmospheric", "-22", true } };
 	int Reused = 0;
 	for (const Kind &K : KINDS) {
 		FakeSong Song(1);
@@ -21783,7 +21784,8 @@ void TestFinishSong()
 		CHECK_HAS(R.Text, "the seam going round (play {\"from_bar\":15} plays the end into the loop; stop ends it).");
 		CHECK(R.Text.size() < 2500u);
 		// polish's lively style, its default touches (KindPolish's, what_next's polish step's too)
-		CHECK(!Run(Separate, "polish", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);
+		CHECK(!Run(Separate, "polish", "{\"style\": \"lively\", \"touches\": [\"accents\", \"vibrato\", \"separate\", \"clicks\", "
+			"\"fades_under\", \"duty\"], \"melody_channel\": \"VRC6 Pulse 1\"}").IsError);	// (KindPolish's touches, feat-depth-back)
 		CHECK(!Run(Separate, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"faders\": \"reset\"}").IsError);
 		CHECK(!Run(Separate, "fix_loop", "{}").IsError);
 		CHECK(!Run(Separate, "export_for_game", "{\"loudness\": -20}").IsError);
@@ -25172,7 +25174,7 @@ void TestProblemPlay()
 					CHECK(P.FirstBar == 1 && P.Channels.empty());
 				++Kinds;
 			}
-		CHECK_EQ(Kinds, 7);
+		CHECK_EQ(Kinds, 8);
 	}
 }
 
@@ -28369,8 +28371,8 @@ void TestStrongBeats()
 	}
 }
 
-// The texture (from feat-texture): a chord part that plays the same way all through rests where the melody carries the
-// song (check_song's chords_throughout, its fix vary_part's rest, what_next's step); a song whose parts all play the same
+// The texture (from feat-texture): a chord part that plays the same way all through changes figure where the song turns
+// (check_song's chords_throughout, its fix vary_part's restrike since feat-depth-back, what_next's step); a song whose parts all play the same
 // channels with the same sounds gets the review's tip and what_next's highlight, a new sound for the melody in B; an outro
 // of a song that loops leads back in with A's closing bars, the melody and the drums too, and a short break ending it with
 // a pickup
@@ -28392,14 +28394,14 @@ void TestTexture()
 			CHECK_EQ(IntegerOf(Found[0], "bars_with_melody"), 32);
 			CHECK_HAS(TextOf(Found[0], "message"), "A chord part that plays all through: 2A03 Pulse 1's chords play under the "
 				"melody in 32 of its 32 bars, the same way in 100% of their bars");
-			CHECK_HAS(TextOf(Found[0], "message"), "So the chords rest in \"A\" and \"A'\", where the melody carries the song, "
-				"and play in \"B\" and \"Climax\"");
+			CHECK_HAS(TextOf(Found[0], "message"), "So the chords change figure in \"B\" and \"Climax\" and keep their lighter one in "
+				"\"A\" and \"A'\", where the melody carries the song.");
 			const Json *pFix = Found[0]->Get("fix");
 			CHECK(pFix != 0 && TextOf(pFix, "tool") == "vary_part" && pFix->Get("then") == 0);
 			if (pFix != 0 && pFix->Get("arguments") != 0)
-				CHECK_EQ(WriteJson(*pFix->Get("arguments")), std::string("{\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\","
-					"\"from_bar\":1,\"to_bar\":16}"));
-			CHECK(Found[0]->Get("rests") != 0 && WriteJson(*Found[0]->Get("rests")) == "[[1,16]]");
+				CHECK_EQ(WriteJson(*pFix->Get("arguments")), std::string("{\"channel\":\"2A03 Pulse 1\",\"variation\":\"restrike\","
+					"\"rhythm\":\"half\",\"from_bar\":17,\"to_bar\":32}"));
+			CHECK(Found[0]->Get("changes") != 0 && WriteJson(*Found[0]->Get("changes")) == "[[17,32]]");
 		}
 		ProblemList List;
 		std::string Error;
@@ -28409,14 +28411,12 @@ void TestTexture()
 		CHECK_EQ(ProblemSeverity(PROBLEM_CHORDS_THROUGHOUT), 1);
 		CHECK_HAS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "A chord part that plays all through");
 		const std::string Next = Run(Song, "what_next", "{\"all\": true, \"kind\": \"adventure\"}").Text;
-		CHECK_HAS(Next, "vary_part {\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\",\"from_bar\":1,\"to_bar\":16}");
-		// Made, the chords rest in A and A' and play in B and the climax: nothing left to find, and the parts differ
-		CHECK(!Run(Song, "vary_part", "{\"channel\":\"2A03 Pulse 1\",\"variation\":\"rest\",\"from_bar\":1,\"to_bar\":16}").IsError);
-		bool Quiet = true;
-		for (int r = 0; r < 16 * 16; ++r)
-			Quiet = Quiet && !Song.Rows[0][static_cast<size_t>(r)].HasNote();
-		CHECK(Quiet);
-		CHECK(Song.Rows[0][16 * 16].HasNote());
+		CHECK_HAS(Next, "vary_part {\"channel\":\"2A03 Pulse 1\",\"variation\":\"restrike\",\"rhythm\":\"half\",\"from_bar\":17,\"to_bar\":32}");
+		// Made, the chords change figure in B and the climax and keep it in A and A' (feat-depth-back: they never vanish):
+		// nothing left to find
+		CHECK(!Run(Song, "vary_part", "{\"channel\":\"2A03 Pulse 1\",\"variation\":\"restrike\",\"rhythm\":\"half\",\"from_bar\":17,"
+			"\"to_bar\":32}").IsError);
+		CHECK(Song.Rows[0][0].HasNote());
 		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chords_throughout").empty());
 		CHECK_LACKS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "The texture never changes");
 	}
@@ -29625,8 +29625,15 @@ void TestR6Caves()
 	const std::string Checked = Run(Song, "check_song", "{}").Text;
 	CHECK_HAS(Checked, "The intro (bars 1-4) doesn't lead into the main part");
 	CHECK_HAS(Checked, "copy_bars {\"from_bar\":8,\"at_bar\":4,\"channels\":[\"2A03 Triangle\"]}");
-	const std::string Text = Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text;
-	const WhatNextAnswer Next = ReadWhatNext(Text);
+	// (the soft ticks a mysterious song now gets, and their beat into the intro's last bar, may come first: feat-depth-back)
+	std::string Text = Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text;
+	WhatNextAnswer Next = ReadWhatNext(Text);
+	for (int Steps = 0; Steps < 4 && (Next.Tool == "add_drums" || (Next.Tool == "copy_bars" && Contains(WriteJson(Next.Arguments),
+		"2A03 Noise"))); ++Steps) {
+		CHECK(!Run(Song, Next.Tool.c_str(), WriteJson(Next.Arguments)).IsError);
+		Text = Run(Song, "what_next", "{\"kind\": \"mysterious\"}").Text;
+		Next = ReadWhatNext(Text);
+	}
 	Check(Next.Tool == "copy_bars" && WriteJson(Next.Arguments) == "{\"from_bar\":8,\"at_bar\":4,\"channels\":[\"2A03 Triangle\"]}",
 		Text.c_str(), __LINE__);
 	CHECK_HAS(Text, "wakes up into A");
@@ -30377,7 +30384,7 @@ void TestRecipesAgree()
 			if (Contains(DrumLine, "No drums"))
 				Check(Drums == 0, What.c_str(), __LINE__);
 			else if (Contains(DrumLine, "No backbeat"))
-				Check(Drums <= 1, What.c_str(), __LINE__);
+				Check(Drums >= 1, What.c_str(), __LINE__);	// (soft ticks in every part, feat-depth-back)
 			else if (Contains(DrumLine, "add_drums groove") || Contains(DrumLine, "a soft beat"))
 				Check(Drums >= 1, (What + ": " + DrumLine).c_str(), __LINE__);
 			Check(!Dorian || ChordsWithIV, (What + ": dorian's chords sound IV").c_str(), __LINE__);

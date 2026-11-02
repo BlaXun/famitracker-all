@@ -17856,8 +17856,9 @@ void StrongBeatFindings(Session &S, int Melody, int From, int To, const Key &K, 
 // Narrows, on the 5B; the Ironworks the user liked 3.7) and 7 instruments at the least (Saveroom, The Narrows). So a song's
 // body (its named sections but the intro, breaks and outros, else the bars from the loop's start, THIN_BARS at least)
 // is thin where, on chips of THIN_CHANNELS melodic channels or more, under THIN_PARTS of them sound a bar on average;
-// where it plays under THIN_SOUNDS instruments; or, on fewer channels (the 2A03 alone), under THIN_EFFECTS effects a bar
-const double THIN_PARTS = 3.6, THIN_EFFECTS = 4.0;
+// where it plays under THIN_SOUNDS instruments; or, on fewer channels (the 2A03 alone), under THIN_EFFECTS effects a bar (the
+// kept 2A03 songs play 9.5-21.3, Clockwork Factory 1.15; what_next's walks on the 2A03 alone, with the kinds' polish, about 1.6)
+const double THIN_PARTS = 3.6, THIN_EFFECTS = 1.5;
 const int THIN_CHANNELS = 5, THIN_SOUNDS = 6, THIN_BARS = 16;
 // What what_next fills a song to (WhatNext::Fill): the first 30's least on the VRC6, 4.4 melodic channels a bar (their
 // median 5.0), where a channel is free for a line that adds no clash
@@ -18084,7 +18085,7 @@ void ThinFindings(Session &S, int Melody, int From, int To, int Style, std::vect
 	F.Kind = ARRANGE_THIN;
 	F.FromBar = M.ThinFrom > 0 ? M.ThinFrom : From;
 	F.ToBar = M.ThinTo > 0 ? M.ThinTo : To;
-	F.Weight = 1.5;
+	F.Weight = 1.0;
 	const bool Parts = std::find(Why.begin(), Why.end(), "parts") != Why.end();
 	const bool Sounds = std::find(Why.begin(), Why.end(), "sounds") != Why.end();
 	const bool Techniques = std::find(Why.begin(), Why.end(), "techniques") != Why.end();
@@ -26595,7 +26596,7 @@ const FinishKind FINISH_KINDS[FINISH_KIND_COUNT] = {
 // The touches a kind's polish gives (from feat-depth-back), at the rates the soundtrack's first 30 tracks use them: Axy
 // volume slides in nearly every song (0.5-1.2 a bar), as fades on the accompaniment's held notes (fades_under), a width
 // of its own for each part on the pulses that accompany (duty: Vxx, and a new sound part by part), the bass cut short in
-// an action track's (Sxx in every action song, 7 a bar); the style's own (accents but on calm, the vibrato unless the
+// an action track's (Sxx in every action song, 7 a bar; tense's driving ostinato keeps its length); the style's own (accents but on calm, the vibrato unless the
 // flavour's lead has none, the triangle's gaps, the clicks)
 Json KindPolish(int Kind, int Flavour)
 {
@@ -26623,7 +26624,8 @@ Json KindPolish(int Kind, int Flavour)
 	Touches.Push("clicks");
 	Touches.Push("fades_under");
 	Touches.Push("duty");
-	if (Kind == NEXT_ACTION || Kind == NEXT_TENSE)
+	// (not tense's ostinato: cut short, the review heard its bass as thin and the steps done fell after the finish)
+	if (Kind == NEXT_ACTION)
 		Touches.Push("staccato");
 	A.Set("touches", Touches);
 	return A;
@@ -33068,6 +33070,7 @@ private:
 	void Highlight();
 	void Fill();
 	void Swing();
+	bool AmbienceComing() const;
 	void NameSections();
 	void MelodyStep();
 	void GrowForm();
@@ -34645,9 +34648,13 @@ void WhatNext::Parts()
 	// Every kind plays drums (from feat-depth-back): the soundtrack's first 30 tracks play the noise in 57-100% of their bars
 	// even when calm (soft ticks), and Frozen Lake, a calm walk without them, was "very simple, no depth". A kind whose pool
 	// has none (calm, a mysterious song's "no backbeat") gets soft ticks: the calm groove, light, on the noise alone
-	const bool QuietDrums = std::string(m_Picks.Groove.Value.c_str()).empty();
-	const std::string Groove = QuietDrums ? std::string("calm") : std::string(m_Picks.Groove.Value.c_str());
-	const bool Drums = Noise >= 0 && Wanted("drums");
+	// (a kind whose pool starts with none, a mysterious song's "no backbeat", plays its pick as soft ticks too)
+	const std::vector<std::string> QuietPool = PoolEntries(K.Grooves);
+	const bool QuietDrums = std::string(m_Picks.Groove.Value.c_str()).empty() || (QuietPool.size() > 1 && QuietPool[0].empty());
+	const std::string Groove = std::string(m_Picks.Groove.Value.c_str()).empty() ? std::string("calm") :
+		std::string(m_Picks.Groove.Value.c_str());
+	// (a quiet kind whose words, name or flavour name the place's sound plays that on the noise instead: Ambience)
+	const bool Drums = Noise >= 0 && Wanted("drums") && !(QuietDrums && AmbienceComing());
 	if (!Drums)
 		m_Away.insert("drums");
 	if (Lead < 0) {
@@ -36567,6 +36574,39 @@ void WhatNext::Fill()
 		"melodic channels a bar, where the soundtrack's first 30 sound 4.4-5.6 on the VRC6 (every channel their chips have: the "
 		"chords changing figure rather than resting, a second line, the bass, the drums).", M.Parts));
 	if (FewParts) {
+		// A fill that brings the review a tip it didn't have (a line in the melody's register, a part that now sounds as
+		// another) or makes a part print as an earlier one isn't given: the steps done would fall after it
+		Json Asked = Json::MakeObject();
+		Asked.Set("kind", Kind().Name);
+		if (std::string(Kind().Style) != "any")
+			Asked.Set("style", Kind().Style);
+		Asked.Set("melody_channel", m_Melody + 1);
+		auto TipsOf = [&](Session &In) {
+			std::string Review;
+			try {
+				Review = ReviewTool(In, Asked);
+			}
+			catch (const Problem &) {
+				return 0;
+			}
+			const size_t At = Review.find("What would help, most first:\n");
+			int Count = 0;
+			for (size_t Line = At == std::string::npos ? Review.size() : At; Line < Review.size(); ) {
+				size_t Stop = Review.find('\n', Line);
+				if (Stop == std::string::npos)
+					Stop = Review.size();
+				const std::string Tip = Review.substr(Line, Stop - Line);
+				Count += !Tip.empty() && std::isdigit(static_cast<unsigned char>(Tip[0])) && Tip.find("Thin for the NES") ==
+					std::string::npos ? 1 : 0;
+				Line = Stop + 1;
+			}
+			return Count;
+		};
+		const int TipsBefore = TipsOf(S);
+		const size_t AlikeBefore = DevelopmentOf(S, m_Melody).Alike.size();
+		auto Keeps = [&](Session &After) {
+			return DevelopmentOf(After, m_Melody).Alike.size() <= AlikeBefore && TipsOf(After) <= TipsBefore;
+		};
 		// The thinnest parts first; in each, the chords its family plays elsewhere copied in, else a line on a channel no other
 		// part of the body plays (so it stays this part's own: a counter-line on A's channel would make A' sound as A),
 		// else on any channel free there
@@ -36586,9 +36626,10 @@ void WhatNext::Fill()
 			One.ThinTo = P.To;
 			One.ThinName = P.Name;
 			const Json Copy = ThinFill(S, One, m_Melody, CalmStyle());
-			if (Copy.IsObject() && Copy.Get("tool") != 0 && Copy.Get("tool")->String() == "copy_bars") {
+			// (not a song like a reference whose chords rest where it rests them: LikeTexture)
+			if (!m_Like.Found && Copy.IsObject() && Copy.Get("tool") != 0 && Copy.Get("tool")->String() == "copy_bars") {
 				int Added = 0;
-				if (TryWrite(S, "copy_bars", *Copy.Get("arguments"), P.From, P.To, m_Melody, Added) && Added <= 0) {
+				if (TryWriteHearing(S, "copy_bars", *Copy.Get("arguments"), P.From, P.To, m_Melody, Added, Keeps) && Added <= 0) {
 					Step("thin", "copy_bars", *Copy.Get("arguments"), Why + " Where it's thinnest, \"" + P.Name + "\" " +
 						Copy.Get("does")->String() + ".");
 					return;
@@ -36628,7 +36669,7 @@ void WhatNext::Fill()
 					if (!Stand.empty())
 						Dry.Set("instrument", Stand);
 					int Added = 0;
-					if ((!OtherChip || !Stand.empty()) && TryWrite(S, "add_counter_melody", Dry, P.From, P.To, m_Melody, Added) && Added <= 0) {
+					if ((!OtherChip || !Stand.empty()) && TryWriteHearing(S, "add_counter_melody", Dry, P.From, P.To, m_Melody, Added, Keeps) && Added <= 0) {
 						Step("thin", "add_counter_melody", C, Why + Format(" Where it's thinnest, %s (%.1f a bar): a counter-line on %s, "
 							"a part of its own beside the tune.", P.Name.empty() ? RangeText(P.From, P.To).c_str() : ("\"" + P.Name + "\"").c_str(),
 							P.Mean, ChannelName(Channel).c_str()));
@@ -36652,7 +36693,7 @@ void WhatNext::Fill()
 						Dry.Set("instrument", Stand);
 					}
 					int Added = 0;
-					if (!TryWrite(S, "add_harmony", Dry, P.From, P.To, m_Melody, Added) || Added > 0)
+					if (!TryWriteHearing(S, "add_harmony", Dry, P.From, P.To, m_Melody, Added, Keeps) || Added > 0)
 						continue;
 					Step("thin", "add_harmony", H, Why + Format(" Where it's thinnest, %s (%.1f a bar): the tune %s on %s, a part "
 						"of its own there.", P.Name.empty() ? RangeText(P.From, P.To).c_str() : ("\"" + P.Name + "\"").c_str(), P.Mean,
@@ -36765,6 +36806,24 @@ void WhatNext::Echo()
 // mysterious, floating, melancholic, atmospheric; never a stage, a fight or a festival), once the form has its melody, so
 // the mix and polish after it hear it. No milestone: a song without one is done; the noise with notes (drums, or the
 // ambience made) asks nothing
+// Whether Ambience will give the place's sound from words: the words about the place, the track's name or the flavour name
+// one, for a kind it suits (not the drips a mysterious place gets without them)
+bool WhatNext::AmbienceComing() const
+{
+	static const int KINDS[] = { NEXT_CALM, NEXT_COZY, NEXT_MYSTERIOUS, NEXT_FLOATING, NEXT_MELANCHOLIC, NEXT_ATMOSPHERIC };
+	if (!Wanted("ambience") || std::find(KINDS, KINDS + sizeof(KINDS) / sizeof(KINDS[0]), m_KindId) == KINDS + sizeof(KINDS) /
+		sizeof(KINDS[0]))
+		return false;
+	std::string Word;
+	if (AmbienceOfWords(m_About, &Word) >= 0 || AmbienceOfWords(S.Song.TrackName, &Word) >= 0)
+		return true;
+	if (m_Flavour == FLAVOUR_NONE)
+		return false;
+	const std::string Own = FlavourAmbience(m_Flavour, m_Seed == 0 ? 0u : SeededHash("ambience", S.Song.TrackName, m_Seed));
+	int Kind = -1;
+	return !Own.empty() && ParseAmbienceKind(Own, Kind);
+}
+
 void WhatNext::Ambience()
 {
 	static const int KINDS[] = { NEXT_CALM, NEXT_COZY, NEXT_MYSTERIOUS, NEXT_FLOATING, NEXT_MELANCHOLIC, NEXT_ATMOSPHERIC };
@@ -40585,17 +40644,15 @@ std::string ToolSet::CoreInstructions()
 		"octave 3 (4 lively). get_recipe shows a whole melody of 8 bars.\n"
 		"- Chords and bass: add_chords_and_bass with chords you choose (\"| Am7 | Fmaj7 | C | G7 |\"), "
 		"about one a bar, with a chord_style, color and bass_style that fit the mood; other chords for the B part. Keep 5-7 "
-		"parts sounding in the main sections (chords change figure, never vanish; check_song's thin).\n"
+		"parts at once; chords never vanish.\n"
 		"- Sounds: design_instrument for a sound in words, add_instrument a preset (soft lead, pluck, bell, "
 		"strings, bass...), find_sound to look for one (\"soft flute\"), reference_sound for a studied game's, "
 		"set_instrument to give a part another.\n"
-		"- Kinds: calm only when the user asks for calm music (a place to rest, a night scene: soft ticks, a music-box "
-		"lead); a stage to explore is lively; a warm room by day (a shop, an inn) is cozy; a fight or a chase is action; "
+		"- Kinds: calm only when the user asks for calm music (a night scene, a place to rest); a stage to explore is lively; a warm room by day (a shop, an inn) is cozy; a fight or a chase is action; "
 		"get_recipe lists more (about picks one), each with its steps.\n"
 		"- VRC6 Plus (get_song says so): its Soft 1-4 channels are a quieter layer under the VRC6: a pad holding the chords "
 		"(chord_style voices), a soft echo, a sub bass.\n"
-		"- Stereo: a note's \"pan\" in write_notes (left, right, center) lasts for the notes after; keep melody, bass "
-		"and drums centered.\n"
+		"- Stereo: write_notes' \"pan\" lasts for the notes after; keep melody, bass and drums centered.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
 		"- Finish: when the parts are written, call finish_song with the kind: it polishes, mixes, fixes the loop's seam, "
 		"listens and exports in one call (not polish, mix and export_for_game one by one). Fix what it heard with the calls "
