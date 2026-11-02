@@ -17859,7 +17859,7 @@ void StrongBeatFindings(Session &S, int Melody, int From, int To, const Key &K, 
 // where it plays under THIN_SOUNDS instruments; or, on fewer channels (the 2A03 alone), under THIN_EFFECTS effects a bar (the
 // kept 2A03 songs play 9.5-21.3, Clockwork Factory 1.15; what_next's walks on the 2A03 alone, with the kinds' polish, about 1.6)
 const double THIN_PARTS = 3.6, THIN_EFFECTS = 1.5;
-const int THIN_CHANNELS = 5, THIN_SOUNDS = 6, THIN_BARS = 16;
+const int THIN_CHANNELS = 5, THIN_SOUNDS = 5, THIN_BARS = 16;
 // What what_next fills a song to (WhatNext::Fill): the first 30's least on the VRC6, 4.4 melodic channels a bar (their
 // median 5.0), where a channel is free for a line that adds no clash
 const double DEPTH_PARTS = 4.4;
@@ -18127,13 +18127,16 @@ void ThinFindings(Session &S, int Melody, int From, int To, int Style, std::vect
 		if (Techniques)
 			Touches.Push("fades");
 		Touches.Push("duty");
-		if (Techniques)
-			Touches.Push("staccato");
+		// (scoops and falls on the melody rather than the bass cut short, which the review then hears as thin)
+		if (Techniques) {
+			Touches.Push("scoops");
+			Touches.Push("falls");
+		}
 		A.Set("touches", Touches);
 		if (Melody >= 0)
 			A.Set("melody_channel", S.Channel(Melody).FullName());
-		const Json Call = ToolCall("polish", A, Techniques ? "colors the notes with fades on held notes, a duty change part by part "
-			"and the bass cut short" : "gives the accompaniment's pulses a duty of their own part by part, a new timbre in each");
+		const Json Call = ToolCall("polish", A, Techniques ? "colors the notes with fades on held notes, a duty change part by part, "
+			"scoops and falls" : "gives the accompaniment's pulses a duty of their own part by part, a new timbre in each");
 		if (F.Fix.IsNull())
 			F.Fix = Call;
 		else
@@ -36615,9 +36618,14 @@ void WhatNext::Fill()
 			return a.Mean < b.Mean; });
 		// (a second pass, only while the song is thin as check_song hears it: any channel free in the part, the unused first)
 		const int Passes = M.Parts < THIN_PARTS ? 2 : 1;
+		const std::string ABase = M.List.empty() ? std::string() : Lowercase(SectionBase(M.List.front().Name));
 		for (int Pass = 0; Pass < Passes; ++Pass)
 		for (size_t p = 0; p < Order.size(); ++p) {
 			const ThinMeasure::Part &P = Order[p];
+			// (the second pass leaves A's family alone: a line there on a channel a repeat's device uses made the repeat sound
+			// as A, and the development's steps fell)
+			if (Pass == 1 && !P.Name.empty() && Lowercase(SectionBase(P.Name)) == ABase)
+				continue;
 			if (P.To - P.From + 1 < 4 || P.Mean >= DEPTH_PARTS + 1.0)
 				continue;
 			const int First = S.Time.BarStart(P.From), End = std::min(S.Time.BarEnd(P.To), S.Time.TotalRows());
@@ -36648,7 +36656,8 @@ void WhatNext::Fill()
 					if (!HasNotesIn(S, All[f], 0, S.Time.TotalRows()))
 						Free.push_back(All[f]);
 				for (size_t f = 0; f < All.size() && Pass == 1; ++f)
-					if (HasNotesIn(S, All[f], 0, S.Time.TotalRows()))
+					if (HasNotesIn(S, All[f], 0, S.Time.TotalRows()) && std::find(m_Parts.Chords.begin(), m_Parts.Chords.end(),
+						All[f]) == m_Parts.Chords.end())
 						Free.push_back(All[f]);
 			}
 			for (size_t f = 0; f < Free.size() && f < 3; ++f) {
@@ -40652,7 +40661,7 @@ std::string ToolSet::CoreInstructions()
 		"get_recipe lists more (about picks one), each with its steps.\n"
 		"- VRC6 Plus (get_song says so): its Soft 1-4 channels are a quieter layer under the VRC6: a pad holding the chords "
 		"(chord_style voices), a soft echo, a sub bass.\n"
-		"- Stereo: write_notes' \"pan\" lasts for the notes after; keep melody, bass and drums centered.\n"
+		"- Stereo: a note's \"pan\" in write_notes lasts for the notes after; keep melody, bass and drums centered.\n"
 		"- Ideas the user hummed are clips: get_song lists them, place_clip puts one at a bar.\n"
 		"- Finish: when the parts are written, call finish_song with the kind: it polishes, mixes, fixes the loop's seam, "
 		"listens and exports in one call (not polish, mix and export_for_game one by one). Fix what it heard with the calls "
@@ -41061,9 +41070,9 @@ static std::string LaterCoreRecipe(const NextKind &K)
 		"2: A3 - - - E3 - . . | 3: F3 - A3 - C4 - D4 - | 4: B3 - - A3 G3 - - - | 5: E3 - G3 - C4 - - E4 | 6: D4 - C4 - A3 - - - | "
 		"7: A3 - C4 - B3 - D4 - | 8: C4 - - - - - . .\"\n"
 		"5. " + (*K.Groove ? "add_drums with groove " + PoolText(K.Grooves, K.Groove) + (K.Intensity != 0 && *K.Intensity ? std::string(" and "
-		"intensity ") + K.Intensity : std::string()) + "; then depth: " : K.Grooves != 0 && *K.Grooves ? std::string("No backbeat: no "
-		"drums, or add_drums with groove ") + PoolText(K.Grooves + 1, 0) + " and intensity light in one section alone. Depth: " :
-		std::string("No drums. Depth: ")) + "add_harmony in the "
+		"intensity ") + K.Intensity : std::string()) + "; then depth: " : K.Grooves != 0 && *K.Grooves ? std::string("No backbeat, "
+		"but soft ticks: add_drums with groove ") + PoolText(K.Grooves + 1, 0) + " and intensity light in every part. Depth: " :
+		std::string("Soft ticks: add_drums groove calm, intensity light, in every part. Depth: ")) + "add_harmony in the "
 		"repeat, vary_part where a part comes back unchanged, and add_echo a beat behind, last (delay_beats 1, pan opposite).\n"
 		"6. check_song" + Style + " (0 clicking, 0 vanishing) and review_arrangement" + Style + " (8 or more). Fix what they find "
 		"and check again.\n"

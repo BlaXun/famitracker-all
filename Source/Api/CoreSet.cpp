@@ -274,7 +274,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "add", "Parts to put in: climax, break, bridge, outro, intro, b, a'." },
 			{ "drop", "Parts to take out." },
 			{ "bars", "About how long, 8-256 bars." },
-			{ "parts", "The whole list: \"Intro 4, A 8, A' 8, B 8, Break 4\"." },
+			{ "parts", "The whole list: \"Intro 4, A 8, B 8\"." },
 			{ "like", "A studied track's loop length." },
 			{ "flavour", 0 },
 			{ "kind", "The kind." },

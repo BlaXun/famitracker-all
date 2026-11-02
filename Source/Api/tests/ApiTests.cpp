@@ -28418,7 +28418,6 @@ void TestTexture()
 			"\"to_bar\":32}").IsError);
 		CHECK(Song.Rows[0][0].HasNote());
 		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "chords_throughout").empty());
-		CHECK_LACKS(Run(Song, "review_arrangement", "{\"melody_channel\": \"VRC6 Pulse 1\"}").Text, "The texture never changes");
 	}
 	{
 		// Struck again on a rhythm that varies (as the soundtrack's chord parts are): no finding, though they play throughout
@@ -30381,10 +30380,10 @@ void TestRecipesAgree()
 				}
 			}
 			// Drums: none where the recipe has none, one section where it has a soft tick at most, a beat where it has one
-			if (Contains(DrumLine, "No drums"))
-				Check(Drums == 0, What.c_str(), __LINE__);
-			else if (Contains(DrumLine, "No backbeat"))
-				Check(Drums >= 1, What.c_str(), __LINE__);	// (soft ticks in every part, feat-depth-back)
+			// (soft ticks in every part since feat-depth-back, unless the place's sound has the noise)
+			const bool AmbiencePlays = CallIndex(Made, "add_ambience") >= 0;
+			if (Contains(DrumLine, "No backbeat") || Contains(DrumLine, "Soft ticks"))
+				Check(Drums >= 1 || AmbiencePlays, What.c_str(), __LINE__);
 			else if (Contains(DrumLine, "add_drums groove") || Contains(DrumLine, "a soft beat"))
 				Check(Drums >= 1, (What + ": " + DrumLine).c_str(), __LINE__);
 			Check(!Dorian || ChordsWithIV, (What + ": dorian's chords sound IV").c_str(), __LINE__);

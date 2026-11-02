@@ -3316,14 +3316,17 @@ lively and soft ones, 9.5-14.4 a bar on the 2A03 alone). check_song's `thin`
 a body (named sections but free ones, else from the loop's start, 16 bars
 at least, every part with notes) under `THIN_PARTS` (3.6) melodic channels a
 bar on chips of `THIN_CHANNELS` (5) or more, under `THIN_SOUNDS` (6)
-instruments, or on fewer channels under `THIN_EFFECTS` (4) effects a bar.
+instruments, or on fewer channels under `THIN_EFFECTS` (1.5) effects a bar
+(the kept 2A03 songs 9.5-21.3, Clockwork Factory 1.15, the walks on the
+2A03 alone about 1.6).
 None of the first 30, the 44 kept songs or flag/ gets it (least 3.88,
 The Narrows); of the six, Frozen Lake, Haunted Library, Mossy Forest Path,
 Market Festival and Clockwork Factory do, Lava Forge (3.67, the user's
 favourite) doesn't. Its fix: the thinnest part's family chords copied in
 (`ThinFill`), else a counter-line; then `polish` `fades`, `duty`,
 `staccato`. `what_next`: every kind plays drums (a quiet kind's pool: the
-calm groove, light, noise alone); intros get A's chords and bass for every
+calm groove, light, noise alone; none where the words, the name or the
+flavour name an ambience, `AmbienceComing`, which then has the noise); intros get A's chords and bass for every
 kind, and the beat in their last bar; `Develop` never rests the chords to
 free a channel; `chords_throughout`'s fix is `vary_part` `restrike` `half`
 over the contrasting parts and the climax (the chords change figure, A
@@ -3331,12 +3334,13 @@ keeps its lighter one), given by `WhatNext::Fill` after the review's tips
 (a plain-triad rewrite undid it); `Fill` (after the highlight, step id
 `thin`) fills the thinnest parts to `DEPTH_PARTS` (4.4) with a line on a
 channel no part plays (the sawtooth too, as a harmony; the small set a
-harmony), any free channel while still thin; `Swing` (step `swing`)
+harmony), any free channel while still thin, each tried on a dry run that
+may add no review tip nor make a part print as another (`Keeps`); `Swing` (step `swing`)
 gives lively, cozy, playful and festive songs a light `set_swing` on half
 their seeds; `Ambience` runs before the tips. `KindPolish(Kind, Flavour)`
 gives every kind `fades_under` (fades on all but the melody) and `duty`
 (`AddDutyChanges`: a pulse width per part on accompanying pulses, Vxx on
-each part's first note) and action and tense `staccato`, and no vibrato
+each part's first note) and action `staccato` (tense's ostinato cut short was heard as a thin bass), and no vibrato
 where the flavour's lead has none (finish_song reads the kept flavour, the
 review's vibrato tip agrees). Also: `song_shape` takes `kind`
 (`ShapeRequest::Kind`), the break's bell keeps under `MELODY_HIGHEST` on
