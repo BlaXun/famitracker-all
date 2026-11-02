@@ -36563,7 +36563,9 @@ void WhatNext::Fill()
 		std::vector<ThinMeasure::Part> Order = M.List;
 		std::stable_sort(Order.begin(), Order.end(), [](const ThinMeasure::Part &a, const ThinMeasure::Part &b) {
 			return a.Mean < b.Mean; });
-		std::set<int> UsedElsewhere;
+		// (a second pass, only while the song is thin as check_song hears it: any channel free in the part, the unused first)
+		const int Passes = M.Parts < THIN_PARTS ? 2 : 1;
+		for (int Pass = 0; Pass < Passes; ++Pass)
 		for (size_t p = 0; p < Order.size(); ++p) {
 			const ThinMeasure::Part &P = Order[p];
 			if (P.To - P.From + 1 < 4 || P.Mean >= DEPTH_PARTS + 1.0)
@@ -36593,6 +36595,9 @@ void WhatNext::Fill()
 						All.push_back(c);
 				for (size_t f = 0; f < All.size(); ++f)
 					if (!HasNotesIn(S, All[f], 0, S.Time.TotalRows()))
+						Free.push_back(All[f]);
+				for (size_t f = 0; f < All.size() && Pass == 1; ++f)
+					if (HasNotesIn(S, All[f], 0, S.Time.TotalRows()))
 						Free.push_back(All[f]);
 			}
 			for (size_t f = 0; f < Free.size() && f < 3; ++f) {

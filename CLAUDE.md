@@ -3296,6 +3296,59 @@ kind, the review, what_next, the warning, the fix (12 notes moved, no
 clash added, a second polish has nothing), Sonnet left alone and three
 grown versions; `song_file_checks` checks `off_chord` on keep/ and flag/.
 
+Depth back (from `feat-depth-back`): the user on six songs made by following
+`what_next` (Frozen Lake, Lava Forge, Clockwork Factory, Haunted Library,
+Market Festival, Mossy Forest Path): "none of these reach the level of the
+early 30 songs you created". Rules made from earlier verdicts ("few parts,
+each with one job", "chords rest in A", intros starting sparse, calm songs
+without drums) together made songs thin. The yardstick, measured on the
+soundtrack's first 30 tracks (`gen4/depth-yardstick.md`, the comment before
+`THIN_PARTS`): 4.4-5.6 melodic channels sounding a bar on the VRC6 (6-7
+parts with the drums, every channel their chips have, the noise in most
+bars even when calm), 6-29 instruments, a new one in half to two thirds of
+the 8-bar blocks after A, chord parts in every bar of A with a figure that
+changes from block to block, intros of 3-4 parts, effects at kind rates
+(Axy nearly everywhere, Sxx in every action song, Fxx swing in half the
+lively and soft ones, 9.5-14.4 a bar on the 2A03 alone). check_song's `thin`
+(`ThinFindings`, `MeasureThin`, `ThinReasons` before `ArrangeFindings`,
+`ARRANGE_THIN`, `FOUND_THIN`, severity medium; `PROBLEM_THIN`, the panel's
+`WORDS`, `song_file_checks`' kinds and its `-thin` printout, `ToolSet::Thin`):
+a body (named sections but free ones, else from the loop's start, 16 bars
+at least, every part with notes) under `THIN_PARTS` (3.6) melodic channels a
+bar on chips of `THIN_CHANNELS` (5) or more, under `THIN_SOUNDS` (6)
+instruments, or on fewer channels under `THIN_EFFECTS` (4) effects a bar.
+None of the first 30, the 44 kept songs or flag/ gets it (least 3.88,
+The Narrows); of the six, Frozen Lake, Haunted Library, Mossy Forest Path,
+Market Festival and Clockwork Factory do, Lava Forge (3.67, the user's
+favourite) doesn't. Its fix: the thinnest part's family chords copied in
+(`ThinFill`), else a counter-line; then `polish` `fades`, `duty`,
+`staccato`. `what_next`: every kind plays drums (a quiet kind's pool: the
+calm groove, light, noise alone); intros get A's chords and bass for every
+kind, and the beat in their last bar; `Develop` never rests the chords to
+free a channel; `chords_throughout`'s fix is `vary_part` `restrike` `half`
+over the contrasting parts and the climax (the chords change figure, A
+keeps its lighter one), given by `WhatNext::Fill` after the review's tips
+(a plain-triad rewrite undid it); `Fill` (after the highlight, step id
+`thin`) fills the thinnest parts to `DEPTH_PARTS` (4.4) with a line on a
+channel no part plays (the sawtooth too, as a harmony; the small set a
+harmony), any free channel while still thin; `Swing` (step `swing`)
+gives lively, cozy, playful and festive songs a light `set_swing` on half
+their seeds; `Ambience` runs before the tips. `KindPolish(Kind, Flavour)`
+gives every kind `fades_under` (fades on all but the melody) and `duty`
+(`AddDutyChanges`: a pulse width per part on accompanying pulses, Vxx on
+each part's first note) and action and tense `staccato`, and no vibrato
+where the flavour's lead has none (finish_song reads the kept flavour, the
+review's vibrato tip agrees). Also: `song_shape` takes `kind`
+(`ShapeRequest::Kind`), the break's bell keeps under `MELODY_HIGHEST` on
+the melody's channel, a counter-line's bell only for calm and spacious
+kinds, action chords plain before the melody (then `Colors`), `grow_melody`
+says when the hook sits high for the kind, `add_chords_and_bass` warns of a
+harmony written over the old chords, the cold flavour keeps the tune in the
+kind's octave. Recipes, instructions and the style guide ask for 5-7 parts
+and chords that change. `CheckDoneReview` holds every walk to no `thin`;
+`api_tests` takes `API_TESTS=TestA,TestB` and `TestAllKindsTogether`
+`API_KIND`, `API_SHOW_THIN`.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
