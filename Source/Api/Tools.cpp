@@ -35000,6 +35000,12 @@ void WhatNext::LikeTexture()
 		A.Set("variation", "rest");
 		A.Set("from_bar", F.FirstBar);
 		A.Set("to_bar", F.LastBar);
+		// (never where the rest leaves the song thin for the NES, check_song's thin: the chords change rather than vanish,
+		// feat-depth-back; Needle Man's chords rested in A left it 3.25 parts a bar)
+		int Added = 0;
+		if (!TryWriteHearing(S, "vary_part", A, F.FirstBar, F.LastBar, m_Melody, Added, [&](Session &After) {
+				return ThinReasons(MeasureThin(After, 1, After.Time.BarCount())).empty(); }))
+			return;
 		Step("texture", "vary_part", A, Format("%s's chord part rests where the lead carries its %s (in %d of its %d %s phrases): "
 			"the chords rest in %s (bars %d-%d) and play elsewhere, so the song breathes as it does.", m_Like.Name.c_str(), RestMain ?
 			"main phrases" : "other phrases", RestMain ? MainRest : OtherRest, RestMain ? MainLead : OtherLead, RestMain ? "main" : "other",

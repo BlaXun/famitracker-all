@@ -3336,7 +3336,10 @@ keeps its lighter one), given by `WhatNext::Fill` after the review's tips
 `thin`) fills the thinnest parts to `DEPTH_PARTS` (4.4) with a line on a
 channel no part plays (the sawtooth too, as a harmony; the small set a
 harmony), any free channel while still thin, each tried on a dry run that
-may add no review tip nor make a part print as another (`Keeps`); `Swing` (step `swing`)
+may add no review tip nor make a part print as another or share
+another's device (`Keeps`), never in A's repeats (the development's); a song
+with too few sounds gets the highlight's new lead (`HighlightStep`); no
+fill once the song is finished; `Swing` (step `swing`)
 gives lively, cozy, playful and festive songs a light `set_swing` on half
 their seeds; `Ambience` runs before the tips. `KindPolish(Kind, Flavour)`
 gives every kind `fades_under` (fades on all but the melody) and `duty`
