@@ -25139,10 +25139,21 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	if (Trimmed >= 0.05)
 		Text += Format(", %.1f dB trimmed after encoding so the decoded file's loudest peak stays under -1 dBFS (OGG overshoots on "
 			"square waves and noise)", Trimmed);
-	if (FadeIn > 0)
+	const bool OneLoop = Cut.Loops && (Cut.StartPops || Cut.Repeat);	// a whole song's loop after a fade that plays once
+	if (FadeIn > 0 && !OneLoop)
 		Text += Format(", fading in over its first %d ms (the drum samples' level, Zxx, set as it starts would click)",
 			static_cast<int>(FadeIn * 1000 / static_cast<size_t>(std::max(1, SampleRate))));
-	if (!Cut.Loops)
+	if (OneLoop)
+		// One time through the song, never two: what it starts from, and why
+		Text += Format(", loops as a whole, one time through the song (%s): its first %d ms fade in and play once, and the loop "
+			"starts right after them.%s", SecondsText((Cut.Length() - Cut.LoopStart) / static_cast<double>(SampleRate)).c_str(),
+			static_cast<int>(Cut.LoopStart * 1000 / std::max(1LL, static_cast<long long>(SampleRate))),
+			!Cut.Repeat ? " The fade is over the drum samples' level (Zxx) set as the song starts, which could click." :
+			Cut.Tail ? " The file is the song as it plays on repeat, so the echo and reverb of its end (the mixer's Space) carry "
+				"into its start as the game loops." :
+			" The file is the song as it plays on repeat, since its first time through starts differently (check_loop says why; "
+				"after fix_loop both start alike).");
+	else if (!Cut.Loops)
 		Text += Cut.Tail ? ", plays once (the song halts), its last notes ringing out in the mixer's space." :
 			", plays once (the song halts).";
 	else if (Cut.LoopStart < SampleRate / 100)	// moved a moment to where the waves meet
@@ -25150,7 +25161,6 @@ std::string ExportTrack(Session &S, int Track, float Quality, bool Normalize, do
 	else
 		Text += Format(", the first %s once, then the loop from %s to the end.%s", SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
 			SecondsText(Cut.LoopStart / static_cast<double>(SampleRate)).c_str(),
-			Cut.StartPops ? " The loop is the song's second time through, since its very start pops." :
 			Cut.Tail ? " The loop is the song's second time through, so the echo and reverb of its end (the mixer's Space) carry "
 				"into its start as the game loops." :
 			Cut.SecondPass ? " The loop is the song's second time through, since the first starts differently (check_loop says why)." : "");

@@ -3296,6 +3296,34 @@ kind, the review, what_next, the warning, the fix (12 notes moved, no
 clash added, a second polish has nothing), Sonnet left alone and three
 grown versions; `song_file_checks` checks `off_chord` on keep/ and flag/.
 
+Exports of one loop and a bass under tom fills (from `fix-export-listen`):
+`export_for_game` wrote the Market Festival (a 57.6 s song looping from bar
+1) as 115.2 s, its first time through once and then the second as the loop,
+"since its very start pops": a song whose DPCM plays samples with a `Zxx` on
+its first row (`StartStep` in `ExportTrack`) took the second time through
+whatever else, and its seam wasn't clean either (VRC6 Pulse 2's bell at 15
+the first time, 7 on repeat), which took it too. `CutSides` in
+`GameAudio.cpp` now gives a song that loops as a whole (its loop within
+10 ms of the render's start) one time through, never two: as it starts
+(`StartPops`) or, when the first time differs (`Tail`, or a seam neither
+clean nor within 0.01), as it plays on repeat (`GameCut::Repeat`: the file
+from the second time through); either way its first 40 ms fade in and play
+once and the loop runs from right after them as far into the next time
+through, so it keeps its length. After an intro a differing first time
+still makes the loop the second time through (the intro has to lead into
+it). The reply says which and why (`OneLoop` in `ExportTrack`). listen heard
+the same song's triangle (root-fifth half notes, "Plain bass") warble 14
+times a second, -51 to +54 cents, or swing two semitones, on the notes under
+the DPCM's tom fills: under FamiTracker (Wine) the triangle listened to alone
+measured clean and with the DPCM's stem beside it warbled, so `PinCleaned`'s
+share of the samples' stem, set a second at a time by the kicks' bleed, took
+the toms out of notes they hadn't bled into. On a shared pin (`SharesPin`)
+`Ears::Measure` measures a note that wobbles again on its render as is and
+keeps the steadier: a note wobbles only when it does both ways (the
+Airship's bleed, which the cleaning takes out, still doesn't).
+`TestTriangleUnderTomFills` (`listen_tests`) and `TestCut`'s whole-song
+cases cover them; `TestExport` keeps an intro's second time through.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

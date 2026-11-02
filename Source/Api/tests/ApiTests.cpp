@@ -9175,7 +9175,8 @@ void TestCut()
 	CHECK(CutForGame(Render, 8000, Rows, Marks, true, true, Cut, Error, true) && Cut.FadeIn == 320);
 
 	// A song whose start pops (the DPCM level set from silence) fades in over its first 40 ms, outside the loop: one that
-	// loops as a whole repeats from its second time through
+	// loops as a whole loops from right after them, one time through long (it was the second time through, which doubled the
+	// Market Festival's file, 115.2 s for a 57.6 s loop: fix-export-listen)
 	std::vector<TimedRow> Whole(2);
 	Whole[0].Row = 0;
 	Whole[0].LoopStart = true;
@@ -9186,8 +9187,19 @@ void TestCut()
 	Thrice.push_back(std::make_pair(0, 8100LL));
 	Thrice.push_back(std::make_pair(0, 16100LL));
 	CHECK(CutForGame(Render, 8000, Whole, Thrice, false, true, Cut, Error) && !Cut.SecondPass && Cut.LoopStart < 20 && Cut.FadeIn == 0);
-	CHECK(CutForGame(Render, 8000, Whole, Thrice, false, true, Cut, Error, true) && Cut.SecondPass && Cut.StartPops);
-	CHECK(Cut.LoopStart == 8000 && Cut.End == 16100 && Cut.FadeIn == 320);
+	CHECK(CutForGame(Render, 8000, Whole, Thrice, false, true, Cut, Error, true) && !Cut.SecondPass && Cut.StartPops);
+	CHECK(Cut.LoopStart == 320 && Cut.End == 8100 + 320 && Cut.FadeIn == 320);
+	CHECK_EQ(Cut.Length() - Cut.LoopStart, 8000LL);					// one time through
+	// A first time through that starts otherwise (louder for its first 100 samples): the song as it plays on repeat, one
+	// time through after its first 40 ms, faded in, never the first time once and then the second
+	std::vector<float> Louder = Render;
+	for (size_t i = 100; i < 200; ++i)
+		Louder[i] *= 2.0f;
+	CHECK(CutForGame(Louder, 8000, Whole, Thrice, false, false, Cut, Error) && Cut.Repeat && !Cut.SecondPass && !Cut.StartPops);
+	CHECK(Cut.Begin == 8100 && Cut.LoopStart >= 304 && Cut.LoopStart <= 336 && Cut.FadeIn >= 304 && Cut.FadeIn <= 320);
+	CHECK_EQ(Cut.Length() - Cut.LoopStart, 8000LL);
+	// ...the same where the notes say the seam is clean
+	CHECK(CutForGame(Louder, 8000, Whole, Thrice, false, true, Cut, Error) && !Cut.Repeat && Cut.Begin == 100);
 	// With an intro the loop stays the first time through
 	Marks.clear();
 	Marks.push_back(std::make_pair(0, 100LL));
@@ -9418,11 +9430,14 @@ void TestMixerDepthTools()
 		CHECK(!R.IsError && !Contains(R.Text, "second time through"));
 		CHECK(!Run(One, "set_mixer", "{\"channels\": \"Pulse 1\", \"space\": 40}").IsError);
 		R = Run(One, "export_for_game", "{\"normalize\": false}");
-		CHECK_HAS(R.Text, "The loop is the song's second time through, so the echo and reverb of its end (the mixer's Space) carry "
+		// (a song that loops as a whole: one time through as it plays on repeat, never two)
+		CHECK_HAS(R.Text, "loops as a whole, one time through the song (");
+		CHECK_HAS(R.Text, "The file is the song as it plays on repeat, so the echo and reverb of its end (the mixer's Space) carry "
 			"into its start as the game loops.");
+		CHECK(!Contains(R.Text, "once, then the loop"));
 		// ...not when the space sounds nothing (no room, no echo)
 		CHECK(!Run(One, "set_mixer", "{\"room\": \"none\"}").IsError);
-		CHECK(!Contains(Run(One, "export_for_game", "{\"normalize\": false}").Text, "second time through"));
+		CHECK(!Contains(Run(One, "export_for_game", "{\"normalize\": false}").Text, "as it plays on repeat"));
 		CHECK(!Run(One, "set_mixer", "{\"room\": \"hall\"}").IsError);
 		One.Rows[0][120].Effect[0] = EFF_HALT;
 		One.Rows[0][120].Param[0] = 0;
