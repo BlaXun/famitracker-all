@@ -104,6 +104,8 @@ struct ShapeRequest {
 	int Variant;			// from 1; 0: from the track's name (and the seed)
 	unsigned int Seed;		// the song's seed (SongSeed.h), rolled by song_shape's seed; 0: the name alone picks the variant
 	int Roll;				// song_shape's seed argument, 1 when none
+	std::string Kind;		// what_next's kind given to song_shape (from feat-depth-back): its shape when no shape is named, and no
+							// other kind read from the words
 	ShapeRequest() : Bars(0), Variant(0), Seed(0), Roll(1) {}
 };
 

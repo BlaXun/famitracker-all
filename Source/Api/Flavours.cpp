@@ -41,7 +41,8 @@ const FlavourInfo FLAVOURS[] = {
 		"ice and snow: thin, glassy, bell-like sounds, high and sparse, with a little echo",
 		"music box|falling strike|keys", "broken|arpeggio", "half|pedal|roots", "calm|lively", -1,
 		"12.5%", "none", "thin and glassy (12.5%), without a vibrato", "light", true, true, 0, "wind",
-		"Cold (ice, snow): thin, glassy, bell-like sounds up high (a struck lead at 12.5% without a vibrato), sparse broken chords "
+		"Cold (ice, snow): thin, glassy, bell-like sounds (a struck lead at 12.5% without a vibrato, the tune in the kind's own "
+		"octave; bells and sparkles above it, never the tune), sparse broken chords "
 		"or arpeggios, a bass on half bars or a pedal, a little slower than the kind's own pace; once the tune is there the "
 		"chords' added ninths sparkle like frost; an echo and a little Space (set_mixer); wind on the noise in a quiet place; "
 		"light drums on the noise alone, ticks rather than thumps.",

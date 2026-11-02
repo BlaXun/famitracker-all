@@ -378,8 +378,8 @@ const NextKind KINDS[] = {
 		"not sad, slow and spacious, a drone underneath and an echo in the gaps",
 		"sparse: 1-3 notes a bar, long notes and gaps of a beat or more for the echo to answer, steps and a rising fourth "
 		"or a tritone's lean now and then, the high note rare",
-		"the echo joining in the repeat, a second voice in long notes, a bar of the drone alone in the break; no backbeat (a "
-		"soft tick on the noise at most)",
+		"the echo joining in the repeat, a second voice in long notes, a bar of the drone alone in the break; no backbeat (soft "
+		"ticks on the noise in every part, light)",
 		"breath|falling strike", "lush|broken", "pedal|roots", "|calm", "90|100", "D dorian|A minor|E dorian|G dorian|E minor", true },
 	// Open fields, travel, an airship flight: a wide tune that leaps upward over a rolling bass and a steady march, major,
 	// 128.6 BPM (speed 7); a lively stage's band (lively's style, mix and checks), broken chords plain under the leaps,
@@ -410,7 +410,7 @@ const NextKind KINDS[] = {
 		"drifting: long notes over the rolling chords, 2-3 a bar, rising and settling by step, a phrase of two bars that ends "
 		"held, as if carried",
 		"an echo a beat behind from the first repeat, a second voice in long notes, the arpeggios moved up an octave in B; "
-		"no drums (a soft shaker of hi-hats at most)",
+		"soft drums (a shaker of hi-hats, the calm groove light), never a backbeat",
 		"breath|falling strike", "broken|lush", "half|roots|pedal", "", "90|81.8", "F major|D major|G major|C major", false },
 	// Minigames, funny characters, a toy shop: major and bouncy, short cheeky phrases, stabs on the offbeats over a
 	// root-and-fifth bass (polish's staccato makes it hop), light drums; the general recipe's style and mix, -20 LUFS
@@ -472,7 +472,7 @@ const NextKind KINDS[] = {
 		"a melancholic lead %s: long notes that sigh.", { 0, 0 },
 		{ "| i | III | VII | v | i | III | VII | VII |", "| III | VII | v | i | III | VII | v | v |" },
 		"grief, loneliness, rain, an abandoned home, a lost friend", "openly sad: a slow, singing tune with long notes and "
-		"sighs over sparse soft chords, no drums; it may stay minor (unlike bittersweet, which borrows its sadness)",
+		"sighs over soft chords, soft ticks on the noise; it may stay minor (unlike bittersweet, which borrows its sadness)",
 		"singing: long notes, sighs (a falling second, the upper note on the beat) at the phrases' ends, a slow climb to one "
 		"high note a section, 1-3 notes a bar",
 		"the tune alone for a phrase, an echo far behind in the repeat, a second voice in long notes, the chords thinning",
@@ -489,8 +489,8 @@ const NextKind KINDS[] = {
 		"than a melody to hum, an echo, quiet or no percussion, the form loose",
 		"sparse motifs of 2-4 notes, far apart (a bar or two of rests between them), long notes, intervals of a fourth or a "
 		"fifth, no hook to hum",
-		"the pads changing chord slowly, the motif answered by its echo, a part dropping out; drums none, or a soft, "
-		"irregular tick",
+		"the pads changing chord slowly, the motif answered by its echo, a part coming in each section; soft ticks on the "
+		"noise, never a backbeat",
 		"breath|falling strike", "lush|broken", "pedal|roots", "", "75|64.3|81.8", "E minor|D dorian|A minor|C minor", true },
 };
 

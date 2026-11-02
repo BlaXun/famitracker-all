@@ -471,8 +471,8 @@ const Section SECTIONS[] = {
 		"on the other side); the high note rare.\n"
 		"- A lead that breathes in and holds low (design_instrument kind breath), or a soft pulse at 25%; a faint vibrato that "
 		"waits.\n"
-		"- No backbeat: no drums, or a soft tick on the noise in one section; a drip or a far-off clank in the break is the "
-		"charm.\n"
+		"- No backbeat, but soft ticks on the noise in every part (the calm groove, light); a drip or a far-off clank in the "
+		"break is the charm.\n"
 		"- Calm's style: polish, mix, check_song and review_arrangement with style calm. export_for_game at -21 LUFS." },
 	{ "adventure", "Adventure (open fields, travel, an airship flight)",
 		"adventure journey travel voyage field fields road overworld airship flight flying explore quest plains",
@@ -497,7 +497,7 @@ const Section SECTIONS[] = {
 		"step, 2-3 a bar.\n"
 		"- Plenty of echo: add_echo a beat behind on the other side from the first repeat, Space on the lead and the chords "
 		"(set_mixer room hall).\n"
-		"- Soft or no drums: none, or soft hi-hats like a shaker.\n"
+		"- Soft drums: soft hi-hats like a shaker (the calm groove, light), never a backbeat.\n"
 		"- Calm's style: polish, mix and the checks with style calm. export_for_game at -21 LUFS." },
 	{ "playful", "Playful (minigames, funny characters, a toy shop)",
 		"playful minigame minigames game toy toys silly funny clown goofy cheeky circus prank bouncy",
@@ -593,7 +593,8 @@ const Section SECTIONS[] = {
 	// argument leans the kind's picks this way (Flavours.cpp), any kind with any flavour
 	{ "cold", "Flavour: cold (ice, snow, a frozen place)", "cold ice icy snow snowy frozen frost winter glacier arctic crystal",
 		"Thin and glassy, high and sparse, with a little echo:\n"
-		"- Leads struck like bells (music box, falling strike, keys) at 12.5%, no vibrato; notes up in octave 4-5, few of them.\n"
+		"- Leads struck like bells (music box, falling strike, keys) at 12.5%, no vibrato, the tune in the kind's own octave "
+		"(3 calm, 4 lively); bells and sparkles over it in octaves 4-5, few of them.\n"
 		"- Chords broken or arpeggiated, thin; once the tune is there, added ninths sparkle (polish touches colors, colors add).\n"
 		"- A bass on half bars or a pedal; a pace a little slower than the kind's own.\n"
 		"- An echo a beat behind, a little Space (set_mixer); wind on the noise in a quiet place (add_ambience kind wind).\n"

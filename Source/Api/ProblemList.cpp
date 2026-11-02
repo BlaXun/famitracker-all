@@ -32,16 +32,16 @@ namespace {
 // The listen tool's are named apart ("heard"): its JSON's kinds are its own, read by their severity
 const char *const KIND_IDS[PROBLEM_KINDS] = { "vanishing", "click", "clash", "warble", "heard", "range", "heard_look", "silent", "busy",
 	"key", "held", "phrases", "bass", "sound", "faders", "repeat", "short_loop", "intro", "heard_detail", "clash_detail",
-	"too_busy", "climax_repeats", "chord_drone", "chords_throughout", "monotone", "off_chord" };
+	"too_busy", "climax_repeats", "chord_drone", "chords_throughout", "monotone", "off_chord", "thin" };
 const char *const KIND_TITLES[PROBLEM_KINDS] = {
 	"Notes that vanish", "Notes that click", "Clashes", "Warbles", "Heard when it plays", "Out of range", "Heard: worth a look",
 	"Silent bars", "Busy bars", "Outside the key", "Leads that hold steady", "A melody in one-bar pieces", "A thin or doubled bass",
 	"Sounds the channel can't play", "Faders doing the mix", "Repeats that copy", "A short loop", "An intro that jumps", "Heard: details, maybe meant",
 	"Clashes: details, maybe meant", "Too busy for the NES", "A climax that repeats", "Chords that rub the tune",
 	"Chords that never rest",
-	"A melody that doesn't catch", "Strong beats off the chord"
+	"A melody that doesn't catch", "Strong beats off the chord", "Too thin for the NES"
 };
-const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1, 1, 2, 2, 2, 1, 2, 2 };
+const int SEVERITIES[PROBLEM_KINDS] = { 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1, 1, 2, 2, 2, 1, 2, 2, 2 };
 
 int IntOf(const Json &Object, const char *Name, int Default)
 {

@@ -1470,9 +1470,11 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 		std::string Line = Trimmed(Request.Shape).empty() ? "the " + Lower(pBase->Title) + (Words.pShape != 0 ? std::string() :
 			std::string(" (no word for a shape, so the general one)")) : "the " + Lower(pBase->Title) + " asked for";
 		Out.FromWords = "From the words: " + Line + (Words.Why.empty() ? std::string(".") : " (" + Words.Why + ").");
-		Out.Kind = Words.Kind;
-		if (!Words.KindWords.empty())
+		Out.Kind = Request.Kind.empty() ? Words.Kind : Request.Kind;
+		if (!Words.KindWords.empty() && Request.Kind.empty())
 			Out.FromWords += "\n" + KindFromWordsLine(Words);
+		else if (!Words.KindWords.empty() && Request.Kind != Words.Kind)
+			Out.FromWords += "\nKind: " + Request.Kind + ", as given (the words alone would say " + Words.Kind + ").";
 	}
 	const std::string &Title = pBase->Title;
 	FormList Form;

@@ -714,9 +714,9 @@ is the recipes':
    where nothing would carry across into A, and the loop after the intro.
 5. The review's tips that suit the kind (a lively stage that doesn't build
    gets a harmony in its last part, the climax), with `check_song`'s
-   lighter fixes: a chord part that plays the same way all through rests in
-   A and its repeats (`chords_throughout`), so the chords come in with the
-   intro, B, the break and the climax.
+   lighter fixes: a chord part that plays the same way all through changes
+   figure in B and the climax (`chords_throughout`, `vary_part` `restrike`),
+   keeping its lighter one in A and its repeats.
 6. An echo, last of the parts, since it copies the melody's notes as they
    are. Then a highlight, when every part of the song (A, A', B...) still
    plays the same channels with the same sounds: the melody takes a new
@@ -1048,12 +1048,38 @@ JSON as `fix`.
   arpeggio the whole song... an overused effect"; of the 44 songs the user
   keeps, the chord parts that play as often restrike and vary their chords
   (their commonest rhythm in at most 84% of their bars). Fix: `vary_part`
-  with `rest` over the sections where the melody carries the song (A and
-  its repeats, a verse, a chorus) that the chords play in, so they play in
-  the intro, B, a bridge, the break and the climax; when none of those
-  plays with the melody, the last part where it carries keeps them. Without
-  named sections it's advice. A part with a `chord_drone` finding gets that
-  one alone.
+  with `restrike` (rhythm `half`) over the contrasting parts and the climax
+  (B, a bridge, the climax), so the chords change figure there and keep
+  their lighter one where the melody carries the song (A and its repeats, a
+  verse, a chorus); without such a part, the last part where it carries
+  changes. The soundtrack's first 30 tracks keep their chord parts in every
+  section, lighter in A: they change figure, never vanish. Without named
+  sections it's advice. A part with a `chord_drone` finding gets that one
+  alone.
+- **Thin for the NES** (`thin`, severity `medium`): the song's body (its
+  named sections but the intro, breaks and outros, else the bars from the
+  loop's start; 16 bars at least, every part with notes) sounds too few
+  parts, too few sounds or too few effects. On chips of 5 melodic channels
+  or more, under 3.6 of them sound a bar on average (a note sounds until the
+  next, a release or a halt, 4 bars at most); under 6 instruments play in
+  the body; or, on fewer channels (the 2A03 alone), under 4 effects a bar
+  (`Bxx`, `Cxx`, `Dxx` and `Zxx` aside). Measured on the soundtrack's first 30
+  tracks, which the user prefers to every song made since: 4.4-5.6 melodic
+  channels a bar on the VRC6 (every channel their chips have, the noise in
+  most bars even when calm), 6-29 instruments, 9.5-14.4 effects a bar on the
+  2A03 alone; the 44 kept songs 3.88 channels and 6 instruments at the least.
+  Of six songs the user heard as thin, Frozen Lake (3.50 channels, 4
+  instruments), Haunted Library (3.57, 5), Mossy Forest Path (2.84), Market
+  Festival (3.57) and Clockwork Factory (2A03 alone, 1.15 effects a bar) get
+  it; Lava Forge (3.67, 8), the user's favourite of them, doesn't. Fix: where
+  it's thinnest, the chords its family plays elsewhere copied in
+  (`copy_bars`), else a counter-line on a free channel (`add_counter_melody`);
+  then `polish` with `fades`, `duty` and `staccato` for the effects, `duty`
+  alone for the sounds. `what_next` fills a song further, to 4.4 channels a
+  bar where a channel no part plays is free (`add_counter_melody`, or on the
+  small set `add_harmony`), after the development's devices, the echo and
+  the highlight. `song_file_checks <file or folder> -thin` prints the
+  measure.
 - `polish` with the touch `colors` works on a chord part's lush chords
   (instruments named as `add_chords_and_bass` names them, "Lush m(add9)")
   and `0xy` chords. A color (an added ninth, a seventh, a sixth) rubs the
@@ -1176,7 +1202,7 @@ pattern editor and the piano roll (see `ROADMAP.md`, "Problems panel").
 `counts` (the text's: `vanishing`, `click`, `clash`, `range`, `silent`,
 `busy`, `key` and `held`, notes that vanish counted by the note, then the
 arrangement's `phrases`, `bass`, `sound`, `faders`, `repeat` and
-`short_loop`, `intro`, `too_busy`, `climax_repeats`, `chord_drone`, `chords_throughout`, `monotone` and `off_chord`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
+`short_loop`, `intro`, `too_busy`, `climax_repeats`, `chord_drone`, `chords_throughout`, `monotone`, `off_chord` and `thin`, see [What drafts miss](#what-drafts-miss), and `warble`), `style`
 (`any`, `calm` or `lively`, as the check took the track), `unused_channels`
 and `findings`, heard worst first as in the text. Each finding has:
 
@@ -1337,7 +1363,7 @@ before a batch of changes.
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one. Over a chord from outside the key (a borrowed bVI or bVII, a secondary dominant) the voice takes the scale that chord sounds in: under Ebadd9 in G major G aeolian's notes, under F G mixolydian's, never an Eb7's Db or an F7's Eb. Of the chords the other parts play, a note outside the key that no part plays isn't the chord's (an E bass under C and E is heard as an E augmented, whose G# nobody plays) |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line holds a note a bar, rests where the melody does and answers only in rests of two beats or more, briefly (under a melody with no such rest the reply says there was no room to answer); `rests` (fill, the default, answer or leave) chooses that directly |
 | `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively, action or cozy (lively's notes in calm's phrases) shapes them. See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
-| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; when asked, `clashes`: an accompaniment's note a semitone from another part moves onto the chord the others play (see [Clashes](#clashes)), and `colors`: a chord part's colors that rub the melody taken out, or with `colors` `add` plain lush chords given the rich colors that fit it (see [What drafts miss](#what-drafts-miss)); style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents. Polishing again changes nothing it did: a part accented already keeps its volumes. `strong_beats` (the call of `check_song`'s `off_chord`) moves the melody's notes off the chord on strong beats with only the bass under them to the nearest chord tone that rubs nothing. `unison` (the call of `listen`'s beating) puts the notes of a part that double another part's pitch, or an octave of it, for half the note or a quarter of a second, on that part's pitch as the two chips play it: `P80` for a detuned echo (an echo's `P81`) on the melody's chip, or the step or two of `Pxx` that matches where two chips' registers round a high note apart (a VRC6 sawtooth an octave under a pulse at A-5 sits 15 cents off it), its fine pitch back on the next note; without `channels` the melody stays as it is. `add_echo` and `add_harmony` write that fine pitch themselves on a double on another chip. `staccato` cuts the bass short only where the channel plays the bass (not a sawtooth counter-melody over the triangle's) and not in bars the melody rests in, where a break's long notes hold it up |
+| `polish` | Accents, a vibrato that comes in on the melody's long notes, gaps between repeated triangle notes, a nudge for notes whose vibrato clicks on the 2A03's pulses; when asked, `clashes`: an accompaniment's note a semitone from another part moves onto the chord the others play (see [Clashes](#clashes)), and `colors`: a chord part's colors that rub the melody taken out, or with `colors` `add` plain lush chords given the rich colors that fit it (see [What drafts miss](#what-drafts-miss)); style calm leaves out accents and puts the shallowest vibrato (`451`) about half a second into long notes; style lively keeps the accents. Polishing again changes nothing it did: a part accented already keeps its volumes. `strong_beats` (the call of `check_song`'s `off_chord`) moves the melody's notes off the chord on strong beats with only the bass under them to the nearest chord tone that rubs nothing. `unison` (the call of `listen`'s beating) puts the notes of a part that double another part's pitch, or an octave of it, for half the note or a quarter of a second, on that part's pitch as the two chips play it: `P80` for a detuned echo (an echo's `P81`) on the melody's chip, or the step or two of `Pxx` that matches where two chips' registers round a high note apart (a VRC6 sawtooth an octave under a pulse at A-5 sits 15 cents off it), its fine pitch back on the next note; without `channels` the melody stays as it is. `add_echo` and `add_harmony` write that fine pitch themselves on a double on another chip. `staccato` cuts the bass short only where the channel plays the bass (not a sawtooth counter-melody over the triangle's) and not in bars the melody rests in, where a break's long notes hold it up. `duty` gives each part of the song a pulse width of its own on the pulses that accompany (not the melody, nor an instrument with a duty sequence): A's family keeps A's, a contrasting part and the climax others, `Vxx` on each part's first note. `fades_under` is `fades` on every part but the melody. `what_next`'s polish and `finish_song`'s give each kind its touches at the rates the soundtrack's first 30 tracks use them: the style's own, `fades_under` and `duty` for every kind, `staccato` for action and tense; no vibrato where the flavour's lead has none (cold, mechanical) |
 | `copy_bars` | Repeats bars elsewhere (A A B A), moved up or down if asked; the copy starts as the original played. The song's own jumps and ends stay where they were, and the reply names copies past the loop's end, which don't play until `set_loop` moves it. A whole section copied becomes its repeat, numbered the way the song numbers it: `A 2`, or `A3` beside an `A2`, never a name that reads as another's |
 | `insert_bars` | Puts empty bars in at a bar, in every channel: everything after moves later, and the loop's jump back (`Bxx`) and the song's end move with it, so it loops as before (bars put in right after the end play too). Whole frames go into FamiTracker's frame list, as Insert frame does, so the frames after keep their patterns and linked clips; a bar or two inside a frame moves the rows after instead. Before the loop's start, inside a frame, only whole frames go in, since FamiTracker jumps back only to a frame's start. Bars put in after a swing swing as the bars before them do (direct changes only; undoable) |
 | `remove_bars` | Takes bars out the same way: what comes after closes the gap, and the loop and the song's end move with it (direct changes only; undoable) |

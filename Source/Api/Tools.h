@@ -157,6 +157,8 @@ public:
 	std::string RepeatShapes();
 	// Each song's melody notes on strong beats off the chord (OffChordBeats), for calibrating check_song's off_chord
 	std::string StrongBeats();
+	// Each song's texture as check_song's thin measures it (MeasureThin), for calibrating it
+	std::string Thin();
 	// For FamiTracker's sound browser (Instrument > Sound browser): every sound the song can get, as find_sound
 	// lists them (SoundIndex.h), Cursor the channel the user is on (-1 for none); false with the reason. Without
 	// Library, the ready-made sounds and the song's own only, quickly (the main window's Listen)

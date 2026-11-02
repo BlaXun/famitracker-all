@@ -59,7 +59,8 @@ const CheckedKind KINDS[] = { { "too_busy", "oo busy for the NES", true }, { "ch
 	{ "climax_repeats", "the song's high point, plays the melody", false },
 	{ "chords_throughout", "A chord part that plays all through", true },
 	{ "monotone", "doesn't catch: in ", false },
-	{ "off_chord", "lands off the chord on strong beats", true } };
+	{ "off_chord", "lands off the chord on strong beats", true },
+	{ "thin", "Thin for the NES", true } };
 const size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
 std::vector<std::string> FtmFiles(const std::string &Folder)
@@ -238,6 +239,29 @@ int main(int argc, char *argv[])
 					std::printf("%s\n", Tools.Call("read_notes", Args).Text.c_str());
 				}
 			}
+		}
+		return 0;
+	}
+	// -thin: each song's texture as check_song's thin measures it (Thin), for calibrating it: the folder's songs (or one
+	// .ftm file given), then keep/ and flag/, the first track
+	if (argc > 2 && std::string(argv[2]) == "-thin") {
+		std::vector<std::string> Files;
+		if (Folder.size() > 4 && Folder.substr(Folder.size() - 4) == ".ftm")
+			Files.push_back(Folder);
+		else {
+			const char *const SUBS[] = { "", "/keep", "/flag" };
+			for (size_t s = 0; s < 3; ++s) {
+				const std::vector<std::string> More = FtmFiles(Folder + SUBS[s]);
+				Files.insert(Files.end(), More.begin(), More.end());
+			}
+		}
+		for (size_t i = 0; i < Files.size(); ++i) {
+			FileSong Song;
+			std::string Error;
+			if (!Song.Load(Files[i], 0, Error))
+				continue;
+			ToolSet Tools(Song);
+			std::printf("%s: %s\n", Files[i].c_str(), Tools.Thin().c_str());
 		}
 		return 0;
 	}

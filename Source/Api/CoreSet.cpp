@@ -277,6 +277,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "parts", "The whole list: \"Intro 4, A 8, A' 8, B 8, Break 4\"." },
 			{ "like", "A studied track's loop length." },
 			{ "flavour", 0 },
+			{ "kind", "what_next's kind." },
 			{ "add_bars", "A track with notes: add the bars the form lacks." } } },
 		{ "set_key", "Chooses the track's key, which every tool then uses. It moves no notes. Needs direct changes.", {
 			{ "key", "Like \"D dorian\", \"A minor\", \"C major pentatonic\"; \"auto\" finds it from the notes." } } },

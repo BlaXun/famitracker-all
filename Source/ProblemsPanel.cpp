@@ -1536,7 +1536,8 @@ struct CProblemsPanelWnd::Impl {
 			{ _T("chord part rubbing the tune"), _T("chord parts rubbing the tune") },
 			{ _T("chord part that never rests"), _T("chord parts that never rest") },
 			{ _T("melody that doesn't catch"), _T("melodies that don't catch") },
-			{ _T("melody off the chord on strong beats"), _T("melodies off the chord on strong beats") }
+			{ _T("melody off the chord on strong beats"), _T("melodies off the chord on strong beats") },
+			{ _T("song too thin for the NES"), _T("songs too thin for the NES") }
 		};
 		CString Text;
 		for (int k = 0; k < ftapi::PROBLEM_KINDS; ++k) {
