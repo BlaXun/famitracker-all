@@ -610,6 +610,25 @@ public:
 		const std::map<std::pair<long long, int>, int>::const_iterator It = m_Leads.find(std::make_pair(Serial, Track));
 		return It != m_Leads.end() ? It->second : -1;
 	}
+	// The flavour what_next was last given for a track of the open song (or took from the words or the track's name:
+	// Flavours.h's name, "cold"), kept with its kind, so the review leaves out a tip against the flavour's own choice (the
+	// cold flavour's drums on the noise alone got "add_drums with kit samples", whose step wrote the climax's busier drums
+	// over); "" for none
+	void KeepFlavour(int Track, const std::string &Flavour)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		m_Flavours[std::make_pair(Serial, Track)] = Flavour;
+	}
+	std::string KeptFlavour(int Track)
+	{
+		long long Serial = 0;
+		std::string File;
+		SongIdentity(Serial, File);
+		const std::map<std::pair<long long, int>, std::string>::const_iterator It = m_Flavours.find(std::make_pair(Serial, Track));
+		return It != m_Flavours.end() ? It->second : std::string();
+	}
 
 	// The finishing steps that ran on a track of the open song (polish with its finishing touches, the mix; finish_song's or
 	// called alone), each with the song's print (SoundPrint) after it: what_next counts polish done only once one ran (not a
@@ -653,6 +672,7 @@ private:
 	std::string m_LastListen;
 	std::map<std::pair<long long, int>, std::string> m_Kinds;
 	std::map<std::pair<long long, int>, int> m_Leads;
+	std::map<std::pair<long long, int>, std::string> m_Flavours;
 	std::map<std::pair<std::pair<long long, int>, std::string>, std::string> m_Steps;
 	AgentLog m_Log;
 	bool m_LogFollowed = false;

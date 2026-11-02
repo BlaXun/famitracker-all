@@ -202,8 +202,8 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "volume", "The loudest hit's volume, 1-15." },
 			{ "kit", "noise (default) or samples: a sampled kick and snare on the DPCM channel, punchier." },
 			{ "channel", "The noise channel (default: the song's)." } } },
-		{ "add_ambience", "Adds a quiet layer of the place's sounds on the noise channel: waves, rain, wind, a stream or a "
-			"fire (or drips), in step with the bars and the loop, under the music.", {
+		{ "add_ambience", "Adds a quiet layer of the place's sounds on the noise channel (waves, rain, wind, a stream, fire "
+			"or drips) under the music, in step with its bars and loop.", {
 			{ "kind", "waves, rain, wind, stream, fire or drips (default: from about or the name)." },
 			{ "about", "Words about the place." },
 			{ "volume", "1-15 (default: 9 dB under the melody)." },
@@ -377,7 +377,7 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "flavour", 0 },
 			{ "idea", 0 },
 			{ "bars", 0 } } },
-		{ "explain", "A music or tracker term in plain words, as FamiTracker's glossary has it (a chord, swing, an effect like "
+		{ "explain", "A music or tracker term in plain words, from the glossary (a chord, swing, an effect like "
 			"4xy). Use these words with the user.", {
 			{ "term", "The term, like \"chord\", \"duty\" or \"4xy\"." },
 			{ "category", "Without a term: list a category's terms." } } },

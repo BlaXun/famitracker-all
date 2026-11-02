@@ -323,10 +323,10 @@ void FlavourTempos(const std::vector<std::string> &Pool, int Lean, double Slowes
 	}
 }
 
-std::string FlavourProgression(int Flavour, const std::string &Progression, bool Minor)
+std::string FlavourProgression(int Flavour, const std::string &Progression, bool Minor, bool Pedal)
 {
 	const FlavourInfo &F = FlavourOf(Flavour);
-	if (F.Progression == 0)
+	if (F.Progression == 0 || (Pedal && F.Progression == 1 && Minor))
 		return Progression;
 	// The bars' chords
 	std::vector<std::string> Bars;

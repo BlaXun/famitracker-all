@@ -10036,7 +10036,12 @@ void HeardRoles(Session &S, std::vector<int> &Voices, std::vector<MixSpan> &Span
 			Voices.push_back(Spans[i].Channel);
 	for (size_t i = 0; i < Spans.size(); ++i) {
 		MixSpan &P = Spans[i];
-		if (P.Role == ROLE_LINE && (std::find(Voices.begin(), Voices.end(), P.Channel) != Voices.end() ||
+		// (a span moving with the tune stays a line on a stage though its channel voices chords elsewhere: ChordVoicesIn
+		// reads the whole song, where a counter-line in A' and a harmony at the climax start their notes with another
+		// channel's echo and double, and the lively mix brought the Airship's climax lines down as chords, so its lift fell
+		// under the review's 1.5 dB after the finish: fix-r6-depth with fix-r6-bugs)
+		const bool Moving = Band && Melody >= 0 && MovesWithTune(S, NotesIn(S.Notes(P.Channel), P.First, P.End), Melody);
+		if (P.Role == ROLE_LINE && ((!Moving && std::find(Voices.begin(), Voices.end(), P.Channel) != Voices.end()) ||
 			(!Band && RunsSteadily(S, NotesIn(S.Notes(P.Channel), P.First, P.End))) || PlaysBrokenChords(S, P.Channel, P.First, P.End)))
 			P.Role = ROLE_CHORDS;
 	}
@@ -17669,6 +17674,7 @@ struct SongDevelopment {
 };
 
 SongDevelopment DevelopmentOf(Session &S, int Melody);
+std::string SoundPrint(Session &S);
 
 // A song what_next plans (a seed it gave, or a kind it keeps for the track): only those are held to its development (the
 // songs the user keeps, made by hand, don't all climb or bring a line into each part: The Narrows' and The Lamplighter's
@@ -17881,7 +17887,19 @@ std::string ReviewTool(Session &S, const Json &Asked)
 		Tip(1.0, "No drums: add_drums (groove calm for a quiet track, driving for action), unless the track should float without a beat.");
 	// (a song of a kind's recipe whose channels are all taken has none to give it: what_next leaves the second line and the
 	// echo out there, and the Caves, on the 2A03 alone, got the tip right after it said done: fix-gen4-done)
-	if (Voices.empty() && Echoes.empty() && (FreeMelodic || SongKind < 0))
+	// (nor one whose parts bring lines in one at a time, as what_next's development does: a channel playing a counter-line
+	// in A' and a harmony at the climax starts its notes there with another's octave double, and over the whole song the
+	// two read as chord voices: the Old Mill's and the Airship's walks got the tip right after done, fix-r6-depth with
+	// fix-r6-bugs)
+	bool LinesInParts = false;
+	if (Voices.empty() && Echoes.empty() && (FreeMelodic || SongKind < 0)) {
+		const SongDevelopment Grown = DevelopmentOf(S, Melody);
+		for (size_t p = 0; p < Grown.Parts.size() && !LinesInParts; ++p)
+			for (const std::string &Device : Grown.Parts[p].Devices)
+				LinesInParts = LinesInParts || Device == "harmony" || Device == "counter-line" || Device == "octave double" ||
+					Device == "echo";
+	}
+	if (Voices.empty() && Echoes.empty() && (FreeMelodic || SongKind < 0) && !LinesInParts)
 		Tip(1.0, "The melody has no company: add_counter_melody (a line of its own) or add_harmony (thirds under it) on " +
 			(Free.empty() ? std::string("a channel") : Free[0]) + " adds depth; add_echo makes it spacious.");
 
@@ -17996,7 +18014,13 @@ std::string ReviewTool(Session &S, const Json &Asked)
 	const SongShape *pShapeLaid = LaidOutShape(S.Song.Sections, S.Song.TrackName, 0.0);
 	const bool Even = (SongKind >= 0 && pShapeLaid != 0 && pShapeLaid->Id == "small") || SongKind == NEXT_MYSTERIOUS ||
 		SongKind == NEXT_ATMOSPHERIC || SongKind == NEXT_FLOATING;
-	if (BarCount >= 16 && Most >= 3 && Swing < 3.0 && !Even)
+	// (nor once the finish's mix has run on the song as it is, of a song what_next plans: what_next judges the arrangement's
+	// swing before the mix and asks its step then, and a soft mix evening the levels under 3 dB is the mix's doing, which
+	// what_next leaves be after it; a general walk with the cold flavour got the tip right after done, once fix-r6-bugs'
+	// and fix-r6-depth's intros carried into A)
+	const std::string MixedPrint = S.Host().KeptFinishStep(S.Song.Track, "mix");
+	const bool MixedSo = PlannedSong(S) && !MixedPrint.empty() && MixedPrint == SoundPrint(S);
+	if (BarCount >= 16 && Most >= 3 && Swing < 3.0 && !Even && !MixedSo)
 		Tip(0.5, Format("The song keeps about one loudness all the way through (%d dB between its quietest and loudest bars), "
 			"so it never breathes: let it build and fall back, a few bars with fewer and quieter parts (an intro on the chords "
 			"alone, the bass joining later; a break without the drums and the melody) and the full sound where it matters. "
@@ -18185,7 +18209,11 @@ std::string ReviewTool(Session &S, const Json &Asked)
 			if (Name.find("kick") != std::string::npos || Name.find("snare") != std::string::npos)
 				++Struck;
 		}
-		if (Samples < 0 && Struck >= 2 * BarCount && !Calm)
+		// (not where the flavour what_next was given wants them so: the cold flavour's ticks and clanks on the noise alone)
+		int Flavoured = FLAVOUR_NONE;
+		const bool NoiseKit = ParseFlavour(S.Host().KeptFlavour(S.Song.Track), Flavoured) && Flavoured != FLAVOUR_NONE &&
+			FlavourOf(Flavoured).NoiseKit;
+		if (Samples < 0 && Struck >= 2 * BarCount && !Calm && !NoiseKit)
 			Tip(0.5, "Every drum plays on the noise channel, one at a time, so the hi-hats drop out under the kicks and snares: "
 				"add_drums with kit samples puts a sampled kick and snare on the DPCM channel, punchier, and leaves the noise to "
 				"the hi-hats.");
@@ -31016,7 +31044,11 @@ NextParts PartsBeside(Session &S, int Melody, int First, int End)
 	const std::vector<int> Voiced = ChordVoicesIn(S, First, End, Melody);
 	for (size_t i = 0; i < Out.Voices.size(); ) {
 		const int c = Out.Voices[i];
-		if (RunsSteadily(S, NotesIn(S.Notes(c), First, End)) || std::find(Voiced.begin(), Voiced.end(), c) != Voiced.end()) {
+		// (not a line that moves with the tune, a harmony or a double a fifth under at a climax: those start their notes
+		// together, with the tune's, and ChordVoicesIn took the Airship's two for voiced chords, so Climax found no harmony
+		// there and gave the lift no step)
+		const std::vector<NoteInfo> Line = NotesIn(S.Notes(c), First, End);
+		if (RunsSteadily(S, Line) || (std::find(Voiced.begin(), Voiced.end(), c) != Voiced.end() && !(Melody >= 0 && MovesWithTune(S, Line, Melody)))) {
 			Out.Chords.push_back(c);
 			Out.Voices.erase(Out.Voices.begin() + static_cast<std::ptrdiff_t>(i));
 		}
@@ -31870,6 +31902,8 @@ public:
 	// The lead's channel for the host to keep with the kind (SongHost::KeepLead): the one given, the one the lead what_next
 	// designed plays on or was made for; -1 when the melody was only guessed
 	int LeadToKeep() const { return m_LeadKnown ? m_Melody : -1; }
+	// The flavour to keep with them (SongHost::KeepFlavour): FLAVOUR_NONE for none
+	int FlavourToKeep() const { return m_Flavour; }
 
 private:
 	Session &S;
@@ -31943,7 +31977,8 @@ private:
 	// A progression with the flavour's borrowed chord (FlavourProgression)
 	std::string Progression(bool B) const
 	{
-		return FlavourProgression(m_Flavour, NextProgression(m_KindId, Minor(), B, m_HasKey && m_Key.Mode == 1), Minor());
+		return FlavourProgression(m_Flavour, NextProgression(m_KindId, Minor(), B, m_HasKey && m_Key.Mode == 1), Minor(),
+			m_Picks.BassStyle.Value == "pedal");
 	}
 	// Lush chords' frames a note: a calm song's slow shimmer, a lively stage's fast arpeggios (the soundtrack's first
 	// stages looped their chords at 2-3 frames a note)
@@ -34971,6 +35006,8 @@ bool WhatNext::TipStep(const std::string &Tip)
 		// A run of the body's parts where the drums play at a time (an intro or a break between keeps none): the first one
 		// whose bars hardly vary, or (for a sampled kit) without samples
 		const bool Kit = Has("Every drum plays on the noise");
+		if (Kit && m_Flavour != FLAVOUR_NONE && Flavour().NoiseKit)
+			return false;	// (the flavour wants them on the noise alone: its step wrote over the climax's busier drums)
 		int Samples = -1;
 		for (int c = 0; c < S.ChannelCount() && Samples < 0; ++c)
 			if (S.Channel(c).Kind == KIND_DPCM)
@@ -35145,17 +35182,32 @@ bool WhatNext::TipStep(const std::string &Tip)
 			std::vector<std::vector<int> > Moves(1, std::vector<int>(1, c));
 			if (std::find(m_Parts.Chords.begin(), m_Parts.Chords.end(), c) != m_Parts.Chords.end() && m_Parts.Chords.size() > 1)
 				Moves.push_back(m_Parts.Chords);
+			// (the small set has no transpose: one channel an octave down is vary_part's octave_down over the song; a cozy
+			// song's tune, octave 3 since fix-r6-bugs, sat on a nature walk's broken chords there, and the tip stayed after
+			// done)
+			const bool Small = m_Core && !ToolSet::IsCoreTool("transpose");
 			for (size_t m = 0; m < Moves.size(); ++m) {
+				if (Small && Moves[m].size() > 1)
+					continue;
 				Json A = Json::MakeObject();
 				Json List = Json::MakeArray();
 				for (size_t k = 0; k < Moves[m].size(); ++k)
 					List.Push(ChannelName(Moves[m][k]));
-				A.Set("channels", Moves[m].size() == 1 ? Json(ChannelName(c)) : List);
-				A.Set("semitones", -12);
+				const char *Tool = Small ? "vary_part" : "transpose";
+				if (Small) {
+					A.Set("channel", ChannelName(c));
+					A.Set("variation", "octave_down");
+					A.Set("from_bar", 1);
+					A.Set("to_bar", S.Time.BarCount());
+				}
+				else {
+					A.Set("channels", Moves[m].size() == 1 ? Json(ChannelName(c)) : List);
+					A.Set("semitones", -12);
+				}
 				int Added = 0;
-				if (TryWriteHearing(S, "transpose", A, 1, S.Time.BarCount(), m_Melody, Added, [&](Session &After) {
+				if (TryWriteHearing(S, Tool, A, 1, S.Time.BarCount(), m_Melody, Added, [&](Session &After) {
 						return std::abs(MiddleOf(After.Notes(c), 0) - Written(After.Channel(c), 0) - TuneMiddle) > 3; }) && Added <= 0)
-					return Step("tips", "transpose", A, "review_arrangement: " + Tip + " " + (Moves[m].size() == 1 ?
+					return Step("tips", Tool, A, "review_arrangement: " + Tip + " " + (Moves[m].size() == 1 ?
 						S.Channel(c).FullName() : "The chords' voices") + " an octave down, under the tune.");
 			}
 			// Else the melody an octave up over them, where its top stays under CLIMAX_TOP
@@ -35366,11 +35418,47 @@ bool WhatNext::Doubled(const FormPart &P, const std::string &Tip)
 	// (an octave under, else a sixth or a fifth: the first that adds no clash, a chord's color an octave under the tune
 	// included)
 	static const char *const INTERVALS[] = { "octave_below", "sixth_below", "fifth_below" };
+	// (not an interval a part plays under the tune there already: the development's climax has the octave under, or a fifth,
+	// from fix-r6-depth, and a second line the same is no lift)
+	auto PlaysUnder = [&](int Least, int Most) {
+		const std::vector<NoteInfo> Tune = NotesIn(S.Notes(m_Melody), First, End);
+		const int TuneWritten = Written(S.Channel(m_Melody), 0);
+		for (int c = 0; c < S.ChannelCount(); ++c) {
+			if (c == m_Melody || !IsMelodic(S.Channel(c)))
+				continue;
+			const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+			int Under = 0;
+			for (const NoteInfo &N : Notes)
+				for (const NoteInfo &T : Tune)
+					if (T.Row == N.Row) {
+						const int Below = (T.Pitch - TuneWritten) - (N.Pitch - Written(S.Channel(c), 0));
+						Under += Below >= Least && Below <= Most ? 1 : 0;
+						break;
+					}
+			if (Notes.size() >= 4 && Under * 10 >= static_cast<int>(Notes.size()) * 6)
+				return true;
+		}
+		return false;
+	};
 	for (const char *Interval : INTERVALS) {
+		const std::string Name = Interval;
+		if (Name == "octave_below" ? PlaysUnder(12, 12) : Name == "sixth_below" ? PlaysUnder(8, 9) : PlaysUnder(6, 7))
+			continue;
 		C.Set("interval", Interval);
 		int Added = 0;
-		if (TryWriteHearing(S, "add_harmony", C, P.FirstBar, P.LastBar, m_Melody, Added, [&](Session &After) {
-				return LiftIn(After) >= Before + 0.3; }) && Added <= 0)
+		auto Lifts = [&](const Json &Call) {
+			return TryWriteHearing(S, "add_harmony", Call, P.FirstBar, P.LastBar, m_Melody, Added, [&](Session &After) {
+				return LiftIn(After) >= Before + 0.3; });
+		};
+		// (the dry run on a sound the song has, since a dry run adds none: on the sawtooth add_harmony makes one of its own,
+		// and the Airship's climax was never tried, fix-r6-depth with fix-r6-bugs)
+		bool Lifted = Lifts(C);
+		if (!Lifted && Arg(C, "instrument") == 0 && !StandIn(Saw).empty()) {
+			Json Dry = C;
+			Dry.Set("instrument", StandIn(Saw));
+			Lifted = Lifts(Dry);
+		}
+		if (Lifted && Added <= 0)
 			return Step("tips", "add_harmony", C, "review_arrangement: " + Tip + " " + P.Name + " has its harmony: the tune doubled " +
 				(std::string(Interval) == "octave_below" ? "an octave" : std::string(Interval) == "sixth_below" ? "a sixth" : "a fifth") +
 				" under on " + S.Channel(Saw).FullName() + " there lifts it further.");
@@ -35900,6 +35988,16 @@ void WhatNext::Finish()
 	const NextKind &K = Kind();
 	const bool Current = !Print.empty() && Print == SoundPrint(S);
 	const bool AtLoudness = !Loudness.empty() && std::fabs(std::atof(Loudness.c_str()) - K.Loudness) < 0.05;
+	// The finish done otherwise (finish_song's steps done, or none wanted): a listen before the export alone while the song
+	// as it is hasn't been heard, before saving, so a fix it gives comes before the save and the steps done never fall (a
+	// fix's listen again, after the save, heard the Hollow's A'' harmony over its melody once its triangle was lowered, and
+	// saved went back to left: fix-r6-depth with feat-flavours); with no export due, none is asked
+	if (!m_Finishing && !S.Song.FileName.empty() && m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0) {
+		if (Wanted("export") && !(Current && AtLoudness))
+			Listened();
+		else
+			Milestone("listened", true, "listened");
+	}
 	if (!Milestone("saved", (!S.Song.Modified && !S.Song.FileName.empty()) || !Wanted("save"), "saved")) {
 		if (S.Song.FileName.empty() && m_Client) {
 			// A client can't use File > Save As: save_song saves the song into the Songs folder, under the name it's given
@@ -35922,14 +36020,6 @@ void WhatNext::Finish()
 	if (m_Finishing) {
 		m_Unmet.insert("exported");	// finish_song makes it
 		return;
-	}
-	// The finish done otherwise (finish_song's steps done, or none wanted): after saving, a listen before the export alone
-	// while the song as it is hasn't been heard; with no export due, none is asked
-	if (m_Music && m_Met.count("listened") == 0 && m_Unmet.count("listened") == 0) {
-		if (Wanted("export") && !(Current && AtLoudness))
-			Listened();
-		else
-			Milestone("listened", true, "listened");
 	}
 	if (Milestone("exported", (Current && AtLoudness) || !Wanted("export"), "exported (" + File + ")"))
 		return;
@@ -36478,6 +36568,9 @@ std::string WhatNextTool(Session &S, const Json &Args, bool Core, bool Client)
 	// ...and take the tune where what_next has it (fix-r6-judges)
 	if (Plan.LeadToKeep() >= 0)
 		S.Host().KeepLead(S.Song.Track, Plan.LeadToKeep());
+	// ...and its flavour, whose choices the review then leaves be
+	S.Host().KeepFlavour(S.Song.Track, Plan.FlavourToKeep() == FLAVOUR_NONE ? std::string() : std::string(FlavourOf(
+		Plan.FlavourToKeep()).Name));
 	return Form == "json" ? Plan.JsonReply() : Plan.Reply();
 }
 

@@ -20266,6 +20266,7 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 	Who.Core = Core;
 	std::vector<std::string> Made;
 	std::set<std::string> Seen;
+	std::map<std::string, long long> Heard;	// each call's song (its undo pushes) when it was last made
 	int DoneBefore = -1;
 	std::string Before;
 	const bool Show = !Environment("WHAT_NEXT_SHOW").empty();	// to see each step
@@ -20306,7 +20307,12 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 				}
 		}
 		const std::string Call = N.Tool + " " + WriteJson(N.Arguments);
-		const bool New = Seen.insert(Call).second;
+		// (a listen, or a save, asked again once the song changed since is the next round of a fix: a listen that gave a fix
+		// is made again before the file, and that one can hear another, as the Hollow's did after its triangle was lowered;
+		// any other call asked again is a loop)
+		const bool Again = (N.Tool == "listen" || N.Tool == "save_song") && Heard.count(Call) != 0 && Heard[Call] != Song.UndoPushes;
+		const bool New = Seen.insert(Call).second || Again;
+		Heard[Call] = Song.UndoPushes;
 		Check(New, ("moves on from " + Call).c_str(), Line);
 		if (!New)
 			break;
@@ -20953,19 +20959,20 @@ void TestWhatNextStates()
 		CHECK(!Run(Song, "save_song", "{}").IsError);
 		Song.Info.Modified = false;
 		CHECK(AskWhatNext(Song, "{\"kind\": \"lively\"}").Done);
-		// Mixed by hand instead, wider: saving, then a new file (the lively mix alone puts the chords back where the finished
-		// song had them, which the game's file has already)
+		// Mixed by hand instead, wider: a listen, saving, then a new file (the lively mix alone puts the chords back where the
+		// finished song had them, which the game's file has already). The export alone, of a song changed since it was heard:
+		// a listen before it, and before the save since a fix it gives would take saved back (the merge of fix-r6-depth with
+		// feat-flavours: the Hollow's)
 		CHECK(!Run(ByHand, "mix", "{\"style\": \"lively\", \"melody_channel\": \"VRC6 Pulse 1\", \"width\": \"wide\"}").IsError);
 		ByHand.Info.Modified = true;
+		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
+		CHECK(A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
+		CHECK(!Run(ByHand, "listen", "{}").IsError);
 		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
 		CHECK_EQ(A.Tool, std::string("save_song"));
 		CHECK_HAS(A.Text, "save it before the export");
 		CHECK(!Run(ByHand, "save_song", "{}").IsError);
 		ByHand.Info.Modified = false;
-		// The export alone, of a song changed since it was heard: a listen before it
-		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
-		CHECK(A.Tool == "listen" && WriteJson(A.Arguments) == "{}");
-		CHECK(!Run(ByHand, "listen", "{}").IsError);
 		A = AskWhatNext(ByHand, "{\"kind\": \"lively\"}");
 		CHECK(A.Tool == "export_for_game" && WriteJson(A.Arguments) == "{\"loudness\":-20}");
 		CHECK_HAS(A.Text, "The game's file next to the song is older than the song");
@@ -27029,21 +27036,22 @@ void TestWhatNextListens()
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool == Fix && Contains(A.Text, "\nWhy: listen: "), A.Text.c_str(), __LINE__);
 	CHECK_LACKS(A.Text, "Left: listened");
-	// The fix made: saving first, then, the song changed since it was heard, a listen before the file made again (a listen
-	// over some bars isn't the song heard)
+	// The fix made: the song changed since it was heard, so a listen before the file made again, then saving (a listen
+	// over some bars isn't the song heard). Before the save since the merge of fix-r6-depth with feat-flavours: a listen
+	// after the save that gave another fix took saved back, and the steps done fell
 	CHECK(!Run(Song, A.Tool.c_str(), WriteJson(A.Arguments)).IsError);
 	CHECK(!Run(Song, "listen", "{\"from_bar\": 5, \"to_bar\": 8}").IsError);
-	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
-	CHECK_EQ(A.Tool, std::string("save_song"));
-	// (listened stays counted after the fix it gave, fix-r4-finish: the listen before the file still comes, below)
-	CHECK_HAS(A.Text, "\nLeft: saved, exported.");
-	CHECK(!Run(Song, "save_song", "{}").IsError);
-	Song.Info.Modified = false;
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool == "listen" && WriteJson(A.Arguments) == "{}", A.Text.c_str(), __LINE__);
 	CHECK_HAS(A.Text, "before the game's file, listen renders its real audio as FamiTracker plays it");
 	CHECK_HAS(A.Text, "the user's own ear has the final word");
+	// (listened stays counted after the fix it gave, fix-r4-finish)
+	CHECK_HAS(A.Text, "\nLeft: saved, exported.");
 	CHECK(!Run(Song, "listen", "{}").IsError);
+	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
+	CHECK_EQ(A.Tool, std::string("save_song"));
+	CHECK(!Run(Song, "save_song", "{}").IsError);
+	Song.Info.Modified = false;
 	A = AskWhatNext(Song, "{\"kind\": \"lively\"}");
 	Check(A.Tool != "listen" && A.Tool != Fix, A.Text.c_str(), __LINE__);
 }
@@ -29329,6 +29337,9 @@ void TestR6Hut()
 	ReplayCalls(Song, R6_HUT_CALLS, sizeof(R6_HUT_CALLS) / sizeof(R6_HUT_CALLS[0]), Last, __LINE__);
 	CHECK_LACKS(Last["grow_melody"], "grown as");
 	CHECK_HAS(Last["grow_melody"], "cozy");
+	// (the development's steps come before the finish since fix-r6-depth: the break's bell, here; followed as given)
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"cozy\"}", 12, Finished, __LINE__, false, "finish_song");
 	const std::string Text = Run(Song, "what_next", "{\"kind\": \"cozy\"}").Text;
 	CHECK_HAS(Text, "the form (7 parts, 48 bars)");
 	const WhatNextAnswer Next = ReadWhatNext(Text);
@@ -29405,6 +29416,10 @@ void TestR6Airship()
 	CHECK_HAS(Review, "chords on 2A03 Pulse 1");
 	CHECK_LACKS(Review, "another line on 2A03 Pulse 1");
 	CHECK_LACKS(Review, "with no chords");
+	// (the development's steps come before the finish since fix-r6-depth: busier drums at the climax, a second line; followed
+	// as given)
+	bool Finished = false;
+	FollowWhatNext(Song, "{\"kind\": \"adventure\"}", 12, Finished, __LINE__, false, "finish_song");
 	const std::string Text = Run(Song, "what_next", "{\"kind\": \"adventure\"}").Text;
 	CHECK_HAS(Text, "the review's tips");
 	CHECK_LACKS(Text, "The song doesn't build");
@@ -32027,6 +32042,35 @@ void TestDevelopment()
 			}
 }
 
+// Every kind together (from the merge of fix-r6-bugs, fix-r6-depth and feat-flavours, which each passed alone and failed
+// together): each kind of KINDS once without a flavour and once with one (the flavours in turn, so each comes), on the
+// full set and the small set, one seed each: every walk ends done, its steps done never fall (FollowWhatNext), the review
+// then gives no tip (CheckDoneReview) and each part brings something of its own (CheckDevelopment). A branch that
+// changes what_next, the review or the pools runs it on the latest next before it's finished (CLAUDE.md)
+void TestAllKindsTogether()
+{
+	int Turn = 0;
+	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k)
+		for (int Flavoured = 0; Flavoured < 2; ++Flavoured) {
+			const int Flavour = Flavoured ? FLAVOUR_COLD + Turn++ % (FLAVOUR_COUNT - FLAVOUR_COLD) : FLAVOUR_NONE;
+			const std::string Asked = std::string("{") + (k == NEXT_GENERAL ? std::string() : std::string("\"kind\": \"") +
+				NextKindInfo(k).Name + "\", ") + "\"flavour\": \"" + (Flavour == FLAVOUR_NONE ? "none" : FlavourOf(Flavour).Name) +
+				"\"}";
+			for (int Core = 0; Core < 2; ++Core) {
+				FakeSong Song(1);
+				NewSong(Song);
+				Song.Info.TrackName = Song.Tracks[0].Name = "Song Together";
+				Song.Info.Seed = 9001u + static_cast<unsigned int>(k);
+				const std::string What = Asked + (Core ? " (core)" : "");
+				bool Finished = false;
+				const std::vector<std::string> Made = FollowWhatNext(Song, Asked, 70, Finished, __LINE__, Core == 1);
+				Check(Finished, What.c_str(), __LINE__);
+				CheckDoneReview(Song, What, __LINE__);
+				CheckDevelopment(Song, Made, What, __LINE__);
+			}
+		}
+}
+
 int main()
 {
 	TestJson();
@@ -32334,6 +32378,7 @@ int main()
 	TestSfxEar();
 	TestSfxEarWritten();
 	TestDevelopment();
+	TestAllKindsTogether();
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;
 }

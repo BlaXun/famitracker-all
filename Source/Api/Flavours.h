@@ -101,7 +101,10 @@ void FlavourTempos(const std::vector<std::string> &Pool, int Lean, double Slowes
 // The chords of a kind's progression ("| i | VII | III | VII | i | VII | v | VII |") with the flavour's borrowed chord: spooky
 // the Neapolitan (bII) before a dominant in minor, the minor iv for the first IV in major; ancient bVII for a V inside a
 // major progression. The progression as it was for the other flavours (or where nothing fits)
-std::string FlavourProgression(int Flavour, const std::string &Progression, bool Minor);
+// Pedal: the bass holds the tonic under the bars (bass_style pedal), where spooky's bII would grind a semitone against it
+// (the bII's root over the tonic: a mysterious spooky song's F over its E pedal, clashes no polish could clear), so it
+// borrows none there
+std::string FlavourProgression(int Flavour, const std::string &Progression, bool Minor, bool Pedal = false);
 
 // The ambience the flavour leans to for a song (add_ambience's kinds by name: "wind"), picked by Hash among its kinds; ""
 // for none

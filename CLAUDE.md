@@ -51,6 +51,17 @@ asking before the channels of the others are cleared. A module with one chip
 is saved byte for byte as 0.4.6 saves it; NSF export refuses several chips
 and the 5B, which OGG and WAV export play. See Gotchas.
 
+Working on what_next and the review: only one branch at a time changes
+`what_next`, the review (`ReviewTool`, `check_song`'s arranging findings) or
+the kinds' pools (`KINDS` in `WhatNext.cpp`, `NextPicksOf`, the flavours);
+their rules meet in every walk, and branches that each passed alone failed
+together (fix-r6-bugs, fix-r6-depth and feat-flavours). Every branch rebases
+onto the latest `next` and runs the full suite there (`api_tests`, the rest
+of `ctest` and `song_file_checks` on the user's songs) before it's finished,
+and `TestAllKindsTogether` (every kind with and without a flavour, on both
+sets) must pass. The machine is shared and has 2 CPUs: build and test under
+`flock /tmp/ft-build.lock`, as every agent does.
+
 File > Connect Claude Code makes FamiTracker an MCP server for Claude Code
 (see `MCP.md`; built on the `api` branch and merged into `recorder`, then
 here). The protocol and the tools are in `Source/Api/` (portable, tested on
