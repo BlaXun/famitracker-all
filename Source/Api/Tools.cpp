@@ -36681,6 +36681,10 @@ void WhatNext::Fill()
 			// as A, and the development's steps fell)
 			if (Pass == 1 && !P.Name.empty() && Lowercase(SectionBase(P.Name)) == ABase)
 				continue;
+			// (nor, in either pass, a repeat of A: the development gives each return its own device, and a line put there by a
+			// fill moved the peak's plan, so the second line came undone)
+			if (!P.Name.empty() && !M.List.empty() && P.Name != M.List.front().Name && Lowercase(SectionBase(P.Name)) == ABase)
+				continue;
 			if (P.To - P.From + 1 < 4 || P.Mean >= DEPTH_PARTS + 1.0)
 				continue;
 			const int First = S.Time.BarStart(P.From), End = std::min(S.Time.BarEnd(P.To), S.Time.TotalRows());
