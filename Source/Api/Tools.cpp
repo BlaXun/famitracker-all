@@ -17858,8 +17858,12 @@ void StrongBeatFindings(Session &S, int Melody, int From, int To, const Key &K, 
 // is thin where, on chips of THIN_CHANNELS melodic channels or more, under THIN_PARTS of them sound a bar on average;
 // where it plays under THIN_SOUNDS instruments (5: the walks of the quiet kinds whose noise plays an ambience have 5); or, on fewer channels (the 2A03 alone), under THIN_EFFECTS effects a bar (the
 // kept 2A03 songs play 9.5-21.3, Clockwork Factory 1.15; what_next's walks on the 2A03 alone, with the kinds' polish, about 1.6)
-const double THIN_PARTS = 3.6, THIN_EFFECTS = 1.5;
+const double THIN_PARTS = 3.45, THIN_EFFECTS = 1.5;
 const int THIN_CHANNELS = 5, THIN_SOUNDS = 5, THIN_BARS = 16;
+// Few sounds and next to no effects: under THIN_BARE_SOUNDS instruments with under THIN_BARE_EFFECTS effects a bar (the kept
+// songs without effects, Saveroom 0.00 and Night 0.00, play 7 and 10 instruments; Haunted Library 5 and none)
+const int THIN_BARE_SOUNDS = 6;
+const double THIN_BARE_EFFECTS = 0.25;
 // What what_next fills a song to (WhatNext::Fill): the first 30's least on the VRC6, 4.4 melodic channels a bar (their
 // median 5.0), where a channel is free for a line that adds no clash
 const double DEPTH_PARTS = 4.4;
@@ -18005,7 +18009,7 @@ std::vector<std::string> ThinReasons(const ThinMeasure &M)
 		return Out;
 	if (M.Channels >= THIN_CHANNELS && M.Parts < THIN_PARTS)
 		Out.push_back("parts");
-	if (M.Sounds < THIN_SOUNDS)
+	if (M.Sounds < THIN_SOUNDS || (M.Sounds < THIN_BARE_SOUNDS && M.Effects < THIN_BARE_EFFECTS))
 		Out.push_back("sounds");
 	if (M.Channels < THIN_CHANNELS && M.Effects < THIN_EFFECTS)
 		Out.push_back("techniques");
@@ -36578,31 +36582,42 @@ void WhatNext::Fill()
 		if (std::string(Kind().Style) != "any")
 			Asked.Set("style", Kind().Style);
 		Asked.Set("melody_channel", m_Melody + 1);
+		// (each tip by its opening words: the numbers in it move with any change)
 		auto TipsOf = [&](Session &In) {
+			std::set<std::string> Out;
 			std::string Review;
 			try {
 				Review = ReviewTool(In, Asked);
 			}
 			catch (const Problem &) {
-				return 0;
+				return Out;
 			}
 			const size_t At = Review.find("What would help, most first:\n");
-			int Count = 0;
 			for (size_t Line = At == std::string::npos ? Review.size() : At; Line < Review.size(); ) {
 				size_t Stop = Review.find('\n', Line);
 				if (Stop == std::string::npos)
 					Stop = Review.size();
-				const std::string Tip = Review.substr(Line, Stop - Line);
-				Count += !Tip.empty() && std::isdigit(static_cast<unsigned char>(Tip[0])) && Tip.find("Thin for the NES") ==
-					std::string::npos ? 1 : 0;
+				std::string Tip = Review.substr(Line, Stop - Line);
 				Line = Stop + 1;
+				const size_t Dot = Tip.find(". ");
+				if (Tip.empty() || !std::isdigit(static_cast<unsigned char>(Tip[0])) || Dot == std::string::npos ||
+					Tip.find("Thin for the NES") != std::string::npos)
+					continue;
+				Tip = Tip.substr(Dot + 2);
+				Out.insert(Tip.substr(0, std::min<size_t>(Tip.size(), 24)));
 			}
-			return Count;
+			return Out;
 		};
-		const int TipsBefore = TipsOf(S);
+		const std::set<std::string> TipsBefore = TipsOf(S);
 		const size_t AlikeBefore = DevelopmentOf(S, m_Melody).Alike.size();
 		auto Keeps = [&](Session &After) {
-			return DevelopmentOf(After, m_Melody).Alike.size() <= AlikeBefore && TipsOf(After) <= TipsBefore;
+			if (DevelopmentOf(After, m_Melody).Alike.size() > AlikeBefore)
+				return false;
+			const std::set<std::string> Now = TipsOf(After);
+			for (std::set<std::string>::const_iterator it = Now.begin(); it != Now.end(); ++it)
+				if (TipsBefore.count(*it) == 0)
+					return false;
+			return true;
 		};
 		// The thinnest parts first; in each, the chords its family plays elsewhere copied in, else a line on a channel no other
 		// part of the body plays (so it stays this part's own: a counter-line on A's channel would make A' sound as A),
