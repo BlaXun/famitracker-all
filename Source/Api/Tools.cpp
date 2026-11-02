@@ -36659,8 +36659,8 @@ void WhatNext::Fill()
 			const SongDevelopment Now = DevelopmentOf(After, m_Melody);
 			if (Now.Alike.size() > AlikeBefore || Shared(Now) > SharedBefore)
 				return false;
-			const std::set<std::string> Now = TipsOf(After);
-			for (std::set<std::string>::const_iterator it = Now.begin(); it != Now.end(); ++it)
+			const std::set<std::string> Said = TipsOf(After);
+			for (std::set<std::string>::const_iterator it = Said.begin(); it != Said.end(); ++it)
 				if (TipsBefore.count(*it) == 0)
 					return false;
 			return true;
