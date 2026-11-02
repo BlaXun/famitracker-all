@@ -3136,6 +3136,47 @@ get_recipe on both sets, 18 walks of a flavour with a kind on the full set and
 4 on the small set ending done with `CheckDoneReview` clean, a wet floating
 walk's rain or stream) covers it.
 
+Strong beats on chord tones (from `feat-strong-beats`): the user heard a
+local model's "Hut in a Field (Haiku 2)" as "weird, like there are misplaced
+notes" and its Sonnet 2 as better; check_song found nothing (no semitone
+rubs). check_song's `off_chord` (`StrongBeatFindings`, last of
+`ArrangeFindings`, `ARRANGE_OFF_CHORD`, `FOUND_OFF_CHORD`, severity medium;
+`PROBLEM_OFF_CHORD`, title "Strong beats off the chord", the panel's `WORDS`)
+reads the melody's notes on strong beats (`StrongBeatRows`: the bar's first
+beat, in 4/4 its third, in 6/8 its second dotted beat), heard from the beat
+on half a beat on beat 1 and a beat on another (`OFF_CHORD_FIRST_BEATS`,
+`OFF_CHORD_BEATS`), against the chord there (`OffChordBeats`: `HearChords`
+on every part but the melody, an echo of it and a double of it,
+`ChordPartsBeside`, a block of four bars at a time, a tone of the bar's
+whole chord counting too; where they sound none
+the key's triad the bar's bass notes make, `BeatChord`; `AddHeardNotes` is
+`HeardNotes` for one part). Measured with `song_file_checks -beats`
+(`ToolSet::StrongBeats`): the 44 kept songs land off the chord on 0-39% of
+their strong beats, most of them not resolving (colors: Autumn Woods' F#
+held over G), and Haiku 2's 31% are mostly appoggiaturas that step on, so
+neither the share nor the resolution tells them apart; a note off the chord
+with only the bass (or nothing) under it does (`BareOffChordBeats`,
+`OFF_CHORD_SUPPORT` one pitch class): the kept songs 0-5 such beats (The
+Copper Spoon 5 of 18), Haiku 2 12 of 52 (E over a lone D in bars 6, 10 and
+14, A and F over a lone C in 23 and 28), Sonnet 2 none. `OFF_CHORD_LEAST`
+(8) and `OFF_CHORD_SHARE` (15%) of the strong beats make a finding, its
+places in `places`. Its fix is polish's new touch `strong_beats`
+(`PlanStrongBeats`; squeezed `strongbeats` inside `PolishTool`): each such
+note moves to the nearest chord tone that rubs nothing (`RubsAgainstOthers`)
+in the channel's range, two semitones further for one repeating a
+neighbour; offered only where a dry run adds no clash (`ClashRuns` before
+and after), else advice. `write_notes` warns with the same rule on the song
+as written (`WritingWarnings`, the melody or the bass written, beats in the
+bars written), what_next gives the fix as a part's step (`PartFixes`;
+`StepWhat` "Move the melody's notes off the chord on strong beats to chord
+tones"), the review weighs it (1.0), and grow_melody's versions keep chord
+tones on strong beats over a bare bass already (tested).
+`TestStrongBeats` describes both huts' notes (`HUT_HAIKU`, `HUT_SONNET`,
+`PutHut`; the files stay out) and covers the finding, its JSON and problem
+kind, the review, what_next, the warning, the fix (12 notes moved, no
+clash added, a second polish has nothing), Sonnet left alone and three
+grown versions; `song_file_checks` checks `off_chord` on keep/ and flag/.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

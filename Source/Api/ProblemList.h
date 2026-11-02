@@ -47,12 +47,13 @@ struct Timing;	// Music.h
 // feat-tool-replies): a section named as the high point whose melody repeats an earlier one's. CHORD_DRONE (from
 // feat-chord-rests, its rule from feat-chords-room): chords that rub the melody a semitone all through the song.
 // CHORDS_THROUGHOUT (from feat-texture): a chord part playing the same way in nearly every bar of the melody
-// MONOTONE (from feat-hooks): a melody whose opening doesn't catch (its rhythm comes back, its shape never)
+// MONOTONE (from feat-hooks): a melody whose opening doesn't catch (its rhythm comes back, its shape never). OFF_CHORD
+// (from feat-strong-beats): the melody landing off the chord on strong beats with only the bass under it
 enum problem_kind {
 	PROBLEM_VANISHING, PROBLEM_CLICK, PROBLEM_CLASH, PROBLEM_WARBLE, PROBLEM_HEARD, PROBLEM_RANGE, PROBLEM_HEARD_LOOK, PROBLEM_SILENT,
 	PROBLEM_BUSY, PROBLEM_KEY, PROBLEM_HELD, PROBLEM_PHRASES, PROBLEM_BASS, PROBLEM_SOUND, PROBLEM_FADERS, PROBLEM_REPEAT, PROBLEM_LOOP,
 	PROBLEM_INTRO, PROBLEM_HEARD_DETAIL, PROBLEM_CLASH_DETAIL, PROBLEM_TOO_BUSY, PROBLEM_CLIMAX, PROBLEM_CHORD_DRONE,
-	PROBLEM_CHORDS_THROUGHOUT, PROBLEM_MONOTONE, PROBLEM_KINDS
+	PROBLEM_CHORDS_THROUGHOUT, PROBLEM_MONOTONE, PROBLEM_OFF_CHORD, PROBLEM_KINDS
 };
 
 const char *ProblemKindId(int Kind);	// "vanishing", as check_song names it ("heard" for the listen tool's)

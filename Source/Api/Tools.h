@@ -155,6 +155,8 @@ public:
 	// For calibrating planned returns against pasted phrases (song_file_checks -repeats): the selected track's melody bars
 	// that play the bar four or two before them again, in every part, their runs, and those pasted (PastedBars in Tools.cpp)
 	std::string RepeatShapes();
+	// Each song's melody notes on strong beats off the chord (OffChordBeats), for calibrating check_song's off_chord
+	std::string StrongBeats();
 	// For FamiTracker's sound browser (Instrument > Sound browser): every sound the song can get, as find_sound
 	// lists them (SoundIndex.h), Cursor the channel the user is on (-1 for none); false with the reason. Without
 	// Library, the ready-made sounds and the song's own only, quickly (the main window's Listen)
