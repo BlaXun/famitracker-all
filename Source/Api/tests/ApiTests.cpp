@@ -20405,7 +20405,7 @@ void CheckDoneReview(FakeSong &Song, const std::string &What, int Line)
 	{
 		const Json Thin = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
 		Check(IntegerOf(Thin.Get("counts"), "thin") == 0, (What + ": thin for the NES: " + ToolSet(Song).Thin()).c_str(), Line);
-		if (std::getenv("API_SHOW_THIN") != 0)
+		if (!Environment("API_SHOW_THIN").empty())
 			std::printf("THIN %s: %s\n", What.c_str(), ToolSet(Song).Thin().c_str());
 	}
 	const std::string Review = Run(Song, "review_arrangement", "{}").Text;
@@ -32322,10 +32322,10 @@ void TestAllKindsTogether()
 // API_TESTS=TestA,TestB runs those tests alone (all of them when unset)
 bool TestWanted(const char *Name)
 {
-	const char *pOnly = std::getenv("API_TESTS");
-	if (pOnly == 0 || *pOnly == '\0')
+	const std::string Asked = Environment("API_TESTS");
+	if (Asked.empty())
 		return true;
-	const std::string Only = std::string(",") + pOnly + ",";
+	const std::string Only = "," + Asked + ",";
 	return Only.find(std::string(",") + Name + ",") != std::string::npos;
 }
 #define RUN(f) do { if (TestWanted(#f)) f(); } while (0)

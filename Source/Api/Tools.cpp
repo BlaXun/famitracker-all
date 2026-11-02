@@ -17657,7 +17657,7 @@ bool ThroughoutFinding(Session &S, Hearing &Ears, int Channel, int Melody, int F
 	// repeats) they keep their figure, and in the contrasting parts and the climax they're struck again on the half bar
 	// (vary_part's restrike), so the part changes figure from section to section; without such a part, the last part where
 	// the melody carries does (the song's fullest)
-	(void)ThroughoutRests;
+	(void)&ThroughoutRests;
 	std::vector<std::pair<int, int> > Spans;
 	std::vector<std::string> Changing, Keeping;
 	{
