@@ -4389,7 +4389,7 @@ void TestArrangingTools()
 	CHECK(Plain.Rows[5][0].Volume == 15 && Plain.Rows[5][4].Volume == 14 && Plain.Rows[5][2].Volume == 13);
 	CHECK(HasEffectAt(Plain, 5, 18, EFF_VIBRATO, 0x52) && HasEffectAt(Plain, 5, 31, EFF_VIBRATO, 0));
 	CHECK(Plain.Rows[2][3].Note == NOTE_HALT && Plain.Rows[2][4].HasNote() && Plain.Rows[2][15].Note == NOTE_NONE);
-	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes, colors or unison");
+	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"glitter\"]}").Text, "accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes, colors, unison or strong_beats");
 	CHECK_HAS(Run(Plain, "polish", "{\"touches\": [\"separate\"]}").Text, "nothing to polish");
 }
 
@@ -28136,6 +28136,217 @@ void TextureSong(FakeSong &Song, const std::vector<Section> &Parts, bool Rolling
 	}
 }
 
+// Two local models' "Hut in a Field" (F major and C major, bars of 16 rows), as their notes were written: by channel, a
+// bar a string of "row:pitch" ("row:-" ends a note). Haiku 2, which the user heard as "weird, like there are misplaced
+// notes": its tune on 2A03 Pulse 1, single chord notes on Pulse 2 coming in on beat 2 (resting in bars 13-20), the bass on
+// the triangle, a bell's few notes on VRC6 Pulse 1 (an octave under the tune in bars 29-32). Sonnet 2, which the user
+// heard as better: broken chords on 2A03 Pulse 1, the bass on the triangle, its tune on VRC6 Pulse 1, a second voice on
+// VRC6 Pulse 2
+struct HutPart {
+	int Channel;
+	std::vector<const char *> Bars;
+};
+const HutPart HUT_HAIKU[] = {
+	{ 0, {
+		"", "", "", "", "0:F-3 4:A-3 6:C-4 10:A-3", "0:E-4 4:D-4 8:C-4 12:-", "0:A#3 4:D-4 6:F-4 10:D-4",
+		"0:E-4 4:C-4 8:G-3 12:-", "0:A-3 4:C-4 6:F-4 10:E-4 12:D-4", "0:D-4 4:F-4 8:E-4 12:D-4 14:-",
+		"0:F-4 8:D-4 12:A#3 14:-", "0:G-3 4:E-3 6:G-3 10:C-4 14:-", "0:F-3 4:A-3 6:C-4 10:A-3 12:G-3",
+		"0:E-4 4:D-4 6:C-4 10:A-3 14:-", "0:A#3 4:D-4 6:F-4 10:D-4 12:C-4 14:-", "0:C-4 4:E-4 6:G-4 10:E-4 12:-",
+		"0:A-3 2:C-4 4:F-4 8:G-4 10:F-4 12:-", "0:D-4 2:F-4 4:A-4 8:G-4 12:F-4 14:-", "0:D-4 4:F-4 12:D-4 14:-",
+		"0:C-4 8:E-4 12:G-3 14:-", "0:D-4 6:F-4 12:E-4 14:-", "0:D-4 4:C-4 6:- 8:A#3 14:-", "0:A-3 6:- 8:C-4 14:-",
+		"0:D-4 6:- 8:C-4 12:A#3 14:-", "0:A-3 6:D-4 12:F-4 14:-", "0:E-4 4:D-4 8:C-4 12:-", "0:A#3 6:- 8:G-3 12:F-3 14:-",
+		"0:F-3 8:A-3 14:-", "0:F-4 4:A-4 6:C-5 10:A-4", "0:E-5 4:D-5 8:C-5 12:-", "0:A#4 4:D-5 6:F-5 10:D-5",
+		"0:E-5 4:C-5 8:G-4 12:-", "0:A-4 4:C-5 6:F-5 10:E-5 12:D-5", "0:D-5 4:F-5 8:E-5 12:D-5 14:-",
+		"0:F-5 8:D-5 12:A#4 14:-", "0:G-4 4:E-4 8:F-4 14:-" } },
+	{ 1, {
+		"0:A-3", "0:F-3", "0:D-4", "0:E-4", "0:- 4:A-3 8:- 12:C-4 14:-", "4:F-3 8:- 12:A-3 14:-", "4:D-4 8:- 12:A#3 14:-",
+		"4:E-4 8:- 12:G-3 14:-", "4:A-3 8:- 12:C-4 14:-", "4:F-3 8:- 12:A-3 14:-", "4:D-4 8:- 12:A#3 14:-",
+		"4:E-4 8:- 12:G-3 14:-", "", "", "", "", "", "", "", "", "0:D-3 4:F-3 8:A-3 12:C-4", "0:D-3 4:F-3 8:A#3 12:D-4",
+		"0:C-3 4:E-3 8:G-3 12:C-4", "0:C-3 4:A-3 8:F-3 12:C-4", "0:D-3 4:F-3 8:A-3 12:D-4", "0:G-3 4:A#3 8:D-4 12:G-3",
+		"0:D-3 4:F-3 8:A#3 12:D-4", "0:C-3 4:G-3 8:C-4 12:E-4 14:-", "4:A-3 8:- 12:C-4 14:-", "4:F-3 8:- 12:A-3 14:-",
+		"4:D-4 8:- 12:A#3 14:-", "4:E-4 8:- 12:G-3 14:-", "4:A-3 8:- 12:C-4 14:-", "4:F-3 8:- 12:A-3 14:-",
+		"4:D-4 8:- 12:A#3 14:-", "4:E-4 8:- 12:G-3 14:-" } },
+	{ 2, {
+		"", "", "0:A#2 2:- 4:F-3 6:- 8:A#2 10:- 12:F-3 14:-", "0:C-2 2:- 4:G-2 6:- 8:C-2 10:- 12:G-2 14:-",
+		"0:F-2 2:- 4:C-3 6:- 8:F-2 10:- 12:C-3 14:-", "0:D-2 2:- 4:A-2 6:- 8:D-2 10:- 12:A-2 14:-",
+		"0:A#2 2:- 4:F-3 6:- 8:A#2 10:- 12:F-3 14:-", "0:C-2 2:- 4:G-2 6:- 8:C-2 10:- 12:G-2 14:-",
+		"0:F-2 2:- 4:C-3 6:- 8:F-2 10:- 12:C-3 14:-", "0:D-2 2:- 4:A-2 6:- 8:D-2 10:- 12:A-2 14:-",
+		"0:A#2 2:- 4:F-3 6:- 8:A#2 10:- 12:F-3 14:-", "0:C-2 2:- 4:G-2 6:- 8:C-2 10:- 12:G-2 14:-", "0:F-2 8:C-3",
+		"0:D-2 8:A-2", "0:A#2 8:F-3", "0:C-2 8:G-2", "0:F-2 8:C-3", "0:D-2 8:A-2", "0:A#2 8:F-3", "0:C-2 8:G-2",
+		"0:D-2 4:A-2 8:D-2 12:A-2", "0:A#2 4:F-3 8:A#2 12:F-3", "0:C-2 4:G-2 8:C-2 12:G-2", "0:F-2 4:C-3 8:F-2 12:C-3",
+		"0:D-2 4:A-2 8:D-2 12:A-2", "0:G-2 4:D-3 8:G-2 12:D-3", "0:A#2 4:F-3 8:A#2 12:F-3", "0:C-2 4:G-2 8:C-2 12:G-2",
+		"0:F-2 2:- 4:C-3 6:- 8:F-2 10:- 12:C-3 14:-", "0:D-2 2:- 4:A-2 6:- 8:D-2 10:- 12:A-2 14:-",
+		"0:A#2 2:- 4:F-3 6:- 8:A#2 10:- 12:F-3 14:-", "0:C-2 2:- 4:G-2 6:- 8:C-2 10:- 12:G-2 14:-",
+		"0:F-2 2:- 4:C-3 6:- 8:F-2 10:- 12:C-3 14:-", "0:D-2 2:- 4:A-2 6:- 8:D-2 10:- 12:A-2 14:-",
+		"0:A#2 2:- 4:F-3 6:- 8:A#2 10:- 12:F-3 14:-", "0:C-2 2:- 4:G-2 6:- 8:C-2 10:- 12:G-2 14:-" } },
+	{ 5, {
+		"", "", "", "", "", "", "", "", "", "", "", "", "", "14:C-5", "0:- 14:A-4", "0:- 12:E-5 14:-", "12:C-5 14:-",
+		"14:D-5", "0:- 14:F-4", "0:- 14:C-5", "0:-", "", "", "", "", "", "", "", "0:F-3 4:A-3 6:C-4 10:A-3",
+		"0:E-4 4:D-4 8:C-4 12:-", "0:A#3 4:D-4 6:F-4 10:D-4", "0:E-4 4:C-4 8:G-3 12:-", "", "", "", "" } },
+};
+const HutPart HUT_SONNET[] = {
+	{ 0, {
+		"2:C-3 4:- 6:C-3 8:- 10:C-3 12:- 14:C-3", "0:- 2:B-1 4:- 6:B-1 8:- 10:B-1 12:- 14:B-1 15:-",
+		"2:E-2 4:- 6:E-2 8:- 10:E-2 12:- 14:E-2", "0:- 2:E-2 4:- 6:E-2 8:- 10:E-2 12:- 14:E-2",
+		"0:- 2:F-2 4:- 6:F-2 8:- 10:F-2 12:- 14:F-2", "0:- 2:G-2 4:- 6:G-2 8:- 10:G-2 12:- 14:G-2",
+		"0:- 2:E-2 4:- 6:E-2 8:- 10:E-2 12:- 14:E-2", "0:- 2:E-2 4:- 6:E-2 8:- 10:E-2 12:- 14:E-2",
+		"0:- 2:F-2 4:- 6:F-2 8:- 10:F-2 12:- 14:F-2", "0:- 2:G-2 4:- 6:G-2 8:- 10:G-2 12:- 14:G-2 15:-", "", "", "", "", "",
+		"", "", "", "0:C-2 2:F-2 4:A-2 6:C-3 8:C-2 10:F-2 12:A-2 14:C-3",
+		"0:D-2 2:F-2 4:G-2 6:B-2 8:D-2 10:F-2 12:G-2 14:B-2", "0:D-2 2:E-2 4:G-2 6:B-2 8:D-2 10:E-2 12:G-2 14:B-2",
+		"0:E-2 2:G-2 4:A-2 6:C-3 8:E-2 10:G-2 12:A-2 14:C-3", "0:F-2 2:A-2 4:C-3 6:F-3 8:F-2 10:A-2 12:C-3 14:F-3",
+		"0:F-2 2:A-2 4:C-3 6:D-3 8:F-2 10:A-2 12:C-3 14:D-3", "0:F-2 2:G-2 4:B-2 6:D-3 8:F-2 10:G-2 12:B-2 14:D-3",
+		"0:F-2 2:G-2 4:B-2 6:D-3 8:F-2 10:G-2 12:B-2 14:D-3", "0:- 2:G-2 4:- 6:G-2 8:- 10:G-2 12:- 14:G-2",
+		"0:- 2:A-2 4:- 6:A-2 8:- 10:A-2 12:- 14:A-2", "0:- 2:A-2 4:- 6:A-2 8:- 10:A-2 12:- 14:A-2",
+		"0:- 2:G-2 4:- 6:G-2 8:- 10:G-2 12:- 14:G-2", "0:- 2:G-2 4:- 6:G-2 8:- 10:G-2 12:- 14:G-2",
+		"0:- 2:A-2 4:- 6:A-2 8:- 10:A-2 12:- 14:A-2", "0:- 2:A-2 4:- 6:A-2 8:- 10:A-2 12:- 14:A-2",
+		"0:- 2:B-2 4:- 6:B-2 8:- 10:B-2 12:- 14:B-2 15:-" } },
+	{ 2, {
+		"", "0:G-2 4:D-2 8:G-2 12:D-2", "0:C-2 4:G-2 8:C-2 12:G-2", "0:A-2 4:E-2 8:A-2 12:E-2", "0:F-2 4:C-2 8:F-2 12:C-2",
+		"0:G-2 4:D-2 8:G-2 12:F-2 14:D-2", "0:C-2 4:G-2 8:C-2 12:G-2", "0:A-2 4:E-2 8:A-2 12:E-2",
+		"0:D-2 4:A-2 8:D-2 12:A-2", "0:G-2 4:D-2 8:G-2 12:F-2 14:D-2", "0:C-2 6:G-2 8:C-2 12:G-2",
+		"0:A-2 6:E-2 8:A-2 12:E-2", "0:F-2 6:C-2 8:F-2 12:C-2", "0:G-2 4:D-2 8:G-2 12:F-2 14:D-2",
+		"0:C-2 6:G-2 8:C-2 12:G-2", "0:A-2 6:E-2 8:A-2 12:E-2", "0:D-2 6:A-2 8:D-2 12:A-2",
+		"0:G-2 4:D-2 8:G-2 12:F-2 14:D-2", "0:F-2 8:C-2", "0:G-2 8:D-2", "0:E-2 8:B-2", "0:A-2 8:E-2", "0:F-2 8:C-2",
+		"0:D-2 8:A-2", "0:G-2 8:D-2", "0:G-2 4:D-2 8:G-2 12:F-2 14:D-2", "0:C-2 4:G-2 8:C-2 12:G-2 14:C-2",
+		"0:A-2 4:E-2 8:A-2 12:E-2 14:A-2", "0:F-2 4:C-2 8:F-2 12:C-2 14:F-2", "0:G-2 4:D-2 8:G-2 12:F-2 14:D-2",
+		"0:C-2 4:G-2 8:C-2 12:G-2 14:C-2", "0:A-2 4:E-2 8:A-2 12:E-2 14:A-2", "0:D-2 4:A-2 8:D-2 12:A-2 14:D-2",
+		"0:G-2 4:D-2 8:G-2 12:F-2 14:D-2" } },
+	{ 5, {
+		"", "12:C-3 14:D-3", "0:E-3 4:G-3 6:E-3 8:C-4 12:G-3", "0:A-3 4:C-4 6:A-3 8:E-3", "0:F-3 4:A-3 6:F-3 8:C-4 12:A-3",
+		"0:B-3 4:D-4 6:B-3 8:G-3 12:-", "0:E-3 4:G-3 6:E-3 8:C-4 12:E-4", "0:A-3 6:G-3 8:A-3 12:C-4",
+		"0:F-3 4:A-3 6:D-4 12:A-3 14:F-3", "0:D-4 8:B-3 12:G-3 14:-", "0:E-3 4:G-3 6:E-3 8:C-4 12:G-3 14:E-3",
+		"0:A-3 4:C-4 6:A-3 8:E-4 12:C-4 14:A-3", "0:F-3 4:A-3 6:C-4 12:A-3 14:F-3", "0:D-4 4:B-3 6:G-3 8:B-3 12:-",
+		"0:G-3 4:C-4 6:E-4 12:C-4 14:G-3", "0:C-4 6:B-3 8:A-3 12:-", "0:A-3 4:F-3 6:D-3 8:F-3 12:A-3", "0:D-4 6:B-3 12:-",
+		"0:C-4 6:A-3 8:F-3 14:A-3", "0:D-4 6:B-3 8:G-3 14:B-3", "0:E-4 8:B-3 12:G-3", "0:C-4 6:A-3 8:E-3 12:-",
+		"0:A-3 6:C-4 8:F-4 14:C-4", "0:D-4 6:A-3 8:F-3 14:A-3", "0:D-4 6:B-3 12:G-3", "0:D-4 8:B-3 12:G-3 14:-",
+		"0:G-3 4:C-4 6:G-3 8:E-4 12:C-4", "0:C-4 4:E-4 6:C-4 8:A-3", "0:A-3 4:C-4 6:A-3 8:F-4 12:C-4",
+		"0:D-4 4:G-4 6:D-4 8:B-3 12:-", "0:G-3 4:C-4 6:G-3 8:E-4 12:G-4", "0:C-4 6:E-4 8:C-4 12:E-4",
+		"0:A-3 4:D-4 6:F-4 12:D-4 14:A-3", "0:G-4 8:D-4 12:B-3 14:-" } },
+	{ 6, {
+		"", "", "", "", "", "", "", "", "", "", "", "", "", "12:G-4 14:B-4", "0:-", "12:E-4 14:A-4", "0:-", "12:B-4 14:G-4",
+		"0:-", "", "", "", "", "", "", "", "0:E-3 4:G-3 6:E-3 8:C-4 12:G-3", "0:A-3 4:C-4 6:A-3 8:E-3",
+		"0:F-3 4:A-3 6:F-3 8:C-4 12:A-3", "0:B-3 4:D-4 6:B-3 8:G-3 12:-", "0:E-3 4:G-3 6:E-3 8:C-4 12:E-4",
+		"0:A-3 6:G-3 8:A-3 12:C-4", "0:F-3 4:A-3 6:D-4 12:A-3 14:F-3", "0:D-4 8:B-3 12:G-3 14:-" } },
+};
+
+void PutHut(FakeSong &Song, const HutPart *pParts, size_t Count, const char *Key)
+{
+	Song.Info.DirectChanges = true;
+	Song.Info.TrackName = "Hut in a Field";
+	Song.Info.KeyChosen = true;
+	ParseKey(Key, Song.Info.ChosenKey.K);
+	for (size_t p = 0; p < Count; ++p)
+		for (size_t b = 0; b < pParts[p].Bars.size(); ++b) {
+			const std::string Text = std::string(pParts[p].Bars[b]) + " ";
+			for (size_t At = 0, Stop; (Stop = Text.find(' ', At)) != std::string::npos; At = Stop + 1) {
+				const std::string Token = Text.substr(At, Stop - At);
+				const size_t Colon = Token.find(':');
+				if (Colon == std::string::npos)
+					continue;
+				const int Channel = pParts[p].Channel, Row = static_cast<int>(b) * 16 + std::atoi(Token.substr(0, Colon).c_str());
+				if (Token.substr(Colon + 1) == "-")
+					Song.End(Channel, Row, NOTE_RELEASE);
+				else
+					Song.Put(Channel, Row, Token.substr(Colon + 1).c_str(), Channel == 2 ? 1 : Channel >= 5 ? 0 : 2);
+			}
+		}
+}
+
+// Strong beats on chord tones (from feat-strong-beats): check_song's off_chord finds Haiku 2's tune landing off the chord
+// on strong beats with only the bass under it, 12 of its 52, and leaves Sonnet 2 alone; its fix (polish's strong_beats)
+// moves them to chord tones without a clash, a second polish has nothing left, and what_next and the review give it;
+// write_notes warns of it on the melody; grow_melody's tunes keep chord tones on the strong beats over a bare bass
+void TestStrongBeats()
+{
+	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"2A03 Pulse 1\"}";
+	const size_t Haiku = sizeof(HUT_HAIKU) / sizeof(HUT_HAIKU[0]), Sonnet = sizeof(HUT_SONNET) / sizeof(HUT_SONNET[0]);
+	{
+		FakeSong Song(9);
+		PutHut(Song, HUT_HAIKU, Haiku, "F major");
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "off_chord", "off_chord");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "off_chord"), 1);
+		const long long Clashes = IntegerOf(Out.Get("counts"), "clash");
+		if (!Found.empty()) {
+			CHECK_EQ(TextOf(Found[0], "severity"), std::string("medium"));
+			CHECK_EQ(IntegerOf(Found[0], "channel"), 1);
+			CHECK_EQ(IntegerOf(Found[0], "strong_beats"), 52);
+			// As in the file: 12, 8 of them stepping on to a chord tone there (its instruments' sounds name some chords otherwise)
+			CHECK_EQ(IntegerOf(Found[0], "beats"), 12);
+			CHECK_HAS(TextOf(Found[0], "message"), "The melody (2A03 Pulse 1) lands off the chord on strong beats with only the bass "
+				"under it: 12 of the 52 strong beats it plays (bar 6 beat 1 E over Dm, bar 6 beat 3 C over Dm, bar 10 beat 3 E over "
+				"Dm, bar 14 beat 1 E over Dm and 8 more), 7 of them stepping on to a chord tone.");
+			const Json *pPlaces = Found[0]->Get("places");
+			CHECK(pPlaces != 0 && pPlaces->Size() == 12);
+			if (pPlaces != 0 && pPlaces->Size() == 12)
+				CHECK_EQ(WriteJson(pPlaces->At(5)), std::string("{\"bar\":23,\"beat\":1,\"note\":\"A-3\",\"chord\":\"C\",\"resolved\":false}"));
+			const Json *pFix = Found[0]->Get("fix");
+			CHECK(pFix != 0 && TextOf(pFix, "tool") == "polish" && pFix->Get("arguments") != 0);
+			if (pFix != 0 && pFix->Get("arguments") != 0)
+				CHECK_EQ(WriteJson(*pFix->Get("arguments")), std::string("{\"touches\":[\"strong_beats\"],\"melody_channel\":"
+					"\"2A03 Pulse 1\",\"from_bar\":6,\"to_bar\":36}"));
+		}
+		ProblemList List;
+		std::string Error;
+		CHECK(List.Read(Run(Song, "check_song", Args).Text, Error));
+		CHECK_EQ(List.Count(PROBLEM_OFF_CHORD), 1);
+		CHECK_EQ(std::string(ProblemKindId(PROBLEM_OFF_CHORD)), std::string("off_chord"));
+		CHECK_EQ(ProblemSeverity(PROBLEM_OFF_CHORD), 2);
+		CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "lands off the chord on strong beats with only the bass under it");
+		CHECK_HAS(Run(Song, "what_next", "{\"all\": true}").Text, "polish {\"touches\":[\"strong_beats\"],\"melody_channel\":"
+			"\"2A03 Pulse 1\",\"from_bar\":6,\"to_bar\":36}: check_song: The melody (2A03 Pulse 1) lands off the chord");
+		// write_notes on the melody warns of it where its bars are written (the same rule on the song as written)
+		CHECK_HAS(Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"from_bar\": 27, \"to_bar\": 28, \"notes\": "
+			"\"A#3 - - . G3 - F3 . | F3 - - - A3 - - .\"}").Text, "Warning: The melody (2A03 Pulse 1) lands off the chord on strong "
+			"beats with only the bass under it");
+		// The fix: each moves to the nearest chord tone (one that repeats a neighbour two semitones further), no clash added;
+		// then nothing is left to find, and a second polish has nothing to move
+		if (!Found.empty()) {
+			std::string Reply;
+			CHECK(RunFix(Song, *Found[0], &Reply));
+			CHECK_HAS(Reply, "12 notes of 2A03 Pulse 1 on strong beats with only the bass under them moved to the nearest tone of the "
+				"chord (E-4 at bar 6 beat 1 to F-4 (Dm), C-4 at bar 6 beat 3 to A-3 (Dm), E-4 at bar 10 beat 3 to F-4 (Dm), E-4 at bar "
+				"14 beat 1 to F-4 (Dm) and 8 more)");
+			const Json After = Parse(Run(Song, "check_song", Args).Text);
+			CHECK(FindingsOf(After, "off_chord").empty());
+			CHECK(IntegerOf(After.Get("counts"), "clash") <= Clashes);
+			const ToolResult Again = Run(Song, "polish", "{\"touches\": [\"strong_beats\"], \"melody_channel\": \"2A03 Pulse 1\"}");
+			CHECK(Again.IsError);
+			CHECK_HAS(Again.Text, "There was no melody note to move there");
+			CHECK_LACKS(Run(Song, "what_next", "{\"all\": true}").Text, "strong_beats");
+		}
+	}
+	{
+		// Sonnet 2: every strong beat of its tune a chord tone, none found, no warning as its melody is written again
+		FakeSong Song(9);
+		PutHut(Song, HUT_SONNET, Sonnet, "C major");
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text), "off_chord").empty());
+		CHECK_HAS(ToolSet(Song).StrongBeats(), "VRC6 Pulse 1 C major strong 64 off 0");
+		CHECK_LACKS(Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 3, \"to_bar\": 4, \"notes\": "
+			"\"E3 - G3 E3 C4 - G3 - | A3 - C4 A3 E3 - - -\"}").Text, "lands off the chord");
+	}
+	{
+		// grow_melody over a bare bass (the chords resting, as in Haiku 2's bars 13-20): each version keeps a tone of the
+		// chord on the strong beats
+		for (int Pick = 1; Pick <= 3; ++Pick) {
+			FakeSong Song(2);
+			Song.Info.DirectChanges = true;
+			Song.Info.KeyChosen = true;
+			ParseKey("F major", Song.Info.ChosenKey.K);
+			static const char *const BASS[4][2] = { { "F-2", "C-3" }, { "D-2", "A-2" }, { "A#2", "F-3" }, { "C-2", "G-2" } };
+			for (int Bar = 0; Bar < 8; ++Bar)
+				for (int Beat = 0; Beat < 4; ++Beat)
+					Song.Put(2, Bar * 16 + Beat * 4, BASS[Bar % 4][Beat % 2], 1);
+			const ToolResult Grown = Run(Song, "grow_melody", "{\"motif\": \"C5 - A4 - F4 - A4 - | D5 - - - A4 - F4 -\", \"channel\": "
+				"\"2A03 Pulse 1\", \"key\": \"F major\", \"to_bar\": 8, \"pick\": " + std::to_string(Pick) + "}");
+			Check(!Grown.IsError, Grown.Text.c_str(), __LINE__);
+			const std::string Beats = ToolSet(Song).StrongBeats();
+			Check(Beats.find(" bare 0 ") != std::string::npos, Beats.c_str(), __LINE__);
+		}
+	}
+}
+
 // The texture (from feat-texture): a chord part that plays the same way all through rests where the melody carries the
 // song (check_song's chords_throughout, its fix vary_part's rest, what_next's step); a song whose parts all play the same
 // channels with the same sounds gets the review's tip and what_next's highlight, a new sound for the melody in B; an outro
@@ -32350,6 +32561,7 @@ int main()
 	TestToolReplies();
 	TestChordDrones();
 	TestTexture();
+	TestStrongBeats();
 	TestColorRubs();
 	TestIntroNoteIntoLoop();
 	TestEchoInTuneWhereDoubled();

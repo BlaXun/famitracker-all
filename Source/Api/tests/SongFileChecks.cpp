@@ -58,7 +58,8 @@ struct CheckedKind { const char *Kind; const char *Step; bool StepNeeded; };
 const CheckedKind KINDS[] = { { "too_busy", "oo busy for the NES", true }, { "chord_drone", "drone against the tune", true },
 	{ "climax_repeats", "the song's high point, plays the melody", false },
 	{ "chords_throughout", "A chord part that plays all through", true },
-	{ "monotone", "doesn't catch: in ", false } };
+	{ "monotone", "doesn't catch: in ", false },
+	{ "off_chord", "lands off the chord on strong beats", true } };
 const size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
 std::vector<std::string> FtmFiles(const std::string &Folder)
@@ -236,6 +237,34 @@ int main(int argc, char *argv[])
 					Args.Set("to_bar", First + (argc > 4 ? std::max(1, std::atoi(argv[4])) : 8) - 1);
 					std::printf("%s\n", Tools.Call("read_notes", Args).Text.c_str());
 				}
+			}
+		}
+		return 0;
+	}
+	// -beats: each song's melody notes on strong beats that are off the chord there (OffChordBeats), for calibrating
+	// check_song's off_chord: the folder's songs (or one .ftm file given), then keep/ and flag/, every track
+	if (argc > 2 && std::string(argv[2]) == "-beats") {
+		std::vector<std::string> Files;
+		if (Folder.size() > 4 && Folder.substr(Folder.size() - 4) == ".ftm")
+			Files.push_back(Folder);
+		else {
+			const char *const SUBS[] = { "", "/keep", "/flag" };
+			for (size_t s = 0; s < 3; ++s) {
+				const std::vector<std::string> More = FtmFiles(Folder + SUBS[s]);
+				Files.insert(Files.end(), More.begin(), More.end());
+			}
+		}
+		for (size_t i = 0; i < Files.size(); ++i) {
+			FileSong Probe;
+			std::string Error;
+			if (!Probe.Load(Files[i], 0, Error))
+				continue;
+			for (int t = 0; t < Probe.Info.Tracks; ++t) {
+				FileSong Song;
+				if (!Song.Load(Files[i], t, Error))
+					continue;
+				ToolSet Tools(Song);
+				std::printf("%s track %d: %s\n", Files[i].c_str(), t + 1, Tools.StrongBeats().c_str());
 			}
 		}
 		return 0;

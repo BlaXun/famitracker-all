@@ -7651,13 +7651,11 @@ void RubWarnings(const Session &S, const std::vector<ChordAt> &Chords, const std
 
 // The notes the song's parts other than one (and Also, a part about to be
 // written over) play, as pitch classes, with the chords their 0xy arpeggios
-// (lasting until a 000, wherever it is) and arpeggio instruments sound
-std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End, int Also = -1)
+// (lasting until a 000, wherever it is) and arpeggio instruments sound;
+// AddHeardNotes adds one part's to Out
+void AddHeardNotes(Session &S, int c, int First, int End, std::vector<HeardNote> &Out)
 {
-	std::vector<HeardNote> Out;
-	for (int c = 0; c < S.ChannelCount(); ++c) {
-		if (c == Except || c == Also || !IsMelodic(S.Channel(c)))
-			continue;
+	{
 		const bool Bass = IsBass(S.Channel(c));
 		std::vector<NoteInfo> Kept;
 		const std::vector<NoteInfo> &Notes = PitchedNotes(S, c, Kept);	// a 5B's noise alone is no chord's note
@@ -7682,6 +7680,14 @@ std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End, in
 			}
 		}
 	}
+}
+
+std::vector<HeardNote> HeardNotes(Session &S, int Except, int First, int End, int Also = -1)
+{
+	std::vector<HeardNote> Out;
+	for (int c = 0; c < S.ChannelCount(); ++c)
+		if (c != Except && c != Also && IsMelodic(S.Channel(c)))
+			AddHeardNotes(S, c, First, End, Out);
 	return Out;
 }
 
@@ -14287,6 +14293,322 @@ std::string ColorSwapsText(const Session &S, const std::vector<ColorSwap> &Swaps
 	return Out;
 }
 
+// Strong beats on chord tones (from feat-strong-beats). The user heard a local model's "Hut in a Field (Haiku 2)" as
+// "weird, like there are misplaced notes" and its Sonnet version as better; check_song found nothing in either (no
+// semitone rubs). A melody note sounding on a strong beat (the bar's first beat, and in 4/4 its third; in 6/8 its second
+// dotted beat) is off the chord when its pitch isn't a tone of the chord sounding there: as the tools hear the other
+// parts (HearChords on every part but the melody, an echo of it and a double of it), or where they sound no chord (the
+// chords resting) the key's triad the bass's notes in the bar make. Such a note counts when it's heard: from the beat on,
+// OFF_CHORD_FIRST_BEATS of a beat on the bar's first beat, OFF_CHORD_BEATS on another. Resolved: the melody's next note
+// (starting within a beat of its end) a step away (a semitone or a tone) on a tone of the chord sounding then.
+const double OFF_CHORD_FIRST_BEATS = 0.5, OFF_CHORD_BEATS = 1.0;
+
+struct OffChordBeat {
+	int Row;			// the strong beat
+	int Note;			// into the melody's notes
+	int Pitch;			// as written, where it lands (LandedPitch)
+	Chord C;			// the chord sounding there
+	bool Implied;		// C is implied by the bar's notes (the others sound none)
+	bool Resolved;		// the next note steps to a tone of the chord then
+	bool FirstBeat;
+	int Support;		// the pitch classes the other parts sound on the beat
+	int Bass;			// the interval over the lowest of them, -1 for none
+	OffChordBeat() : Row(0), Note(0), Pitch(0), Implied(false), Resolved(false), FirstBeat(false), Support(0), Bass(-1) {}
+};
+
+// The strong beats of a bar, as rows from its start
+std::vector<int> StrongBeatRows(const Session &S, int Bar)
+{
+	std::vector<int> Out(1, 0);
+	const int Beats = S.Time.BeatsPerBar(Bar), R = std::max(1, S.Time.RowsPerBeat);
+	if (Beats == 4)
+		Out.push_back(2 * R);
+	else if (Beats == 6)
+		Out.push_back(3 * R);
+	return Out;
+}
+
+// The parts a melody's chords are heard from in the rows [First, End): every melodic part but the melody, an echo of it
+// (FollowDelay) and a double of it (two thirds or more of its notes, four at least, start on the melody's pitch class as
+// it sounds then: the tune an octave under). A harmony voice stays (its thirds and sixths are the chord's), and so does
+// a bass on the beat, which starts its notes with the tune's but plays the roots
+std::vector<int> ChordPartsBeside(Session &S, int Melody, int First, int End)
+{
+	std::vector<int> Out;
+	const std::vector<NoteInfo> &Tune = S.Notes(Melody);
+	for (int c = 0; c < S.ChannelCount(); ++c) {
+		if (c == Melody || !IsMelodic(S.Channel(c)))
+			continue;
+		const std::vector<NoteInfo> Notes = NotesIn(S.Notes(c), First, End);
+		int Same = 0;
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const int t = NoteIndexAt(Tune, Notes[i].Row);
+			Same += t >= 0 && ClassOf(LandedPitch(Tune[static_cast<size_t>(t)])) == ClassOf(LandedPitch(Notes[i])) ? 1 : 0;
+		}
+		if (!Notes.empty() && (FollowDelay(S, c, Melody, First, End) > 0 || (Notes.size() >= 4 && Same * 3 >= static_cast<int>(Notes.size()) * 2)))
+			continue;
+		Out.push_back(c);
+	}
+	return Out;
+}
+
+// The chord sounding at Row: heard in Chords, else (the chords resting) the key's triad the bass's notes in the bar make
+// (a root and its fifth, as a bass on the beat alternates them: D and A, Dm in F major), on the bar's first bass note
+// where it's one, else the triad on the bass's note sounding at Row (the last one the bass started up to it in its half
+// bar); Implied then. False for none (nothing beside the melody, or a bass note outside the key)
+bool BeatChord(Session &S, const std::vector<ChordAt> &Chords, const std::vector<int> &Bass, int Row, const Key &K,
+	Chord &Out, bool &Implied)
+{
+	for (size_t i = 0; i < Chords.size(); ++i)
+		if (Chords[i].Row <= Row && Row < Chords[i].Row + Chords[i].Rows) {
+			Out = Chords[i].C;
+			Implied = false;
+			return true;
+		}
+	const int Bar = S.Time.BarOf(Row), Start = S.Time.BarStart(Bar), End = S.Time.BarEnd(Bar);
+	const int Half = Row - Start >= std::max(1, S.Time.BarLength(Bar) / 2) ? Start + S.Time.BarLength(Bar) / 2 : Start;
+	int Pitch = -1, At = -1, First = -1, FirstAt = End;
+	std::set<int> Classes;
+	for (size_t b = 0; b < Bass.size(); ++b) {
+		const std::vector<NoteInfo> &Notes = S.Notes(Bass[b]);
+		for (size_t i = 0; i < Notes.size() && Notes[i].Row < End; ++i) {
+			const NoteInfo &N = Notes[i];
+			if (N.Volume <= 0 || N.Row + N.Rows <= Start)
+				continue;
+			Classes.insert(ClassOf(LandedPitch(N)));
+			if (std::max(N.Row, Start) < FirstAt) {
+				FirstAt = std::max(N.Row, Start);
+				First = ClassOf(LandedPitch(N));
+			}
+			if (N.Row <= Row && (N.Row >= Half || Row < N.Row + N.Rows) && N.Row > At) {
+				At = N.Row;
+				Pitch = ClassOf(LandedPitch(N));
+			}
+		}
+	}
+	if (Pitch < 0)
+		return false;
+	const int *pSteps = ModeSteps(K.Mode);
+	auto Triad = [&](int d) {
+		const int Root = (K.Tonic + pSteps[d]) % 12;
+		return Chord(Root, std::vector<int>{ 0, ClassOf(pSteps[(d + 2) % 7] - pSteps[d]), ClassOf(pSteps[(d + 4) % 7] - pSteps[d]) });
+	};
+	for (int d = 0; d < 7; ++d) {
+		const Chord C = Triad(d);
+		bool All = C.Root == First;
+		for (std::set<int>::const_iterator it = Classes.begin(); it != Classes.end() && All; ++it)
+			All = C.HasPitchClass(*it);
+		if (All) {
+			Out = C;
+			Implied = true;
+			return true;
+		}
+	}
+	for (int d = 0; d < 7; ++d)
+		if ((K.Tonic + pSteps[d]) % 12 == Pitch) {
+			Out = Triad(d);
+			Implied = true;
+			return true;
+		}
+	return false;
+}
+
+// The melody's notes on strong beats in the bars [FromBar, ToBar) that are off the chord there and heard (see above),
+// resolved or not; Strong counts the strong beats where a melody note is heard
+std::vector<OffChordBeat> OffChordBeats(Session &S, int Melody, int FromBar, int ToBar, const Key &K, int &Strong)
+{
+	std::vector<OffChordBeat> Out;
+	Strong = 0;
+	if (Melody < 0 || !IsMelodic(S.Channel(Melody)) || S.Channel(Melody).Kind == KIND_DPCM)
+		return Out;
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = PitchedNotes(S, Melody, Kept);
+	const int R = std::max(1, S.Time.RowsPerBeat), Total = S.Time.TotalRows();
+	std::vector<ChordAt> Chords, Whole;	// in half bars, and a bar at a time
+	std::vector<int> Bass;	// the channels that play the bass somewhere
+	// The chords, a block of four bars at a time from the song's first (whose echo and double of the tune are left out), so
+	// bars are heard alike whichever bars are asked
+	for (int Block = FromBar - (FromBar - 1) % 4; Block < ToBar; Block += 4) {
+		const int First = S.Time.BarStart(Block), End = std::min(Total, S.Time.BarEnd(std::min(ToBar, Block + 4) - 1));
+		if (First >= End)
+			break;
+		const std::vector<int> Parts = ChordPartsBeside(S, Melody, First, End);
+		std::vector<HeardNote> Heard;
+		for (size_t p = 0; p < Parts.size(); ++p) {
+			AddHeardNotes(S, Parts[p], First, End, Heard);
+			if (PlaysBassPart(S, Parts[p], First, End) && std::find(Bass.begin(), Bass.end(), Parts[p]) == Bass.end())
+				Bass.push_back(Parts[p]);
+		}
+		const std::vector<ChordAt> H = HearChords(Heard, SongBarSpans(S, First, End), R, K, true);
+		const std::vector<ChordAt> W = HearChords(Heard, SongBarSpans(S, First, End), R, K, false);
+		Chords.insert(Chords.end(), H.begin(), H.end());
+		Whole.insert(Whole.end(), W.begin(), W.end());
+	}
+	for (int Bar = FromBar; Bar < ToBar; ++Bar) {
+		const std::vector<int> Beats = StrongBeatRows(S, Bar);
+		for (size_t b = 0; b < Beats.size(); ++b) {
+			const int Row = S.Time.BarStart(Bar) + Beats[b];
+			if (Row >= Total || Row >= S.Time.BarEnd(Bar))
+				continue;
+			const int i = NoteIndexAt(Notes, Row);
+			if (i < 0)
+				continue;
+			const NoteInfo &N = Notes[static_cast<size_t>(i)];
+			const double Heard = (N.Row + N.Rows - Row) / static_cast<double>(R);
+			if (N.Volume <= 0 || Heard < (b == 0 ? OFF_CHORD_FIRST_BEATS : OFF_CHORD_BEATS) - 1e-9)
+				continue;
+			Chord C;
+			bool WasImplied = false;
+			if (!BeatChord(S, Chords, Bass, Row, K, C, WasImplied))
+				continue;
+			++Strong;
+			// A tone of the bar's chord counts too: a half bar where the bass alone plays its fifth (C under G on beat 3) is
+			// heard as a chord on that fifth
+			const int Pitch = LandedPitch(N);
+			const ChordAt *pBar = WasImplied ? 0 : ChordAtRow(Whole, Row);
+			if (C.HasPitchClass(ClassOf(Pitch)) || (pBar != 0 && pBar->C.HasPitchClass(ClassOf(Pitch))))
+				continue;
+			OffChordBeat O;
+			O.Row = Row;
+			O.Note = i;
+			O.Pitch = Pitch;
+			O.C = C;
+			O.Implied = WasImplied;
+			O.FirstBeat = b == 0;
+			if (static_cast<size_t>(i) + 1 < Notes.size()) {
+				const NoteInfo &Next = Notes[static_cast<size_t>(i) + 1];
+				const int Step = std::abs(LandedPitch(Next) - Pitch);
+				Chord Then;
+				bool ThenImplied = false;
+				O.Resolved = Next.Row <= N.Row + N.Rows + R && Step >= 1 && Step <= 2 && Next.Volume > 0 &&
+					BeatChord(S, Chords, Bass, Next.Row, K, Then, ThenImplied) && Then.HasPitchClass(ClassOf(LandedPitch(Next)));
+			}
+			{
+				std::set<int> Classes;
+				int Low = 1000;
+				for (int c = 0; c < S.ChannelCount(); ++c) {
+					if (c == Melody || !IsMelodic(S.Channel(c)))
+						continue;
+					const std::vector<NoteInfo> &Theirs = S.Notes(c);
+					const int t = NoteIndexAt(Theirs, Row);
+					if (t < 0 || Theirs[static_cast<size_t>(t)].Volume <= 0)
+						continue;
+					const int P = LandedPitch(Theirs[static_cast<size_t>(t)]) - Written(S.Channel(c), 0);
+					Classes.insert(ClassOf(P));
+					Low = std::min(Low, P);
+				}
+				O.Support = static_cast<int>(Classes.size());
+				O.Bass = Low < 1000 ? ClassOf(Pitch - Low) : -1;
+			}
+			Out.push_back(O);
+		}
+	}
+	return Out;
+}
+
+// What check_song's off_chord counts (from feat-strong-beats): a melody note off the chord on a strong beat with no chord
+// under it, only the bass (or nothing) sounding with it, OFF_CHORD_SUPPORT pitch classes at most. Measured on the songs
+// the user keeps (song_file_checks -beats): their melodies land off the chord on 0-39% of their strong beats (Night 26 of
+// 96, Sugarplum Lane 14 of 57, Autumn Woods' F# held over G as a major seventh in bar after bar), resolved or not (most
+// of theirs don't resolve: a seventh, a ninth or a sixth over the chord is its color), so neither the share nor the
+// resolution tells the Hut's Haiku version apart (31% off, 12 of its 16 stepping on to a chord tone, an appoggiatura's
+// way). Over a bare bass they do: the kept songs' melodies do it on 0-5 strong beats (05 The Copper Spoon 5 of 18,
+// Ironworks-liked 5 of 49, 02-03 Lanternbrook 3 of 50), Haiku 2 on 12 of 52 (E over a lone D in bars 6, 10 and 14, the
+// chord part's single notes coming in on beat 2; A and then F over a lone C in bars 23 and 28), Sonnet 2 on none. A
+// color needs its chord sounding to be heard as one; over the bass alone the note is heard as a wrong note, resolving
+// or not. OFF_CHORD_LEAST of them and OFF_CHORD_SHARE of the strong beats the melody is heard on make a finding
+const int OFF_CHORD_SUPPORT = 1, OFF_CHORD_LEAST = 8;
+const double OFF_CHORD_SHARE = 0.15;
+
+// The off-chord beats check_song counts: no chord under them (OFF_CHORD_SUPPORT)
+std::vector<OffChordBeat> BareOffChordBeats(Session &S, int Melody, int FromBar, int ToBar, const Key &K, int &Strong)
+{
+	std::vector<OffChordBeat> Out;
+	const std::vector<OffChordBeat> All = OffChordBeats(S, Melody, FromBar, ToBar, K, Strong);
+	for (size_t i = 0; i < All.size(); ++i)
+		if (All[i].Support <= OFF_CHORD_SUPPORT)
+			Out.push_back(All[i]);
+	return Out;
+}
+
+// A melody note polish's strong_beats touch moves: the note (its row), its pitch and the one it gets, on the beat Beat
+struct StrongBeatMove {
+	int Row, From, To, Beat;
+	Chord C;
+};
+
+// polish's strong_beats touch (from feat-strong-beats): each melody note check_song's off_chord counts in the bars
+// [FromBar, ToBar) (off the chord on a strong beat over a bare bass) moves to the nearest tone of the chord there that
+// rubs against nothing the other parts sound while it plays (RubsAgainstOthers, as check_song hears a clash) and stays
+// in the channel's range, up first on a tie; a note starting before the bars, one that slides, or one with no such tone
+// stays (Left counts them). Keeps the note's row, length, instrument, volume and effects
+std::vector<StrongBeatMove> PlanStrongBeats(Session &S, int Melody, int FromBar, int ToBar, const Key &K, int &Left)
+{
+	std::vector<StrongBeatMove> Out;
+	Left = 0;
+	int Strong = 0;
+	const std::vector<OffChordBeat> Off = BareOffChordBeats(S, Melody, FromBar, ToBar, K, Strong);
+	if (Off.empty())
+		return Out;
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = PitchedNotes(S, Melody, Kept);
+	const SoundGrid G = HearGrid(S, S.Time.BarStart(FromBar), std::min(S.Time.TotalRows(), S.Time.BarEnd(ToBar)));
+	const ChannelInfo &Info = S.Channel(Melody);
+	std::set<int> Done;
+	for (size_t i = 0; i < Off.size(); ++i) {
+		const NoteInfo &N = Notes[static_cast<size_t>(Off[i].Note)];
+		if (Done.count(N.Row) > 0)
+			continue;
+		Done.insert(N.Row);
+		bool Slides = N.Row < S.Time.BarStart(FromBar);
+		for (size_t e = 0; e < N.Effects.size(); ++e) {
+			const int Effect = N.Effects[e].second.first;
+			Slides = Slides || Effect == EFF_SLIDE_UP || Effect == EFF_SLIDE_DOWN || Effect == EFF_PORTAMENTO || Effect == EFF_PORTA_UP ||
+				Effect == EFF_PORTA_DOWN || (Effect == EFF_ARPEGGIO && N.Effects[e].second.second != 0);
+		}
+		// The nearest, two semitones further for one that repeats the note before or after it (E-D-C over Dm takes F-D-A, not
+		// F-D-D), up first on a tie
+		const int Index = Off[i].Note;
+		const int Before = Index > 0 ? Notes[static_cast<size_t>(Index) - 1].Pitch : -1;
+		const int After = static_cast<size_t>(Index) + 1 < Notes.size() ? Notes[static_cast<size_t>(Index) + 1].Pitch : -1;
+		int To = -1, Best = 0;
+		for (int Distance = 1; Distance <= 6 && !Slides; ++Distance)
+			for (int Way = 1; Way >= -1; Way -= 2) {
+				const int Pitch = N.Pitch + Way * Distance, Cost = Distance + (Pitch == Before || Pitch == After ? 2 : 0);
+				if ((To < 0 || Cost < Best) && Pitch >= 0 && Pitch < PITCHES && Off[i].C.HasPitchClass(ClassOf(Pitch)) &&
+					NoteRangeReason(S, Info, Pitch, N.Instrument).empty() && !RubsAgainstOthers(S, G, Melody, Pitch, N.Row, N.Row +
+					std::max(1, N.Rows))) {
+					To = Pitch;
+					Best = Cost;
+				}
+			}
+		if (To < 0) {
+			++Left;
+			continue;
+		}
+		StrongBeatMove M;
+		M.Row = N.Row;
+		M.From = N.Pitch;
+		M.To = To;
+		M.Beat = Off[i].Row;
+		M.C = Off[i].C;
+		Out.push_back(M);
+	}
+	return Out;
+}
+
+// "E-4 at bar 6 beat 1 to F-4 (Dm), ..."
+std::string StrongBeatMovesText(Session &S, const std::vector<StrongBeatMove> &Moves, const Key &K)
+{
+	std::string Text;
+	for (size_t i = 0; i < Moves.size() && i < 4; ++i)
+		Text += Format("%s%s at %s to %s (%s)", i == 0 ? "" : ", ", PitchName(Moves[i].From).c_str(), S.Time.Position(Moves[i].Beat).c_str(),
+			PitchName(Moves[i].To).c_str(), ChordName(Moves[i].C, K).c_str());
+	if (Moves.size() > 4)
+		Text += Format(" and %d more", static_cast<int>(Moves.size()) - 4);
+	return Text;
+}
+
 std::string PolishTool(Session &S, const Json &Args)
 {
 	int From, To;
@@ -14320,8 +14642,10 @@ std::string PolishTool(Session &S, const Json &Args)
 		for (size_t i = 0; i < Words.size(); ++i) {
 			const std::string Word = Squeezed(Words[i]);
 			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops" &&
-				Word != "staccato" && Word != "falls" && Word != "clicks" && Word != "clashes" && Word != "colors" && Word != "unison")
-				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes, colors or unison.");
+				Word != "staccato" && Word != "falls" && Word != "clicks" && Word != "clashes" && Word != "colors" && Word != "unison" &&
+				Word != "strongbeats")
+				throw Problem("touches: accents, vibrato, separate, fades, scoops, falls, staccato, clicks, clashes, colors, unison or "
+					"strong_beats.");
 			What.insert(Word);
 		}
 	}
@@ -14473,6 +14797,28 @@ std::string PolishTool(Session &S, const Json &Args)
 					S.Channel(c).FullName().c_str()));
 		}
 	}
+	// Strong beats: the melody's notes off the chord on a strong beat with only the bass under them moved to the nearest
+	// chord tone that rubs nothing (PlanStrongBeats, check_song's off_chord); the melody the one given, else the song's
+	std::vector<StrongBeatMove> Steadied;
+	int SteadyLeft = 0;
+	if (What.count("strongbeats")) {
+		bool KeyFound = false;
+		const Key K = KeyArg(S, Args, "key", 0, S.Time.TotalRows(), KeyFound);
+		const int Lead = Arg(Args, "melody_channel") != 0 ? Melody : GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		if (Lead >= 0) {
+			Steadied = PlanStrongBeats(S, Lead, From, To + 1, K, SteadyLeft);
+			for (size_t i = 0; i < Steadied.size(); ++i)
+				D.Cells(Lead)[static_cast<size_t>(Steadied[i].Row)].SetPitch(Steadied[i].To);
+			if (!Steadied.empty())
+				Done.push_back(Format("%s of %s on strong beats with only the bass under them moved to the nearest tone of the chord "
+					"(%s)", Plural(static_cast<int>(Steadied.size()), "note", "notes").c_str(), S.Channel(Lead).FullName().c_str(),
+					StrongBeatMovesText(S, Steadied, K).c_str()));
+			if (SteadyLeft > 0)
+				Warnings.push_back(Format("%s off the chord on a strong beat stayed (each slides, starts before the bars asked, or has "
+					"no chord tone near that rubs nothing): write %s again on a tone of the chord (write_notes), or give the beat its "
+					"chord.", Plural(SteadyLeft, "melody note", "melody notes").c_str(), SteadyLeft == 1 ? "it" : "them"));
+		}
+	}
 	// Colors: a chord part's colors that rub the melody taken out (the nearest color that doesn't), or with colors add, plain
 	// lush chords given the rich colors that fit (PlanColors); the melody the one given, else the song's
 	std::vector<ColorSwap> Recolored;
@@ -14598,6 +14944,12 @@ std::string PolishTool(Session &S, const Json &Args)
 		if (What.size() == 1 && What.count("unison"))
 			throw Problem("There was nothing to tune there: every note sounding another part's pitch (or an octave of it) for half "
 				"the note or a quarter of a second plays it within a few cents already, as the two chips play it.");
+		if (What.size() == 1 && What.count("strongbeats"))
+			throw Problem(SteadyLeft > 0 ? Format("No melody note there could move: %s off the chord on a strong beat with only the "
+				"bass under %s, and none has a chord tone near that rubs nothing. Write %s again on a tone of the chord (write_notes), "
+				"or give the beat its chord.", Plural(SteadyLeft, "note sits", "notes sit").c_str(), SteadyLeft == 1 ? "it" : "them",
+				SteadyLeft == 1 ? "it" : "them") : "There was no melody note to move there: every note on a strong beat with only the "
+				"bass under it is a tone of the chord (check_song's off_chord).");
 		if (What.size() == 1 && What.count("clashes"))
 			throw Problem(ClashesLeft.empty() ? "There was no clash there: no two parts a semitone apart for half a beat or more, as "
 				"check_song hears one." : "No clash there could move: " + ClashesLeftText(S, ClashesLeft));
@@ -15317,7 +15669,7 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // through the song; and (ThroughoutFindings, feat-texture) a chord part that rolls on the same way in nearly every bar of
 // the melody; and (MonotoneFindings, feat-hooks) a melody that doesn't catch. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
 enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO, ARRANGE_BUSY,
-	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_THROUGHOUT, ARRANGE_MONOTONE, ARRANGE_KINDS };
+	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_THROUGHOUT, ARRANGE_MONOTONE, ARRANGE_OFF_CHORD, ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -17204,6 +17556,92 @@ void ThroughoutFindings(Session &S, Hearing &Ears, int Melody, int From, int To,
 
 // Every finding of the arrangement in bars From-To: the melody's phrases, the bass, sounds, faders, repeats, the loop,
 // the intro and parts too busy for the NES
+// The melody off the chord on strong beats over a bare bass (check_song's off_chord, from feat-strong-beats; the rule and
+// its numbers before BareOffChordBeats) in the bars [From, To]: false when it doesn't. The fix is polish's strong_beats
+// touch over the bars where they are, offered where its plan moves a note and a dry run of it adds no clash (ClashRuns
+// over those bars, before and after); else advice alone (Fix null)
+bool StrongBeatFinding(Session &S, int Melody, int From, int To, const Key &K, ArrangeFinding &F)
+{
+	if (Melody < 0 || !IsMelodic(S.Channel(Melody)))
+		return false;
+	int Strong = 0;
+	const std::vector<OffChordBeat> Off = BareOffChordBeats(S, Melody, From, To + 1, K, Strong);
+	if (static_cast<int>(Off.size()) < OFF_CHORD_LEAST || static_cast<double>(Off.size()) < OFF_CHORD_SHARE * Strong)
+		return false;
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> &Notes = PitchedNotes(S, Melody, Kept);
+	const std::string Name = S.Channel(Melody).FullName();
+	F = ArrangeFinding();
+	F.Kind = ARRANGE_OFF_CHORD;
+	F.Channel = Melody;
+	F.FromBar = S.Time.BarOf(Off.front().Row);
+	F.ToBar = S.Time.BarOf(Off.back().Row);
+	F.Weight = 1.0;
+	std::string Places;
+	int Resolved = 0;
+	Json List = Json::MakeArray();
+	for (size_t i = 0; i < Off.size(); ++i) {
+		Resolved += Off[i].Resolved ? 1 : 0;
+		const std::string Place = Format("%s %s over %s", S.Time.Position(Off[i].Row).c_str(), NoteClassName(ClassOf(Off[i].Pitch), K).c_str(),
+			ChordName(Off[i].C, K).c_str());
+		if (i < 4)
+			Places += (i == 0 ? "" : ", ") + Place;
+		Json Beat = Json::MakeObject();
+		Beat.Set("bar", S.Time.BarOf(Off[i].Row));
+		Beat.Set("beat", Json::NumberText(FormatNumber(S.Time.BeatOf(Off[i].Row))));
+		Beat.Set("note", PitchName(Notes[static_cast<size_t>(Off[i].Note)].Pitch));
+		Beat.Set("chord", ChordName(Off[i].C, K));
+		Beat.Set("resolved", Off[i].Resolved);
+		List.Push(Beat);
+	}
+	if (Off.size() > 4)
+		Places += Format(" and %d more", static_cast<int>(Off.size()) - 4);
+	F.Text = Format("The melody (%s) lands off the chord on strong beats with only the bass under it: %d of the %d strong beats it "
+		"plays (%s)%s. Over a bare bass a note outside the chord sounds misplaced, even one that steps on to a chord tone after it: "
+		"a tune puts a tone of the chord on the bar's strong beats and its passing notes on the weak ones, or lets the chord "
+		"sound under the note so it's a color.", Name.c_str(), static_cast<int>(Off.size()), Strong, Places.c_str(),
+		Resolved > 0 ? Format(", %d of them stepping on to a chord tone", Resolved).c_str() : "");
+	F.Summary = Format("the melody lands off the chord on %d strong beats over a bare bass", static_cast<int>(Off.size()));
+	F.Details.Set("problem", "off_chord");
+	F.Details.Set("beats", static_cast<int>(Off.size()));
+	F.Details.Set("strong_beats", Strong);
+	F.Details.Set("resolved", Resolved);
+	F.Details.Set("places", List);
+	F.Fix = Json();
+	int Left = 0;
+	const std::vector<StrongBeatMove> Moves = PlanStrongBeats(S, Melody, F.FromBar, F.ToBar + 1, K, Left);
+	if (!Moves.empty()) {
+		const int First = S.Time.BarStart(F.FromBar), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(F.ToBar));
+		Session View(S);
+		std::vector<Cell> Cells = S.Cells(Melody);
+		for (size_t i = 0; i < Moves.size(); ++i)
+			Cells[static_cast<size_t>(Moves[i].Row)].SetPitch(Moves[i].To);
+		const size_t Before = ClashRuns(S, HearGrid(S, First, End)).size();
+		View.Assume(Melody, Cells);
+		if (ClashRuns(View, HearGrid(View, First, End)).size() <= Before) {
+			Json A = Json::MakeObject();
+			Json Touches = Json::MakeArray();
+			Touches.Push("strong_beats");
+			A.Set("touches", Touches);
+			A.Set("melody_channel", Name);
+			A.Set("from_bar", F.FromBar);
+			A.Set("to_bar", F.ToBar);
+			F.Fix = ToolCall("polish", A, (Moves.size() == 1 ? std::string("moves one of those notes") : Format("moves %d of those notes",
+				static_cast<int>(Moves.size()))) + " to the nearest tone of the chord there that rubs nothing");
+		}
+	}
+	if (F.Fix.IsNull())
+		F.Text += " Write those notes again on chord tones (write_notes), or give the beats their chord (add_chords_and_bass).";
+	return true;
+}
+
+void StrongBeatFindings(Session &S, int Melody, int From, int To, const Key &K, std::vector<ArrangeFinding> &Out)
+{
+	ArrangeFinding F;
+	if (StrongBeatFinding(S, Melody, From, To, K, F))
+		Out.push_back(F);
+}
+
 std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const TrackUse &Use,
 	const Key &K)
 {
@@ -17224,6 +17662,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	MonotoneFindings(S, Melody, Style, K, Out);
 	DroneFindings(S, Ears, Melody, From, To, Style, K, Out);
 	ThroughoutFindings(S, Ears, Melody, From, To, Out);
+	StrongBeatFindings(S, Melody, From, To, K, Out);
 	return Out;
 }
 
@@ -25469,6 +25908,21 @@ std::vector<std::string> WritingWarnings(Session &S, int Channel, const std::vec
 		}
 	}
 
+	// The melody off the chord on strong beats over a bare bass (check_song's off_chord, feat-strong-beats): the same rule, on
+	// the song as the write leaves it, where the part written is the melody or the bass under it and the beats it finds lie in
+	// the bars written, so a song check_song leaves alone gets no warning
+	if (UseOfTrack(S).Use == TRACK_MUSIC && S.Song.Speed != 1) {
+		Session View(S);
+		View.Assume(Channel, Cells);
+		const int Lead = GuessMelodyChannel(View, 0, View.Time.TotalRows());
+		ArrangeFinding F;
+		Key SK;
+		TrackKey(View, 0, View.Time.TotalRows(), SK);
+		if (Lead >= 0 && (Channel == Lead || IsBass(Info)) && StrongBeatFinding(View, Lead, 1, View.Time.BarCount(), SK, F) &&
+			F.FromBar <= ToBar && F.ToBar >= FromBar)
+			Out.push_back(F.Text + (Direct && !F.Fix.IsNull() ? " " + FixText(F.Fix, true) : std::string()));
+	}
+
 	// A bass nearly silent: a lone short note now and then, from its first note's bar to its last's, four bars or more (a
 	// bass that joins at an intro's end isn't; drips and sparkles on other channels are meant so, and so are bubbles on a
 	// bass channel over another part playing in most of those bars, every one above its notes there). What a sound plays:
@@ -28325,15 +28779,16 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // high point whose melody repeats an earlier one's (ClimaxFindings). CHORD_DRONE (from feat-chord-rests, its rule from
 // feat-chords-room): ARRANGE_DRONE, chords that rub the tune through the song (DroneFindings). CHORDS_THROUGHOUT (from
 // feat-texture): ARRANGE_THROUGHOUT, a chord part that plays the same way in nearly every bar of the melody (ThroughoutFindings). MONOTONE (from feat-hooks):
-// ARRANGE_MONOTONE, a melody whose opening doesn't catch (MonotoneFindings)
+// ARRANGE_MONOTONE, a melody whose opening doesn't catch (MonotoneFindings). OFF_CHORD (from feat-strong-beats):
+// ARRANGE_OFF_CHORD, a melody landing off the chord on strong beats over a bare bass (StrongBeatFindings)
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
 	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY,
-	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_CHORDS_THROUGHOUT, FOUND_MONOTONE, FOUND_KINDS };
+	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_CHORDS_THROUGHOUT, FOUND_MONOTONE, FOUND_OFF_CHORD, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
 	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats", "chord_drone", "chords_throughout",
-	"monotone" };
+	"monotone", "off_chord" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium", "low", "medium" };
+	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium", "low", "medium", "medium" };
 
 // The check_song kind of one of ArrangeFindings' (arrange_kind)
 int ArrangeCheckKind(int Kind)
@@ -28341,7 +28796,7 @@ int ArrangeCheckKind(int Kind)
 	return Kind == ARRANGE_BUSY ? static_cast<int>(FOUND_TOO_BUSY) : Kind == ARRANGE_CLIMAX ? static_cast<int>(FOUND_CLIMAX) :
 		Kind == ARRANGE_DRONE ? static_cast<int>(FOUND_CHORD_DRONE) :
 		Kind == ARRANGE_THROUGHOUT ? static_cast<int>(FOUND_CHORDS_THROUGHOUT) :
-		Kind == ARRANGE_MONOTONE ? static_cast<int>(FOUND_MONOTONE) :
+		Kind == ARRANGE_MONOTONE ? static_cast<int>(FOUND_MONOTONE) : Kind == ARRANGE_OFF_CHORD ? static_cast<int>(FOUND_OFF_CHORD) :
 		FOUND_PHRASES + Kind;
 }
 
@@ -28900,7 +29355,7 @@ std::string CheckTool(Session &S, const Json &Asked)
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
 		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX], Arranged[ARRANGE_DRONE],
-		Arranged[ARRANGE_THROUGHOUT], Arranged[ARRANGE_MONOTONE] };
+		Arranged[ARRANGE_THROUGHOUT], Arranged[ARRANGE_MONOTONE], Arranged[ARRANGE_OFF_CHORD] };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -28976,7 +29431,7 @@ std::string CheckTool(Session &S, const Json &Asked)
 	// Each kind in turn gets up to MAX_LISTED lines, MAX_LISTED * 3 in all, then what's left goes to them in the same
 	// order; what doesn't fit is counted after its kind. The arrangement's few findings are all listed, after the rest
 	static const char *const MORE[FOUND_KINDS] = { "sounds whose notes vanish", "notes that click", "clashes", "notes out of range",
-		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "", "", "", "", "", "" };
+		"silent bars", "busy bars", "notes outside the key", "held leads", "", "", "", "", "", "", "", "", "", "", "", "", "", "" };
 	int Shown[FOUND_KINDS], Left = MAX_LISTED * 3;
 	bool Any = false;
 	for (int k = FOUND_PHRASES; k < FOUND_KINDS; ++k) {
@@ -36303,6 +36758,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 			"Fit the chords to the melody so they stop rubbing it", true);
 	if (Id == "chords_throughout")
 		return Where("Let the chords rest where the melody carries the song", true);
+	if (Id == "off_chord")
+		return Where("Move the melody's notes off the chord on strong beats to chord tones", true);
 	// The recipe's steps
 	if (Id == "tempo")
 		return "Set the tempo to " + FormatNumber(Number("bpm")) + " BPM";
@@ -37531,7 +37988,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"chords keep their names; a tone of an arpeggio instrument's chord is its color and stays; check_song's clash "
 			"findings give it over their bars, what_next over the song) and colors (chords' added tones that rub the melody "
 			"a semitone go: the nearest color that doesn't, Cm(add9) as Cm7; notes and bass kept) and unison (a detuned part, "
-			"an echo's P81, plays P80 where it doubles another part's pitch, so the two don't beat). Default: accents, "
+			"an echo's P81, plays P80 where it doubles another part's pitch, so the two don't beat) and strong_beats (the "
+			"melody's notes off the chord on a strong beat with only the bass under them, check_song's off_chord, move to the "
+			"nearest chord tone that rubs nothing). Default: accents, "
 			"vibrato, separate and clicks. "
 			"Polish again changes nothing it did: a part accented already keeps its volumes.");
 		Json TouchItem = Json::MakeObject();
@@ -37548,6 +38007,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		TouchNames.Push("clashes");
 		TouchNames.Push("colors");
 		TouchNames.Push("unison");
+		TouchNames.Push("strong_beats");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
 		AddTool("polish", "Finishing touches",
@@ -38799,7 +39259,7 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 			Finishing = pTouches == 0 || !pTouches->IsArray();
 			for (size_t i = 0; !Finishing && i < pTouches->Size(); ++i) {
 				const std::string Touch = pTouches->At(i).IsString() ? pTouches->At(i).String() : std::string();
-				Finishing = Touch != "unison" && Touch != "clicks" && Touch != "clashes" && Touch != "colors";
+				Finishing = Touch != "unison" && Touch != "clicks" && Touch != "clashes" && Touch != "colors" && Touch != "strong_beats";
 			}
 		}
 		if (Finishing) {
@@ -39122,6 +39582,37 @@ std::string ToolSet::TuneShapes()
 			Melody, First, Opening), Opening, S.Time.RowsPerBar, S.Time.RowsPerBeat)) + "\n  whole:   " +
 			TuneMeasureText(MeasureTune(TuneNotes(S, Melody, First, Whole), Whole, S.Time.RowsPerBar, S.Time.RowsPerBeat)) + Blocks(S,
 			Melody, First, Last);
+	}
+	catch (const Problem &P) {
+		return P.Text;
+	}
+}
+
+std::string ToolSet::StrongBeats()
+{
+	try {
+		Session S(m_Host);
+		const int Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		if (Melody < 0)
+			return "no melody";
+		Key K;
+		bool Found = false;
+		K = KeyArg(S, Json::MakeObject(), "key", 0, S.Time.TotalRows(), Found);
+		int Strong = 0;
+		const std::vector<OffChordBeat> Off = OffChordBeats(S, Melody, 1, S.Time.BarCount() + 1, K, Strong);
+		int Unresolved = 0, Implied = 0, First = 0, Bare = 0;
+		std::string List;
+		for (size_t i = 0; i < Off.size(); ++i) {
+			Unresolved += Off[i].Resolved ? 0 : 1;
+			Implied += Off[i].Implied ? 1 : 0;
+			First += Off[i].FirstBeat ? 1 : 0;
+			Bare += Off[i].Support <= OFF_CHORD_SUPPORT ? 1 : 0;
+			List += Format(" %s%s:%s/%s%s[%d,%d]", Off[i].Resolved ? "" : "*", S.Time.Position(Off[i].Row).c_str() + 4, PitchName(Off[i].Pitch).c_str(),
+				ChordName(Off[i].C, K).c_str(), Off[i].Implied ? "(i)" : "", Off[i].Support, Off[i].Bass);
+		}
+		return S.Channel(Melody).FullName() + Format(" %s strong %d off %d (%.0f%%) unresolved %d (%.0f%%) implied %d first %d bare %d (%.0f%%)\n ",
+			KeyName(K).c_str(), Strong, static_cast<int>(Off.size()), Strong ? 100.0 * Off.size() / Strong : 0.0, Unresolved,
+			Strong ? 100.0 * Unresolved / Strong : 0.0, Implied, First, Bare, Strong ? 100.0 * Bare / Strong : 0.0) + List;
 	}
 	catch (const Problem &P) {
 		return P.Text;
