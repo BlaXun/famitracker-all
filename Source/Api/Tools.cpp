@@ -19322,6 +19322,15 @@ std::string ReviewTool(Session &S, const Json &Asked)
 	if (Melody >= 0 && std::find(Flat.begin(), Flat.end(), Melody) == Flat.end())
 		for (size_t e = 0; e < Echoes.size(); ++e)
 			Flat.erase(std::remove(Flat.begin(), Flat.end(), Echoes[e]), Flat.end());
+	// (nor a harmony of such a melody, which the mix brings to one softer volume: what_next's fills of thin parts, feat-depth-back)
+	if (Melody >= 0 && std::find(Flat.begin(), Flat.end(), Melody) == Flat.end()) {
+		const std::vector<NoteInfo> Tune = NotesIn(S.Notes(Melody), First, End);
+		for (size_t f = Flat.size(); f-- > 0; ) {
+			const std::vector<NoteInfo> Line = NotesIn(S.Notes(Flat[f]), First, End);
+			if (Flat[f] != Melody && HarmonyVoice(S, Line, Tune, Melody, Flat[f]))
+				Flat.erase(Flat.begin() + static_cast<long>(f));
+		}
+	}
 	if (!Flat.empty()) {
 		Lines.push_back("Dynamics: every note at one volume on " + Names(Flat) + ".");
 		// A lively stage's lead at one volume throughout: the later stages' lead played 15 on every note, where the

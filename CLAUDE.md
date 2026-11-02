@@ -3314,15 +3314,16 @@ lively and soft ones, 9.5-14.4 a bar on the 2A03 alone). check_song's `thin`
 `ARRANGE_THIN`, `FOUND_THIN`, severity medium; `PROBLEM_THIN`, the panel's
 `WORDS`, `song_file_checks`' kinds and its `-thin` printout, `ToolSet::Thin`):
 a body (named sections but free ones, else from the loop's start, 16 bars
-at least, every part with notes) under `THIN_PARTS` (3.6) melodic channels a
+at least, every part with notes) under `THIN_PARTS` (3.45) melodic channels a
 bar on chips of `THIN_CHANNELS` (5) or more, under `THIN_SOUNDS` (5)
-instruments, or on fewer channels under `THIN_EFFECTS` (1.5) effects a bar
+instruments (or under `THIN_BARE_SOUNDS`, 6, with under `THIN_BARE_EFFECTS`, 0.25
+effects a bar), or on fewer channels under `THIN_EFFECTS` (1.5) effects a bar
 (the kept 2A03 songs 9.5-21.3, Clockwork Factory 1.15, the walks on the
 2A03 alone about 1.6).
 None of the first 30, the 44 kept songs or flag/ gets it (least 3.88,
 The Narrows); of the six, Frozen Lake, Haunted Library, Mossy Forest Path,
-Market Festival and Clockwork Factory do, Lava Forge (3.67, the user's
-favourite) doesn't. Its fix: the thinnest part's family chords copied in
+and Clockwork Factory do; Lava Forge (3.67, the user's favourite) and
+Market Festival (3.57, "nearly good") don't. Its fix: the thinnest part's family chords copied in
 (`ThinFill`), else a counter-line; then `polish` `fades`, `duty`,
 `scoops`, `falls`. `what_next`: every kind plays drums (a quiet kind's pool: the
 calm groove, light, noise alone; none where the words, the name or the

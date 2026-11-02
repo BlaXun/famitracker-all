@@ -1060,18 +1060,19 @@ JSON as `fix`.
   named sections but the intro, breaks and outros, else the bars from the
   loop's start; 16 bars at least, every part with notes) sounds too few
   parts, too few sounds or too few effects. On chips of 5 melodic channels
-  or more, under 3.6 of them sound a bar on average (a note sounds until the
+  or more, under 3.45 of them sound a bar on average (a note sounds until the
   next, a release or a halt, 4 bars at most); under 5 instruments play in
-  the body; or, on fewer channels (the 2A03 alone), under 1.5 effects a bar
+  the body (or under 6 with under 0.25 effects a bar); or, on fewer channels (the 2A03 alone), under 1.5 effects a bar
   (`Bxx`, `Cxx`, `Dxx` and `Zxx` aside). Measured on the soundtrack's first 30
   tracks, which the user prefers to every song made since: 4.4-5.6 melodic
   channels a bar on the VRC6 (every channel their chips have, the noise in
   most bars even when calm), 6-29 instruments, 9.5-14.4 effects a bar on the
   2A03 alone; the 44 kept songs 3.88 channels and 6 instruments at the least.
-  Of six songs the user heard as thin, Frozen Lake (3.50 channels, 4
-  instruments), Haunted Library (3.57, 5), Mossy Forest Path (2.84), Market
-  Festival (3.57) and Clockwork Factory (2A03 alone, 1.15 effects a bar) get
-  it; Lava Forge (3.67, 8), the user's favourite of them, doesn't. Fix: where
+  Of six songs the user heard as falling short, Frozen Lake (4 instruments),
+  Haunted Library (5 instruments, no effects), Mossy Forest Path (2.84
+  channels) and Clockwork Factory (2A03 alone, 1.15 effects a bar) get it;
+  Lava Forge (3.67, 8), the user's favourite, and Market Festival (3.57,
+  "nearly good") don't. Fix: where
   it's thinnest, the chords its family plays elsewhere copied in
   (`copy_bars`), else a counter-line on a free channel (`add_counter_melody`);
   then `polish` with `fades`, `duty`, `scoops` and `falls` for the effects, `duty`
