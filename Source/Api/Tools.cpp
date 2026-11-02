@@ -33086,6 +33086,7 @@ private:
 	bool Doubled(const FormPart &P, const std::string &Tip);
 	bool LeadSound(const std::string &Id, const std::string &KindWord, const std::string &Name, const std::string &Why);
 	void Highlight();
+	bool HighlightStep(bool FewSounds);
 	void Fill();
 	void Swing();
 	bool AmbienceComing() const;
@@ -36524,11 +36525,18 @@ bool WhatNext::LeadSound(const std::string &Id, const std::string &KindWord, con
 // melody's channel, then taken by the melody over that part's bars. Once something new comes in, nothing is asked
 void WhatNext::Highlight()
 {
+	HighlightStep(false);
+}
+
+// FewSounds (from feat-depth-back): check_song's thin hears too few instruments (a quiet kind whose noise plays the place's
+// sound has no drum kit's): the same new sound for the melody where the song turns, whatever the texture
+bool WhatNext::HighlightStep(bool FewSounds)
+{
 	if (!m_HasMelody || m_Melody < 0 || !Wanted("highlight") || m_Unmet.count("form") != 0 || m_Unmet.count("melody") != 0)
-		return;
+		return false;
 	const SongTexture T = TextureOf(S);
-	if (!T.Same || T.Target < 0)
-		return;
+	if ((!T.Same && !FewSounds) || T.Target < 0)
+		return false;
 	const Section &Part = S.Song.Sections[static_cast<size_t>(T.Target)];
 	const int From = SectionFirstBar(S, Part), To = SectionLastBar(S, Part);
 	std::vector<std::string> Leads = PoolEntries(Kind().Leads);
@@ -36540,7 +36548,7 @@ void WhatNext::Highlight()
 		if (!Leads[i].empty() && Leads[i] != m_Picks.Lead.Value && Leads[i] != Kind().LeadKind)
 			Lead = Leads[i];
 	if (Lead.empty())
-		return;
+		return false;
 	const std::string Name = "Highlight lead";
 	const int Made = FindInstrumentNamed(Name, m_Melody);
 	if (Made < 0) {
@@ -36550,18 +36558,29 @@ void WhatNext::Highlight()
 		A.Set("channel", ChannelName(m_Melody));
 		if (Lead == "music box")
 			CalmLeadArgs(A, S.Channel(m_Melody));
-		Step("highlight", "design_instrument", A, Format("The texture never changes: %s each play the same parts with the same sounds, "
-			"so no part stands out. A highlight where the song turns: the melody takes a new sound in %s (bars %d-%d), first the "
-			"sound (kind %s, another of the leads a %s song draws from), then the melody takes it there.", T.Names.c_str(),
+		Step("highlight", "design_instrument", A, (FewSounds ? std::string("check_song hears the song thin for the NES: too few sounds. ") :
+			Format("The texture never changes: %s each play the same parts with the same sounds, so no part stands out. ",
+			T.Names.c_str())) + Format(" A highlight where the song turns: the melody takes a new sound in %s (bars %d-%d), first the "
+			"sound (kind %s, another of the leads a %s song draws from), then the melody takes it there.",
 			Part.Name.c_str(), From, To, Lead.c_str(), Kind().Name));
-		return;
+		return true;
+	}
+	// (the melody plays it there already: nothing left to do)
+	{
+		const std::vector<NoteInfo> There = NotesIn(S.Notes(m_Melody), S.Time.BarStart(From), std::min(S.Time.BarEnd(To),
+			S.Time.TotalRows()));
+		bool Taken = !There.empty();
+		for (size_t n = 0; n < There.size() && Taken; ++n)
+			Taken = There[n].Instrument == Made;
+		if (Taken)
+			return false;
 	}
 	Json A = Json::MakeObject();
 	A.Set("channel", ChannelName(m_Melody));
 	A.Set("instrument", Name);
 	A.Set("from_bar", From);
 	A.Set("to_bar", To);
-	Step("highlight", "set_instrument", A, Format("The melody takes its new sound (%s) in %s (bars %d-%d): the part the song turns "
+	return Step("highlight", "set_instrument", A, Format("The melody takes its new sound (%s) in %s (bars %d-%d): the part the song turns "
 		"in sounds new, the highlight the ear waits for.", Name.c_str(), Part.Name.c_str(), From, To));
 }
 
@@ -36573,7 +36592,9 @@ void WhatNext::Highlight()
 // time; check_song measures again after each. No milestone: a full song has nothing to do
 void WhatNext::Fill()
 {
-	if (!m_HasMelody || m_Unmet.count("form") != 0 || m_Unmet.count("melody") != 0 || !Wanted("thin"))
+	// (not once the song is finished, its polish and mix made: a fill then sends it through finish_song again)
+	if (!m_HasMelody || m_Unmet.count("form") != 0 || m_Unmet.count("melody") != 0 || !Wanted("thin") ||
+		!S.Host().KeptFinishStep(S.Song.Track, "polish").empty() || !S.Host().KeptFinishStep(S.Song.Track, "mix").empty())
 		return;
 	const ThinMeasure M = MeasureThin(S, 1, S.Time.BarCount());
 	const bool Thin = m_Thin.IsObject();
@@ -36618,9 +36639,25 @@ void WhatNext::Fill()
 			return Out;
 		};
 		const std::set<std::string> TipsBefore = TipsOf(S);
-		const size_t AlikeBefore = DevelopmentOf(S, m_Melody).Alike.size();
+		// (and no part takes a device another part has: the development gives each its own, and asks again where two share one)
+		auto Shared = [&](const SongDevelopment &D) {
+			std::map<std::string, int> Count;
+			for (size_t p = 1; p < D.Parts.size(); ++p) {
+				const std::set<std::string> Own(D.Parts[p].Devices.begin(), D.Parts[p].Devices.end());
+				for (std::set<std::string>::const_iterator it = Own.begin(); it != Own.end(); ++it)
+					++Count[*it];
+			}
+			int Out = 0;
+			for (std::map<std::string, int>::const_iterator it = Count.begin(); it != Count.end(); ++it)
+				Out += it->second > 1 ? it->second - 1 : 0;
+			return Out;
+		};
+		const SongDevelopment Grown = DevelopmentOf(S, m_Melody);
+		const size_t AlikeBefore = Grown.Alike.size();
+		const int SharedBefore = Shared(Grown);
 		auto Keeps = [&](Session &After) {
-			if (DevelopmentOf(After, m_Melody).Alike.size() > AlikeBefore)
+			const SongDevelopment Now = DevelopmentOf(After, m_Melody);
+			if (Now.Alike.size() > AlikeBefore || Shared(Now) > SharedBefore)
 				return false;
 			const std::set<std::string> Now = TipsOf(After);
 			for (std::set<std::string>::const_iterator it = Now.begin(); it != Now.end(); ++it)
@@ -36734,6 +36771,9 @@ void WhatNext::Fill()
 				"would clash with the parts there: write a line of your own there (a held note, a counter-line), or let a part play "
 				"more (the chords restruck, the bass moving).");
 	}
+	// Too few sounds: a new sound for the melody where the song turns (HighlightStep)
+	if (Thin && m_Thin.Get("why") != 0 && WriteJson(*m_Thin.Get("why")).find("sounds") != std::string::npos && HighlightStep(true))
+		return;
 	// The touches that color the notes (a thin song's sounds or effects): the finding's own call
 	if (Thin && m_Thin.Get("fix") != 0 && m_Thin.Get("fix")->IsObject()) {
 		bool InSet = true;
