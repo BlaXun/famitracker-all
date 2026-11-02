@@ -934,13 +934,29 @@ bool Ears::Loud(int Part) const
 // squares). The Airship's bass, short low triangle notes under the kit's samples on every beat, measured as a warble 22
 // times a second, 39 to 53 cents either way, which the user didn't hear: a tenth of the samples' walk in the triangle's
 // render does that to a D-2 (fix-r6-judges)
+// The share is one for the block, but what bleeds isn't always in proportion: the Market Festival's triangle, measured alone,
+// held its pitch, and with the samples' share taken out its notes under the toms' fills warbled 14 times a second, -51 to
+// +54 cents (or swung two semitones), since the share the kicks set took the toms out of a part they hadn't bled into. So a
+// note wobbles only when it does measured both ways (Ears::Measure, fix-export-listen)
 const double PIN_BLOCK = 1.0;
+
+// Whether a part shares its pin with another part rendered: PinCleaned then changes it
+bool SharesPin(const ListenSong &S, size_t p)
+{
+	const ListenPart &P = S.Parts[p];
+	if (P.Pin == 0 || !P.Pitched)
+		return false;
+	for (size_t o = 0; o < S.Parts.size(); ++o)
+		if (o != p && S.Parts[o].Pin == P.Pin)
+			return true;
+	return false;
+}
 
 std::vector<float> PinCleaned(const ListenSong &S, size_t p)
 {
 	const ListenPart &P = S.Parts[p];
 	std::vector<float> Out = P.Samples;
-	if (P.Pin == 0 || !P.Pitched)
+	if (!SharesPin(S, p))
 		return Out;
 	const size_t Block = static_cast<size_t>(std::max(1.0, PIN_BLOCK * S.Rate));
 	for (size_t o = 0; o < S.Parts.size(); ++o) {
@@ -971,6 +987,7 @@ void Ears::Measure()
 	for (size_t p = 0; p < S.Parts.size(); ++p) {
 		const ListenPart &P = S.Parts[p];
 		const std::vector<float> Clean = PinCleaned(S, p);
+		const bool Shared = SharesPin(S, p);
 		m_Tracks[p].resize(P.Notes.size());
 		std::vector<double> Levels;
 		for (size_t i = 0; i < P.Notes.size(); ++i) {
@@ -981,8 +998,16 @@ void Ears::Measure()
 				SamplesOf(0.01, S.Rate)));
 			if (Level > -150.0)
 				Levels.push_back(Level);
-			if (P.Pitched && N.Hz > 0.0 && N.Steady)
+			if (P.Pitched && N.Hz > 0.0 && N.Steady) {
 				m_Tracks[p][i] = TrackNote(Clean, S.Rate, N.Begin, N.End, N.Hz);
+				// Measured both ways on a shared pin: as rendered and with the bleed taken out, the steadier one heard
+				if (Shared && m_Tracks[p][i].Pitch.Wobbles) {
+					Track Raw = TrackNote(P.Samples, S.Rate, N.Begin, N.End, N.Hz);
+					if (Raw.Pitch.Valid && (!Raw.Pitch.Wobbles ||
+						Raw.Pitch.High - Raw.Pitch.Low < m_Tracks[p][i].Pitch.High - m_Tracks[p][i].Pitch.Low))
+						m_Tracks[p][i] = Raw;
+				}
+			}
 		}
 		m_PartDb[p] = Levels.empty() ? -200.0 : Median(Levels);
 	}

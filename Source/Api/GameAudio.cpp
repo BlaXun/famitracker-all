@@ -107,27 +107,37 @@ bool CutSides(const std::vector<const std::vector<float>*> &Sides, int SampleRat
 	}
 	Out.Difference = Most / 2.0;
 	Out.Loops = true;
-	long long From = S1, To = S2;
+	long long From = S1, To = S2, FadeOver = Fade;
 	const bool Rendered = S3 >= 0 && S3 <= Size;
-	if (Fade > 0 && S1 - Out.Begin < Fade && Rendered) {
-		// The loop starts with the song, whose start pops: it repeats from the second time through
+	// The first time through differs from the repeats: the space's tail from the loop's end isn't in it yet, or it starts
+	// otherwise (the notes as check_loop finds them, and audibly so)
+	const bool Differs = Rendered && (Tail || !(Most < 0.01 || CleanSeam));
+	// A song that loops as a whole, from its first row
+	const long long Lead = std::max(1, SampleRate / 25);	// 40 ms
+	const bool Whole = S1 - Out.Begin <= SampleRate / 100;
+	if (Whole && (Differs || Fade > 0) && (Differs ? S3 : S2) + Lead + Lead <= Size) {
+		// One time through, never two: the file is the song as it plays on repeat (when the first time differs) or as it
+		// starts. It fades in over its first 40 ms, which play once (where the song starts, the DMC's level set from silence
+		// may pop; on repeat, the sound carried in from the loop's end would click in from silence), and the loop starts
+		// right after them and runs as far into the next time through, so it keeps its length. Taking the second time
+		// through after the first doubled the file (the Market Festival: 115.2 s for a 57.6 s loop, fix-export-listen)
+		const long long Start = Differs ? S2 : S1, Next = Differs ? S3 : S2;
+		if (Differs) {
+			Out.Begin = Start;
+			Out.Repeat = true;
+			Out.Tail = Tail;
+		}
+		Out.StartPops = Fade > 0;
+		From = Start + Lead;
+		To = Next + Lead;
+		FadeOver = Lead;
+	}
+	else if (Differs) {
+		// After an intro: the loop is the second time through, so the first leads into it as it should
 		From = S2;
 		To = S3;
 		Out.SecondPass = true;
-		Out.StartPops = true;
 		Out.Tail = Tail;
-	}
-	else if (Tail && Rendered) {
-		// The space rings on: the second time through starts with the first's tail, as the loop's start must
-		From = S2;
-		To = S3;
-		Out.SecondPass = true;
-		Out.Tail = true;
-	}
-	else if (!(Most < 0.01 || CleanSeam || !Rendered)) {
-		From = S2;
-		To = S3;
-		Out.SecondPass = true;
 	}
 
 	// The jump back lands where the waves match best, within a couple of
@@ -155,7 +165,7 @@ bool CutSides(const std::vector<const std::vector<float>*> &Sides, int SampleRat
 	}
 	Out.LoopStart = From + Best - Out.Begin;
 	Out.End = To + Best;
-	Out.FadeIn = std::min(Fade, Out.LoopStart);
+	Out.FadeIn = std::min(FadeOver, Out.LoopStart);
 	return true;
 }
 

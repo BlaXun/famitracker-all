@@ -31,6 +31,7 @@
 #include "../Listen.h"
 #include "../DpcmKit.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -576,9 +577,130 @@ void TestTriangleBesideSamples()
 	CHECK_EQ(CountKind(Alone, LISTEN_WOBBLE), 0);
 }
 
+// The Market Festival's bass (fix-export-listen): root-fifth half notes on the triangle (D-2, A-2, G-2, D-3, A-2, E-3, D-2,
+// A-2, 0.8 s each at 150 BPM) beside the kit's samples from Z50, a kick on rows 0, 8 and 10 and a snare on 4 and 12, and
+// every other bar a fill of toms on rows 12-15 in place of the snare. The kicks' walk bleeds into the triangle's render, the
+// toms don't (the pin's bleed isn't in proportion), so the share the kicks set in each second took the toms out of notes
+// they had never bled into: listen heard the notes under the fills warble 14 times a second, -51 to +54 cents, which the
+// triangle measured alone doesn't do. A note wobbles only when it does both ways
+void TestTriangleUnderTomFills()
+{
+	const double Hz[8] = { 73.42, 110.0, 98.0, 146.83, 110.0, 164.81, 73.42, 110.0 };
+	const double TomHz[2] = { 160.0, 120.0 };	// the high tom, then the low
+	const double Row = 0.1, Seconds = 12.8;
+	const size_t Count = static_cast<size_t>(Seconds * RATE);
+	const DpcmKit &Kit = SampleDrums();
+	const DpcmKey *pKick = FindSampleDrum("kick"), *pSnare = FindSampleDrum("snare");
+	CHECK(pKick != 0 && pSnare != 0);
+	if (pKick == 0 || pSnare == 0)
+		return;
+	const std::vector<int> Kick = DecodeDpcm(Kit.Samples[static_cast<size_t>(pKick->Sample)].Data, 80);
+	const std::vector<int> Snare = DecodeDpcm(Kit.Samples[static_cast<size_t>(pSnare->Sample)].Data, 80);
+	ListenPart Tri, Dmc;
+	Tri.Name = "2A03 Triangle";
+	Tri.Smooth = true;
+	Dmc.Name = "2A03 DPCM";
+	Dmc.Pitched = false;
+	Tri.Samples.assign(Count, 0.0f);
+	Dmc.Samples.assign(Count, 0.0f);
+	double Phase = 0.0, TomPhase = 0.0;
+	int Level = 80;
+	for (size_t n = 0; n < Count; ++n) {
+		const double t = static_cast<double>(n) / RATE;
+		const int r = static_cast<int>(t / Row);
+		const double Into = t - r * Row;
+		Phase = std::fmod(Phase + Hz[(r / 8) % 8] / RATE, 1.0);
+		const int Step = static_cast<int>(Phase * 32.0);
+		const int Tone = Step < 16 ? 15 - Step : Step - 16;
+		Tri.Samples[n] = static_cast<float>((Tone - 7.5) / 7.5 * 0.3);
+		const int InBar = r % 16;
+		const bool Fill = (r / 16) % 2 == 1 && InBar >= 12;
+		if (Fill) {
+			TomPhase += TomHz[InBar >= 14 ? 1 : 0] / RATE;
+			Dmc.Samples[n] = static_cast<float>(0.6 * std::sin(2.0 * PI * TomPhase) * std::exp(-Into / 0.06));
+			continue;
+		}
+		const bool KickRow = InBar == 0 || InBar == 8 || InBar == 10, SnareRow = InBar == 4 || InBar == 12;
+		const std::vector<int> *pHit = KickRow ? &Kick : SnareRow ? &Snare : 0;
+		const size_t At = static_cast<size_t>(Into * 33144.0);
+		if (pHit != 0 && At < pHit->size())
+			Level = (*pHit)[At];
+		else if (pHit != 0 && At == 0)
+			Level = 80;
+		Dmc.Samples[n] = static_cast<float>((Level - 80) / 127.0 * 0.5);
+		Tri.Samples[n] += 0.6f * Dmc.Samples[n];	// the kicks' and snares' walk, bled in
+	}
+	Tri.Pin = Dmc.Pin = 2;
+	for (int r = 0; r * Row < Seconds - 8 * Row; r += 8) {
+		ListenNote N;
+		N.Row = r;
+		N.Rows = 8;
+		N.Begin = static_cast<long long>(r * Row * RATE);
+		N.End = static_cast<long long>((r + 8) * Row * RATE);
+		N.Hz = Hz[(r / 8) % 8];
+		Tri.Notes.push_back(N);
+	}
+	for (int r = 0; r * Row < Seconds; ++r) {
+		ListenNote N;
+		N.Row = r;
+		N.Begin = static_cast<long long>(r * Row * RATE);
+		N.End = N.Begin + static_cast<long long>(Row * RATE);
+		Dmc.Notes.push_back(N);
+	}
+	// The samples' share taken out a second at a time, as PinCleaned does: the notes under the fills warble
+	std::vector<float> Cleaned = Tri.Samples;
+	for (size_t From = 0; From < Count; From += RATE) {
+		const size_t To = std::min(Count, From + RATE);
+		double Both = 0.0, Theirs = 0.0;
+		for (size_t n = From; n < To; ++n) {
+			Both += static_cast<double>(Cleaned[n]) * Dmc.Samples[n];
+			Theirs += static_cast<double>(Dmc.Samples[n]) * Dmc.Samples[n];
+		}
+		for (size_t n = From; n < To && Theirs > 1e-9; ++n)
+			Cleaned[n] -= static_cast<float>(Both / Theirs * Dmc.Samples[n]);
+	}
+	// (and one note, measured as rendered, wobbles with the kicks' bleed, as the Airship's bass did: a note that wobbles
+	// one way only is the bleed's or the cleaning's)
+	int Cleans = 0, Raws = 0, BothWays = 0;
+	for (size_t i = 0; i < Tri.Notes.size(); ++i) {
+		const ListenNote &N = Tri.Notes[i];
+		const bool Clean = MeasurePitch(Cleaned, RATE, N.Begin, N.End, N.Hz).Wobbles;
+		const bool Raw = MeasurePitch(Tri.Samples, RATE, N.Begin, N.End, N.Hz).Wobbles;
+		Cleans += Clean ? 1 : 0;
+		Raws += Raw ? 1 : 0;
+		BothWays += Clean && Raw ? 1 : 0;
+	}
+	std::printf("Triangle under tom fills: %d of %d notes wobble with the share taken out, %d as rendered, %d both ways\n",
+		Cleans, static_cast<int>(Tri.Notes.size()), Raws, BothWays);
+	CHECK(Cleans >= 2);
+	CHECK_EQ(BothWays, 0);
+	std::vector<ListenPart> Parts;
+	Parts.push_back(Tri);
+	Parts.push_back(Dmc);
+	const std::vector<ListenFinding> Found = ListenToSong(SongOf(Parts));
+	CHECK_EQ(CountKind(Found, LISTEN_WOBBLE), 0);
+	CHECK_EQ(CountKind(Found, LISTEN_TUNING), 0);
+	// A warble of its own still shows on a shared pin: the triangle's notes swinging 60 cents 12 times a second
+	Synth Wob;
+	std::vector<ListenNote> Notes;
+	for (int k = 0; k < 4; ++k)
+		Notes.push_back(Wob.Note(0.8, 110.0, SINE, 0.3, 12.0, 60.0));
+	ListenPart Warbling = Part("2A03 Triangle", Wob, Notes, false);
+	Warbling.Pin = 2;
+	ListenPart Drums = Dmc;
+	Drums.Samples.resize(Warbling.Samples.size());
+	for (size_t n = 0; n < Warbling.Samples.size(); ++n)
+		Warbling.Samples[n] += 0.6f * Drums.Samples[n];
+	std::vector<ListenPart> Both;
+	Both.push_back(Warbling);
+	Both.push_back(Drums);
+	CHECK_EQ(CountKind(ListenToSong(SongOf(Both)), LISTEN_WOBBLE), 1);
+}
+
 int main()
 {
 	std::setvbuf(stdout, 0, _IONBF, 0);
+	TestTriangleUnderTomFills();
 	TestTriangleBesideSamples();
 	TestWarble();
 	TestGentleVibrato();

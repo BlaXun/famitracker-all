@@ -41,11 +41,13 @@ struct GameCut {
 	bool SecondPass;			// the loop is the second time through, since the first starts differently
 	double Difference;			// the biggest difference between the loop's two starts, 0-1 of full scale
 	long long FadeIn;			// samples at the start that fade in over a step from silence (before the loop)
-	bool StartPops;				// the loop is the second time through since the song's start pops
+	bool StartPops;				// the song's start may pop (StartStep): the file fades in over it, outside the loop
 	bool Tail;					// the mixer's space rings on: the loop is the second time through, or the halt keeps it
+	bool Repeat;				// a song that loops as a whole whose first time through differs: the file is the song as it plays
+								// on repeat (from the second time through), one time through and its first 40 ms
 
 	GameCut() : Begin(0), End(0), LoopStart(0), Loops(false), SecondPass(false), Difference(0.0), FadeIn(0), StartPops(false),
-		Tail(false) {}
+		Tail(false), Repeat(false) {}
 	long long Length() const { return End - Begin; }
 };
 
@@ -54,13 +56,18 @@ struct GameCut {
 // began (more than Rows when the render went on). The loop is the first time
 // through when that sounds the same as the second, or when the notes start
 // it the same way both times (CleanSeam; the noise channel never sounds quite
-// the same), else the second time through. Its two ends move together by up
+// the same), else the second time through: after an intro, the first time
+// once and then the loop; a song that loops as a whole is one time through as
+// it plays on repeat (Repeat: from the second time through, its first 40 ms
+// faded in and played once, the loop after them a time through long), never
+// two. Its two ends move together by up
 // to 2 ms to where the waves match, so the jump back doesn't click. A song
 // that halts is kept up to the row with the halt, where FamiTracker silences
 // it. StartStep: the song steps the DMC's level up from silence as it starts
 // (a Zxx on its first row), a pop the repeats don't have; the file fades in
-// over its first 40 ms, and a loop that starts with the song is taken from
-// its second time through, so the fade stays out of it. Tail: the mixer's
+// over its first 40 ms, and a loop that starts with the song starts right
+// after them (StartPops), its end as far into the next time through, so the
+// fade stays out of it and the file is the loop and 40 ms. Tail: the mixer's
 // space (Space, a reverb and an echo) rings on after the notes, so the
 // loop's end carries into its start: the loop is its second time through,
 // whose start has the first's tail in it as the jump back needs, and a song
