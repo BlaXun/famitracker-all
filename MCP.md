@@ -1061,7 +1061,7 @@ JSON as `fix`.
   loop's start; 16 bars at least, every part with notes) sounds too few
   parts, too few sounds or too few effects. On chips of 5 melodic channels
   or more, under 3.6 of them sound a bar on average (a note sounds until the
-  next, a release or a halt, 4 bars at most); under 6 instruments play in
+  next, a release or a halt, 4 bars at most); under 5 instruments play in
   the body; or, on fewer channels (the 2A03 alone), under 1.5 effects a bar
   (`Bxx`, `Cxx`, `Dxx` and `Zxx` aside). Measured on the soundtrack's first 30
   tracks, which the user prefers to every song made since: 4.4-5.6 melodic
@@ -1074,7 +1074,7 @@ JSON as `fix`.
   it; Lava Forge (3.67, 8), the user's favourite of them, doesn't. Fix: where
   it's thinnest, the chords its family plays elsewhere copied in
   (`copy_bars`), else a counter-line on a free channel (`add_counter_melody`);
-  then `polish` with `fades`, `duty` and `staccato` for the effects, `duty`
+  then `polish` with `fades`, `duty`, `scoops` and `falls` for the effects, `duty`
   alone for the sounds. `what_next` fills a song further, to 4.4 channels a
   bar where a channel no part plays is free (`add_counter_melody`, or on the
   small set `add_harmony`), after the development's devices, the echo and

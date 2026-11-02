@@ -3315,7 +3315,7 @@ lively and soft ones, 9.5-14.4 a bar on the 2A03 alone). check_song's `thin`
 `WORDS`, `song_file_checks`' kinds and its `-thin` printout, `ToolSet::Thin`):
 a body (named sections but free ones, else from the loop's start, 16 bars
 at least, every part with notes) under `THIN_PARTS` (3.6) melodic channels a
-bar on chips of `THIN_CHANNELS` (5) or more, under `THIN_SOUNDS` (6)
+bar on chips of `THIN_CHANNELS` (5) or more, under `THIN_SOUNDS` (5)
 instruments, or on fewer channels under `THIN_EFFECTS` (1.5) effects a bar
 (the kept 2A03 songs 9.5-21.3, Clockwork Factory 1.15, the walks on the
 2A03 alone about 1.6).
@@ -3324,7 +3324,7 @@ The Narrows); of the six, Frozen Lake, Haunted Library, Mossy Forest Path,
 Market Festival and Clockwork Factory do, Lava Forge (3.67, the user's
 favourite) doesn't. Its fix: the thinnest part's family chords copied in
 (`ThinFill`), else a counter-line; then `polish` `fades`, `duty`,
-`staccato`. `what_next`: every kind plays drums (a quiet kind's pool: the
+`scoops`, `falls`. `what_next`: every kind plays drums (a quiet kind's pool: the
 calm groove, light, noise alone; none where the words, the name or the
 flavour name an ambience, `AmbienceComing`, which then has the noise); intros get A's chords and bass for every
 kind, and the beat in their last bar; `Develop` never rests the chords to

@@ -17856,7 +17856,7 @@ void StrongBeatFindings(Session &S, int Melody, int From, int To, const Key &K, 
 // Narrows, on the 5B; the Ironworks the user liked 3.7) and 7 instruments at the least (Saveroom, The Narrows). So a song's
 // body (its named sections but the intro, breaks and outros, else the bars from the loop's start, THIN_BARS at least)
 // is thin where, on chips of THIN_CHANNELS melodic channels or more, under THIN_PARTS of them sound a bar on average;
-// where it plays under THIN_SOUNDS instruments; or, on fewer channels (the 2A03 alone), under THIN_EFFECTS effects a bar (the
+// where it plays under THIN_SOUNDS instruments (5: the walks of the quiet kinds whose noise plays an ambience have 5); or, on fewer channels (the 2A03 alone), under THIN_EFFECTS effects a bar (the
 // kept 2A03 songs play 9.5-21.3, Clockwork Factory 1.15; what_next's walks on the 2A03 alone, with the kinds' polish, about 1.6)
 const double THIN_PARTS = 3.6, THIN_EFFECTS = 1.5;
 const int THIN_CHANNELS = 5, THIN_SOUNDS = 5, THIN_BARS = 16;
@@ -18067,6 +18067,9 @@ Json ThinFill(Session &S, const ThinMeasure &M, int Melody, bool Calm)
 
 void ThinFindings(Session &S, int Melody, int From, int To, int Style, std::vector<ArrangeFinding> &Out)
 {
+	// (not a track named as ambience, a bed under a scene: GreenValley's "Night ambience" plays 3 channels on purpose)
+	if (Lowercase(S.Song.TrackName).find("ambien") != std::string::npos)
+		return;
 	// Not while a part of the song is still empty (a form laid out and being filled: its empty parts aren't thin)
 	for (size_t i = 0; i < S.Song.Sections.size(); ++i) {
 		const int A = S.Time.BarStart(SectionFirstBar(S, S.Song.Sections[i]));
@@ -32956,7 +32959,6 @@ private:
 	bool m_HasNotes;			// any channel has
 	NextParts m_Parts;			// what plays beside the melody, over the whole song
 	Json m_Thin;				// check_song's thin finding (Breakers), filled by Fill once the development is in
-	Json m_Throughout;			// check_song's chords_throughout finding (Breakers), given by Fill after the review's tips
 	std::vector<FormPart> m_Form;
 	Key m_Key;
 	bool m_HasKey;
@@ -33633,11 +33635,6 @@ void WhatNext::Breakers()
 				++ClashStay;
 				ClashBars.insert(Bar);
 			}
-		}
-		else if (Kind == "chords_throughout" && F.Get("fix") != 0 && F.Get("fix")->IsObject()) {
-			// The chords changing figure (from feat-depth-back): after the review's tips, which may write the chords again (a
-			// plain triad's colors over the whole song undid a restrike given before them, and the step came round again)
-			m_Throughout = F;
 		}
 		else if (Kind == "thin") {
 			// Thin for the NES (from feat-depth-back): Fill gives it after the development's devices, the echo and the highlight,
@@ -35892,8 +35889,11 @@ void WhatNext::PartFixes()
 void WhatNext::Tips()
 {
 	bool Found = false;
+	// (a chord part that rolls on unchanged changes figure after the review's tips, which may write the chords again: a plain
+	// triad's colors over the whole song undid a restrike given before them, and the step came round again, feat-depth-back)
 	for (size_t i = 0; i < m_Later.size(); ++i)
-		if (m_Later[i].Severity != "medium" && Wanted("tips") && Fixes(m_Later[i]) && Step(m_Later[i]))
+		if (m_Later[i].Severity != "medium" && m_Later[i].Id != "chords_throughout" && Wanted("tips") && Fixes(m_Later[i]) &&
+			Step(m_Later[i]))
 			Found = true;
 	if (!m_HasMelody) {
 		Milestone("review tips", !Found, "the review's tips");
@@ -35936,6 +35936,9 @@ void WhatNext::Tips()
 				m_Notes.push_back("review_arrangement: " + Tip);	// (a tip with its fix is check_song's finding too, a step above)
 		}
 	}
+	for (size_t i = 0; i < m_Later.size(); ++i)
+		if (m_Later[i].Id == "chords_throughout" && Wanted("tips") && Fixes(m_Later[i]) && Step(m_Later[i]))
+			Found = true;
 	Milestone("review tips", !Found || !Wanted("tips"), "the review's tips");
 }
 
@@ -36559,15 +36562,6 @@ void WhatNext::Fill()
 {
 	if (!m_HasMelody || m_Unmet.count("form") != 0 || m_Unmet.count("melody") != 0 || !Wanted("thin"))
 		return;
-	// A chord part that rolls on unchanged changes figure where the song turns (its finding's call), first
-	if (m_Throughout.IsObject() && Wanted("chords_throughout")) {
-		bool InSet = true;
-		const NextStep N = FindingFixStep(m_Throughout, "chords_throughout", "check_song", m_Core, InSet);
-		if (!N.Tool.empty() && InSet && Fixes(N)) {
-			Step(N);
-			return;
-		}
-	}
 	const ThinMeasure M = MeasureThin(S, 1, S.Time.BarCount());
 	const bool Thin = m_Thin.IsObject();
 	const bool FewParts = M.BodyBars >= THIN_BARS && M.Channels >= THIN_CHANNELS && M.Parts < DEPTH_PARTS;
