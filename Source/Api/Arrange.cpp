@@ -1448,6 +1448,25 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 			break;
 		}
 		}
+		// A phrase's last bar leads into the next chord with a passing note on its last half beat (from feat-variety: the first
+		// 30's basses play 1.1 rhythms in 8 bars, root, fifth and a passing note now and then, where a bass of roots, halves or
+		// a root and a fifth held one figure all song): a step of the key into the next root, else a whole tone, none a
+		// semitone from the chord's notes or the other parts'
+		const size_t BarIndex = static_cast<size_t>(S.pBar - &Bars[0]);
+		if ((O.Style == BASS_ROOTS || O.Style == BASS_HALF || O.Style == BASS_ROOT_FIFTH) && BarIndex % 4 == 3 && pNext != 0 &&
+			Mod12(pNext->Bass) != Mod12(C.Bass) && S.End == S.pBar->Row + S.pBar->Rows && !Out.empty() && Out.back().Row < S.End - Half &&
+			Length >= 2 * R) {
+			const int Row = S.End - Half;
+			const int Target = BassPitch(pNext->Bass, Out.back().Pitch, Low, High);
+			const int Toward = Target > Out.back().Pitch ? 1 : -1;
+			const int Ways[3] = { ScaleStep(Target, -Toward, O.K), ScaleStep(Target, Toward, O.K), Target - 2 * Toward };
+			for (int w = 0; w < 3; ++w)
+				if (Ways[w] != Out.back().Pitch && Ways[w] != Target && WalksInKey(Ways[w], C, O.K) && !BassRubs(Ways[w], Row, Half, C, O)) {
+					Out.back().Rows = Row - Out.back().Row;
+					Add(Row, Half, Ways[w]);
+					break;
+				}
+		}
 		Previous = O.Style == BASS_WALKING || O.Style == BASS_SYNCOPATED ? Last : Root;
 	}
 	TidyPart(Out, First, End);

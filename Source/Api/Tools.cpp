@@ -19601,8 +19601,10 @@ std::string ReviewTool(Session &S, const Json &Asked)
 
 	// Parallel octaves with the bass
 	if (Bass >= 0) {
+		// (one a phrase of eight bars at the least, from feat-variety: three in a song of 48 bars sent what_next after the bass
+		// part after part, Lava Forge's four times, every part's bass ending in one figure)
 		const int Parallel = static_cast<int>(BassOctaveMoves(S, Melody, Bass, First, End).size());
-		if (Parallel >= BASS_OCTAVES_HOLLOW) {
+		if (Parallel >= std::max(BASS_OCTAVES_HOLLOW, (S.Time.BarOf(std::max(First, End - 1)) - S.Time.BarOf(First) + 1) / 8)) {
 			Lines.push_back(Format("The bass doubles the melody in octaves %d times as both move.", Parallel));
 			Tip(0.5, "A bass moving in octaves with the melody sounds hollow: let it move the other way, or hold.");
 		}
@@ -33089,6 +33091,7 @@ private:
 	void Highlight();
 	bool HighlightStep(bool FewSounds);
 	void Fill();
+	void Renew();
 	void Swing();
 	bool AmbienceComing() const;
 	void NameSections();
@@ -33190,7 +33193,7 @@ WhatNext::WhatNext(Session &Song, const Json &Args, bool Core, bool Client) : S(
 	// The steps' own names, and check_song's kinds of finding (each finding with a fix is a step of its kind's name)
 	static const char *const IDS[] = { "tempo", "key", "shape", "lead", "chords", "sections", "melody", "form", "drums", "second_line",
 		"variation", "break", "intro", "loop", "tips", "colors", "echo", "ambience", "listen", "polish", "mix", "seam", "save",
-		"export", "like", "texture" };
+		"export", "like", "texture", "renew" };
 	for (size_t w = 0; w < m_SkipWords.size(); ++w) {
 		std::string Word = Squeezed(m_SkipWords[w]);
 		if (Word == "counter" || Word == "countermelody" || Word == "harmony" || Word == "secondline")
@@ -34724,6 +34727,15 @@ void WhatNext::Parts()
 			if (Gave)
 				FlavourWhy = FlavourSays(F.LeadWords);
 		}
+		// A lead whose kind has no vibrato of its own gets a faint one (from feat-variety: every lead of the soundtrack's first 30
+		// has a pitch sequence, a quarter of all their instruments; the walks' stepped, brass and keys leads had none); not a
+		// flavour's lead without one (cold, mechanical), nor a struck sound that's gone within a beat (the music box)
+		{
+			SoundDesign Own;
+			if (A.Get("vibrato") == 0 && m_Like.LeadSound <= 0 && m_Picks.Lead.Value != "music box" && DesignOfKind(m_Picks.Lead.Value, Own) &&
+				Own.Vibrato == 0 && Own.Sustain > 0)
+				A.Set("vibrato", "faint");
+		}
 		// Its vibrato fitted to where the tune will play, the upper part of the offered hooks' range (TuneHome's sixth): a pitch
 		// sequence's step is more cents the higher the note, and the action lead's gentle vibrato swung -75 to +60 cents at
 		// E-5 (Guard Tower, fix-gen4-melody)
@@ -35490,9 +35502,12 @@ void WhatNext::Depth()
 		static const char *const VARIATIONS[] = { "embellish", "syncopate", "ending" };
 		const int Bars = P.LastBar - P.FirstBar + 1;
 		const int Ends[2] = { P.LastBar - std::max(1, (Bars + 3) / 4) + 1, P.LastBar - std::max(1, Bars / 2) + 1 };
+		// (its second half first, from feat-variety: a repeat varied in its last quarter alone brought the first 30's 3.5
+		// rhythms in 8 bars down to the walks' 2.4; the motif still comes back as itself where the repeat starts)
 		bool Given = false;
-		for (int e = 0; e < 2 && !Given; ++e)
+		for (int Turn = 0; Turn < 2 && !Given; ++Turn)
 		for (int v = 0; v < 3 && !Given; ++v) {
+			const int e = 1 - Turn;
 			if (e == 1 && (Ends[1] == Ends[0] || v == 2))
 				continue;
 			Json V = Json::MakeObject();
@@ -36841,6 +36856,143 @@ void WhatNext::Fill()
 	}
 }
 
+// A part that comes back (a repeat, a climax on A's chords) with its bass playing the original's bars note for note gets a
+// bass of its own there (from feat-variety): the first 30 change 6.7 of their 8 channels at each 8-bar block, their bass
+// 1.1 rhythms in 8 bars, where the walks' repeats changed only the line a device added (2.8 channels a block, the bass 0.2
+// rhythms). The same chords, the bass in another of the kind's styles, the first that adds no clash and no review tip
+void WhatNext::Renew()
+{
+	if (!m_HasMelody || !m_HasKey || !Wanted("renew") || m_Unmet.count("form") != 0 || m_Unmet.count("melody") != 0 || m_Like.Found ||
+		!(m_KindAsked || PlannedSong(S)) || m_Parts.Bass < 0 || m_Parts.Bass == m_Melody ||
+		!S.Host().KeptFinishStep(S.Song.Track, "polish").empty() || !S.Host().KeptFinishStep(S.Song.Track, "mix").empty())
+		return;
+	const int Bass = m_Parts.Bass, Total = S.Time.TotalRows();
+	auto Prints = [&](Session &In, int FirstBar, int Bars) {
+		std::vector<std::string> Out;
+		for (int b = 0; b < Bars; ++b)
+			Out.push_back(BarPrint(In.Notes(Bass), In.Time.BarStart(FirstBar + b), std::min(In.Time.BarEnd(FirstBar + b), Total)));
+		return Out;
+	};
+	Json Asked = Json::MakeObject();
+	Asked.Set("kind", Kind().Name);
+	if (std::string(Kind().Style) != "any")
+		Asked.Set("style", Kind().Style);
+	Asked.Set("melody_channel", m_Melody + 1);
+	auto TipsOf = [&](Session &In) {
+		std::set<std::string> Out;
+		std::string Review;
+		try {
+			Review = ReviewTool(In, Asked);
+		}
+		catch (const Problem &) {
+			return Out;
+		}
+		const size_t At = Review.find("What would help, most first:\n");
+		for (size_t Line = At == std::string::npos ? Review.size() : At; Line < Review.size(); ) {
+			size_t Stop = Review.find('\n', Line);
+			if (Stop == std::string::npos)
+				Stop = Review.size();
+			std::string Tip = Review.substr(Line, Stop - Line);
+			Line = Stop + 1;
+			const size_t Dot = Tip.find(". ");
+			if (Tip.empty() || !std::isdigit(static_cast<unsigned char>(Tip[0])) || Dot == std::string::npos)
+				continue;
+			Tip = Tip.substr(Dot + 2);
+			Out.insert(Tip.substr(0, std::min<size_t>(Tip.size(), 24)));
+		}
+		return Out;
+	};
+	std::set<std::string> TipsBefore;
+	bool TipsRead = false;
+	for (size_t i = 1; i < m_Form.size(); ++i) {
+		const FormPart &P = m_Form[i];
+		if (!P.Named || P.Free || P.Empty)
+			continue;
+		const int Bars = P.LastBar - P.FirstBar + 1;
+		if (Bars < 4 || !NoteStartsIn(S, Bass, S.Time.BarStart(P.FirstBar), std::min(S.Time.BarEnd(P.LastBar), Total)))
+			continue;
+		// (an earlier part whose bass these bars play note for note)
+		const std::vector<std::string> Here = Prints(S, P.FirstBar, Bars);
+		int Like = -1;
+		for (size_t j = 0; j < i && Like < 0; ++j) {
+			const FormPart &O = m_Form[j];
+			if (!O.Named || O.Free || O.Empty || O.LastBar - O.FirstBar + 1 < Bars)
+				continue;
+			int Same = 0;
+			const std::vector<std::string> There = Prints(S, O.FirstBar, Bars);
+			for (int b = 0; b < Bars; ++b)
+				Same += Here[static_cast<size_t>(b)] == There[static_cast<size_t>(b)] && !Here[static_cast<size_t>(b)].empty() ? 1 : 0;
+			if (Same * 4 >= Bars * 3)
+				Like = static_cast<int>(j);
+		}
+		if (Like < 0)
+			continue;
+		const int First = S.Time.BarStart(P.FirstBar), End = std::min(S.Time.BarEnd(P.LastBar), Total);
+		const std::vector<ChordAt> Heard = SongChords(S, First, End, m_Key, m_Melody);
+		if (Heard.empty())
+			continue;
+		if (!TipsRead) {
+			TipsBefore = TipsOf(S);
+			TipsRead = true;
+		}
+		Json A = Json::MakeObject();
+		A.Set("chords", ProgressionText(Heard, SongBarSpans(S, First, End), m_Key, false, 256));
+		A.Set("from_bar", P.FirstBar);
+		A.Set("to_bar", P.LastBar);
+		A.Set("melody_channel", ChannelName(m_Melody));
+		A.Set("chord_channel", "none");
+		A.Set("bass_channel", ChannelName(Bass));
+		// (the bass's own sound kept)
+		for (const NoteInfo &N : NotesIn(S.Notes(Bass), First, End))
+			if (const InstrumentInfo *pSound = FindInstrument(S.Song, N.Instrument)) {
+				A.Set("bass_instrument", pSound->Name);
+				break;
+			}
+		std::vector<std::string> Styles;
+		const std::vector<std::string> Pool = PoolEntries(Kind().BassStyles);
+		for (const std::string &Style : { std::string(Kind().MovingBass != 0 ? Kind().MovingBass : ""), Pool.size() > 0 ? Pool[0] :
+			std::string(), Pool.size() > 1 ? Pool[1] : std::string(), Pool.size() > 2 ? Pool[2] : std::string(), std::string("root_fifth"),
+			std::string("half") })
+			if (!Style.empty() && Style != "pedal" && std::find(Styles.begin(), Styles.end(), Style) == Styles.end())
+				Styles.push_back(Style);
+		for (size_t k = 0; k < Styles.size(); ++k) {
+			A.Set("bass_style", Styles[k]);
+			int Added = 0;
+			if (!TryWriteHearing(S, "add_chords_and_bass", A, P.FirstBar, P.LastBar, m_Melody, Added, [&](Session &After) {
+					const std::vector<std::string> Now = Prints(After, P.FirstBar, Bars);
+					int Changed = 0;
+					for (int b = 0; b < Bars; ++b)
+						Changed += Now[static_cast<size_t>(b)] != Here[static_cast<size_t>(b)] ? 1 : 0;
+					if (Changed * 2 < Bars)
+						return false;
+					// (nor the bass of another earlier part: a climax renewed as A' was renewed came back as A' and was renewed again)
+					for (size_t j = 0; j < i; ++j) {
+						const FormPart &O = m_Form[j];
+						if (!O.Named || O.Free || O.Empty || O.LastBar - O.FirstBar + 1 < Bars)
+							continue;
+						const std::vector<std::string> There = Prints(After, O.FirstBar, Bars);
+						int Same = 0;
+						for (int b = 0; b < Bars; ++b)
+							Same += Now[static_cast<size_t>(b)] == There[static_cast<size_t>(b)] && !Now[static_cast<size_t>(b)].empty() ? 1 : 0;
+						if (Same * 4 >= Bars * 3)
+							return false;
+					}
+					const std::set<std::string> Said = TipsOf(After);
+					for (std::set<std::string>::const_iterator it = Said.begin(); it != Said.end(); ++it)
+						if (TipsBefore.count(*it) == 0)
+							return false;
+					return true;
+				}) || Added > 0)
+				continue;
+			Step("renew", "add_chords_and_bass", A, Format("%s (%s) plays %s's bass note for note: the same chords with the bass "
+				"moving its own way there (%s), so the part comes back renewed. The soundtrack's first 30 change most of their parts "
+				"where a section comes back, not only the tune.", P.Name.c_str(), RangeText(P.FirstBar, P.LastBar).c_str(),
+				m_Form[static_cast<size_t>(Like)].Name.c_str(), Styles[k].c_str()));
+			return;
+		}
+	}
+}
+
 // A swing (set_swing, Fxx speeds alternating every half beat), from feat-depth-back: half the soundtrack's first 30 lively
 // tracks swing (7 of 14, 8 speed changes a bar) and half its soft ones by day (3 of 6: Kettle & Quilt, Bobber on the Bay,
 // Hearthfrost Village); none of its action or dark ones. So a lively, cozy, playful or festive song swings lightly where
@@ -37415,6 +37567,8 @@ void WhatNext::Work()
 		if (Looking())
 			Fill();
 		if (Looking())
+			Renew();
+		if (Looking())
 			Swing();
 		if (Looking())
 			Polish();
@@ -37657,6 +37811,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		return Where("Move the melody's notes off the chord on strong beats to chord tones", true);
 	if (Id == "swing")
 		return "Swing the rhythm lightly";
+	if (Id == "renew")
+		return Where("Let the bass move its own way where a part comes back", true);
 	if (Id == "thin")
 		return Where(Tool == "polish" ? "Color the notes with effects part by part" : Tool == "copy_bars" ?
 			"Let the chords carry on where the song is thinnest" : "Add a part where the song is thinnest", true);

@@ -860,11 +860,12 @@ bool Has(const std::vector<int> &Classes, int PitchClass)
 
 }	// namespace
 
-// The tonic from E-3 to D#4 (from feat-variety: G-3 to F#4 before, which put the walks' tunes around G-4, where the first
-// 30's sit around B-3, within a fifth to an octave of their parts; E minor's home was E-4)
+// The tonic from C-3 to B-3 (from feat-variety: G-3 to F#4 before, which put the walks' tunes around G-4, where the first
+// 30's sit around B-3, within a fifth to an octave of their parts: the hooks rise from the home to a fifth or an octave
+// over it, so their middle now sits around G-3 to D-4)
 int TuneHome(const Key &K)
 {
-	return 36 + Mod12(K.Tonic) + (Mod12(K.Tonic) < 4 ? 12 : 0);
+	return 36 + Mod12(K.Tonic);
 }
 
 std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int BeatsPerBar, int RowsPerBeat,
@@ -905,7 +906,7 @@ std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int Beat
 		}
 	}
 
-	// The pitches: the tonic as home, from G-3 to F#4 (as a pulse plays it), so the phrase sits over chords written before
+	// The pitches: the tonic as home, from C-3 to B-3 (as a pulse plays it), so the phrase sits over chords written before
 	// it (a D major one around D-4, not D-3); it rises from its third to a high point past the middle and comes home, its
 	// open cell ending on the fifth
 	const int Home = TuneHome(K), Low = Home - 5, High = Home + 12;
@@ -1224,10 +1225,13 @@ std::vector<TuneNote> HookTuneOf(const Key &K, int FirstBar, int BeatsPerBar, in
 						Cost += 2.5;
 				}
 				if (i > 0) {
+					// (a note struck again costs more but in a busy hook, from feat-variety: the first 30's tunes strike one again in 1
+					// move of 100, their action songs' in 11)
+					const double Again = Pace >= 2 ? 1.5 : 3.0;
 					if (Strong)
-						Cost += Size == 0 ? 1.5 : Size <= 2 ? 0.0 : Size <= 4 ? 0.5 : Size <= 7 ? 1.25 : 4.0;
+						Cost += Size == 0 ? Again : Size <= 2 ? 0.0 : Size <= 4 ? 0.5 : Size <= 7 ? 1.25 : 4.0;
 					else
-						Cost += Size == 0 ? 2.0 : Size <= 2 ? 0.0 : Size <= 4 ? 1.25 : 4.0;
+						Cost += Size == 0 ? Again + 0.5 : Size <= 2 ? 0.0 : Size <= 4 ? 1.25 : 4.0;
 					// Not the same note three times running; a leap is answered: a step back the other way after it
 					if (Size == 0 && LastMove == 0 && i > 1)
 						Cost += 3.0;

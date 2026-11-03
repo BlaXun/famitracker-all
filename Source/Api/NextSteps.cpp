@@ -49,7 +49,7 @@ const staged_t STEP_STAGES[] = {
 	{ "second_line", STAGE_DEPTH }, { "variation", STAGE_DEPTH }, { "break", STAGE_DEPTH }, { "intro", STAGE_DEPTH },
 	{ "outro", STAGE_DEPTH }, { "highlight", STAGE_DEPTH },
 	{ "tips", STAGE_DEPTH }, { "echo", STAGE_DEPTH }, { "colors", STAGE_DEPTH },
-	{ "ambience", STAGE_DEPTH }, { "texture", STAGE_DEPTH }, { "thin", STAGE_DEPTH }, { "swing", STAGE_DEPTH }, { "chords_throughout", STAGE_DEPTH },
+	{ "ambience", STAGE_DEPTH }, { "texture", STAGE_DEPTH }, { "thin", STAGE_DEPTH }, { "swing", STAGE_DEPTH }, { "renew", STAGE_DEPTH }, { "chords_throughout", STAGE_DEPTH },
 	{ "listen", STAGE_POLISH }, { "polish", STAGE_POLISH }, { "mix", STAGE_MIX }, { "loop", STAGE_LOOP }, { "seam", STAGE_LOOP },
 	{ "save", STAGE_EXPORT }, { "export", STAGE_EXPORT },
 };
