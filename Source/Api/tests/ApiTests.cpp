@@ -18231,12 +18231,19 @@ void TestGrowPhrases()
 	CHECK_HAS(Out[0].Shape, "Phrases of 4 bars, the high point E5 in bar 7; it breathes in 4 of 4 two-bar spans.");
 	CHECK_EQ(Out[0].Phrases.size(), 2u);
 	CHECK_HAS(Out[2].Shape, "Two-bar calls: bars 1-2 the hook and an answer;");
-	// Bar 3 as the hook a step higher: E4 A4 B4 C5 - B4 A4 -
+	// Bar 3 as the hook a step higher, E4 A4 B4 C5 - B4 A4 -, in a rhythm of its own (feat-variety): its notes from E4 up
 	std::vector<int> Bar3;
-	for (size_t i = 0; i < Out[0].Notes.size(); ++i)
-		if (Out[0].Notes[i].Step >= 16 && Out[0].Notes[i].Step < 24)
+	std::vector<std::pair<int, int> > Hits3, Hits1;
+	for (size_t i = 0; i < Out[0].Notes.size(); ++i) {
+		if (Out[0].Notes[i].Step >= 16 && Out[0].Notes[i].Step < 24) {
 			Bar3.push_back(Out[0].Notes[i].Pitch);
-	CHECK(Bar3.size() >= 4u && Bar3[0] == 52 && Bar3[1] == 57 && Bar3[2] == 59 && Bar3[3] == 60);
+			Hits3.push_back(std::make_pair(Out[0].Notes[i].Step - 16, Out[0].Notes[i].Steps));
+		}
+		if (Out[0].Notes[i].Step < 8)
+			Hits1.push_back(std::make_pair(Out[0].Notes[i].Step, Out[0].Notes[i].Steps));
+	}
+	CHECK(Bar3.size() >= 3u && Bar3[0] == 52 && std::find(Bar3.begin(), Bar3.end(), 57) != Bar3.end());
+	CHECK(Hits3 != Hits1);
 }
 
 // One high point a section, the register, the hook coming back, and the spans review_arrangement counts from where the
@@ -31208,7 +31215,14 @@ void TestWhatNextMelodyRoles()
 			++Melodies;
 		}
 		if (Tool == "add_chords_and_bass")
-			Check(!Contains(Made[i], "VRC6 Plus Pulse 1\""), Made[i].c_str(), __LINE__);
+		{
+			// (melody_channel names the lead: the bass written again hears it)
+			bool OnLead = TextOf(&Call, "chord_channel") == "VRC6 Plus Pulse 1" || TextOf(&Call, "bass_channel") == "VRC6 Plus Pulse 1";
+			const Json *pVoices = Call.Get("chord_channels");
+			for (size_t v = 0; pVoices != 0 && pVoices->IsArray() && v < pVoices->Size(); ++v)
+				OnLead = OnLead || pVoices->At(v).String() == "VRC6 Plus Pulse 1";
+			Check(!OnLead, Made[i].c_str(), __LINE__);
+		}
 	}
 	CHECK(Melodies >= 3);
 	CheckMelodyContrast(Song, Made, "Night Harbor", __LINE__);

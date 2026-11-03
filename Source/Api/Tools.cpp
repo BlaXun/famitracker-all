@@ -26021,7 +26021,7 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 	const int Bar = S.Time.BarOf(N.Row);
 	const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
 	std::vector<bool> With(12, false);	// the classes the other parts sound with it, and its own chord's
-	std::vector<bool> Under(12, false);	// ...those of them a fifth or more under it (a bass)
+	int Lowest = -1;					// the lowest note the others sound with it (the bass)
 	auto Sounds = [&](const NoteInfo &X) {
 		int Arpeggio = 0;
 		for (size_t e = 0; e < X.Effects.size() && Arpeggio == 0; ++e)
@@ -26040,8 +26040,8 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 			if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
 				continue;
 			With[static_cast<size_t>(Theirs[j].Pitch % 12)] = true;
-			if (Pitch - Theirs[j].Pitch >= 7)
-				Under[static_cast<size_t>(Theirs[j].Pitch % 12)] = true;
+			if (Lowest < 0 || Theirs[j].Pitch < Lowest)
+				Lowest = Theirs[j].Pitch;
 			Sounds(Theirs[j]);
 		}
 	}
@@ -26052,7 +26052,7 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 		const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
 		// (a third over its root in the bass is the chord too, its fifth left out: from feat-variety, a secondary dominant's
 		// raised third over its root, the voices or a broken chord sounding its fifth elsewhere)
-		const bool Third = (t == 2 || t == 3) && Under[static_cast<size_t>(Root)];
+		const bool Third = (t == 2 || t == 3) && Lowest >= 0 && Lowest < Pitch && Lowest % 12 == Root;
 		if (!Third && (!With[static_cast<size_t>((Root + TRIADS[t][1]) % 12)] || !With[static_cast<size_t>((Root + TRIADS[t][2]) % 12)]))
 			continue;
 		const bool Major = t % 2 == 0;
@@ -32612,9 +32612,14 @@ bool TryWriteHearing(Session &Now, const std::string &Tool, const Json &Args, in
 		return false;
 	Dry.Overlay = true;
 	Session After(Dry);
-	if (!Hears(After))
+	if (!Hears(After)) {
+		if (std::getenv("WHAT_NEXT_DRY") != 0)	// DEBUG-VARIETY
+			std::fprintf(stderr, "dry %s %s: not heard as wanted\n", Tool.c_str(), WriteJson(Args).c_str());
 		return false;
+	}
 	Added = ClashesIn(After, FromBar, ToBar, Melody) - ClashesIn(Now, FromBar, ToBar, Melody);
+	if (std::getenv("WHAT_NEXT_DRY") != 0)	// DEBUG-VARIETY (to see what what_next tried)
+		std::fprintf(stderr, "dry %s %s: %d clashes added\n", Tool.c_str(), WriteJson(Args).c_str(), Added);
 	return true;
 }
 
@@ -35067,13 +35072,7 @@ void WhatNext::Colors()
 	const int Total = S.Time.TotalRows();
 	for (size_t i = 0; i < m_Parts.Chords.size(); ++i) {
 		const int c = m_Parts.Chords[i];
-		// (a chord part in one part of the song at the least: since feat-variety B plays its chords in another style, broken
-		// chords' many notes beside A's lush ones)
-		bool Chords = PlaysChordPart(S, c, 0, Total);
-		for (size_t f = 0; f < m_Form.size() && !Chords; ++f)
-			Chords = m_Form[f].Named && !m_Form[f].Empty && PlaysChordPart(S, c, S.Time.BarStart(m_Form[f].FirstBar),
-				std::min(S.Time.BarEnd(m_Form[f].LastBar), Total));
-		if (c == m_Melody || !Chords)
+		if (c == m_Melody || !PlaysChordPart(S, c, 0, Total))
 			continue;
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
 		const std::vector<int> Arps = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
