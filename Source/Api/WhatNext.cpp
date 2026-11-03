@@ -696,11 +696,6 @@ std::string FirstChordOf(const std::string &Bar)
 	return Space == std::string::npos ? Bar : Bar.substr(0, Space);
 }
 
-bool PlainDegree(const std::string &Chord)
-{
-	return !Chord.empty() && Chord.find_first_not_of("IViv") == std::string::npos;
-}
-
 std::string PlainProgression(int Kind, bool Minor, bool B, bool Dorian);
 
 }	// namespace
@@ -738,8 +733,17 @@ std::string EnrichedProgression(const std::string &Progression, bool Minor)
 			if (X != "V" && X != "v" && X != "V7")
 				Bars[3] = X + " V";
 		}
-		else if (PlainDegree(Next) && Next != X && Next != "V" && Next != "v" && Next != "VII" && Next != "III" && Next != "vii")
-			Bars[3] = X + " V/" + Next;
+		else {
+			// (else the key's own chord a fifth over the next one, which leads into it: a secondary dominant's raised third,
+			// V/vi's C# in F major, sounded as broken chords or voices was a note outside the key check_song asked about)
+			static const char *const MAJOR[][2] = { { "vi", "iii" }, { "ii", "vi" }, { "IV", "I" }, { "iii", "vii" } };
+			static const char *const MINOR[][2] = { { "VI", "III" }, { "iv", "i" }, { "III", "VII" }, { "VII", "iv" } };
+			for (size_t m = 0; m < 4; ++m) {
+				const char *const *pPair = Minor ? MINOR[m] : MAJOR[m];
+				if (Next == pPair[0] && X != pPair[1] && std::string(pPair[1]) != "vii")
+					Bars[3] = X + " " + pPair[1];
+			}
+		}
 	}
 	{
 		const std::string X = Bars[7], Before = FirstChordOf(Bars[6]);

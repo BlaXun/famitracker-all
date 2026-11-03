@@ -26271,7 +26271,6 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 	const int Bar = S.Time.BarOf(N.Row);
 	const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
 	std::vector<bool> With(12, false);	// the classes the other parts sound with it, and its own chord's
-	int Lowest = -1;					// the lowest note the others sound with it (the bass)
 	auto Sounds = [&](const NoteInfo &X) {
 		int Arpeggio = 0;
 		for (size_t e = 0; e < X.Effects.size() && Arpeggio == 0; ++e)
@@ -26282,6 +26281,12 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 			With[static_cast<size_t>(((X.Pitch + Above[k]) % 12 + 12) % 12)] = true;
 	};
 	Sounds(N);
+	// (and its own notes a beat either side: a broken chord's, from feat-variety, a borrowed iv's Db in F major struck
+	// between its Bb and F on one pulse)
+	const bool ChordPart = PlaysChordPart(S, Channel, S.Time.BarStart(Bar), std::min(S.Time.BarEnd(Bar), S.Time.TotalRows()));
+	for (const NoteInfo &X : S.Notes(Channel))
+		if (ChordPart && X.Row != N.Row && X.Row >= N.Row - S.Time.RowsPerBeat && X.Row < Until && X.Volume > 0 && S.Time.BarOf(X.Row) == Bar)
+			With[static_cast<size_t>(X.Pitch % 12)] = true;
 	for (int c = 0; c < S.ChannelCount(); ++c) {
 		if (c == Channel || !IsMelodic(S.Channel(c)))
 			continue;
@@ -26290,8 +26295,6 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 			if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
 				continue;
 			With[static_cast<size_t>(Theirs[j].Pitch % 12)] = true;
-			if (Lowest < 0 || Theirs[j].Pitch < Lowest)
-				Lowest = Theirs[j].Pitch;
 			Sounds(Theirs[j]);
 		}
 	}
@@ -26300,10 +26303,7 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 	static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
 	for (int t = 0; t < 6; ++t) {
 		const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
-		// (a third over its root in the bass is the chord too, its fifth left out: from feat-variety, a secondary dominant's
-		// raised third over its root, the voices or a broken chord sounding its fifth elsewhere)
-		const bool Third = (t == 2 || t == 3) && Lowest >= 0 && Lowest < Pitch && Lowest % 12 == Root;
-		if (!Third && (!With[static_cast<size_t>((Root + TRIADS[t][1]) % 12)] || !With[static_cast<size_t>((Root + TRIADS[t][2]) % 12)]))
+		if (!With[static_cast<size_t>((Root + TRIADS[t][1]) % 12)] || !With[static_cast<size_t>((Root + TRIADS[t][2]) % 12)])
 			continue;
 		const bool Major = t % 2 == 0;
 		const ChordRoleInKey Role = RoleOfChord(Chord(Root, std::vector<int>({ 0, Major ? 4 : 3, 7 })), K);
@@ -34913,7 +34913,8 @@ void WhatNext::GrowForm()
 		return Not;
 	};
 	const std::string AChords = m_Picks.ChordStyle.Value, ABass = m_Picks.BassStyle.Value;
-	const std::string BChords = Voiced || m_Like.Found ? AChords : OtherOf(Kind().ChordStyles, AChords);
+	// (lush chords stay lush: they get their colors once the tune is there, WhatNext::Colors, which hears one chord part)
+	const std::string BChords = Voiced || m_Like.Found || AChords == "lush" ? AChords : OtherOf(Kind().ChordStyles, AChords);
 	const std::string BBass = m_Like.Found ? ABass : Kind().MovingBass != 0 && *Kind().MovingBass && ABass != Kind().MovingBass ?
 		std::string(Kind().MovingBass) : OtherOf(Kind().BassStyles, ABass);
 	B.Set("chord_style", Voiced ? "voices" : BChords.c_str());
@@ -35554,7 +35555,9 @@ bool WhatNext::Develop()
 					int Top = -1;
 					for (const NoteInfo &N : NotesIn(S.Notes(m_Melody), S.Time.BarStart(Starts[s]), End))
 						Top = std::max(Top, N.Pitch - Lift);
-					if (Top < 0 || Top + 12 > CLIMAX_TOP || Top + 12 + Lift <= D.ATop)
+					// (a step to a fifth over A's top, from feat-variety: with the tunes lower, an octave up under CLIMAX_TOP
+					// could climb a sixth and more over A)
+					if (Top < 0 || Top + 12 > CLIMAX_TOP || Top + 12 + Lift <= D.ATop || Top + 12 + Lift > D.ATop + 7)
 						continue;
 					Json V = Json::MakeObject();
 					V.Set("channel", ChannelName(m_Melody));
