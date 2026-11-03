@@ -860,7 +860,7 @@ private:
 			// A climax's high point: a step or a few over the tune before it (Over), each version its own (the soundtrack's
 			// climaxes reach a step to a fourth over their A), never under it nor more than a fifth over
 			if (m_Q.Over >= 0) {
-				static const int OVER[3] = { 2, 4, 5 };
+				static const int OVER[3] = { 4, 5, 7 };	// (2 before feat-variety: the lower tunes' climaxes lifted too little)
 				const int Aim = m_Q.Over + OVER[static_cast<size_t>(m_Version) % 3];
 				for (int Pass = 0; Pass < 2 && Best < 0; ++Pass)
 					for (int p = std::max(m_MotifMax, m_Q.Over) + 1; p <= std::min(m_Q.High, m_Q.Over + 7); ++p) {

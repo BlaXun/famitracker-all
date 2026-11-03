@@ -869,12 +869,12 @@ bool Has(const std::vector<int> &Classes, int PitchClass)
 
 }	// namespace
 
-// The tonic from C-3 to B-3 (from feat-variety: G-3 to F#4 before, which put the walks' tunes around G-4, where the first
-// 30's sit around B-3, within a fifth to an octave of their parts: the hooks rise from the home to a fifth or an octave
-// over it, so their middle now sits around G-3 to D-4)
+// The tonic from E-3 to D#4 (from feat-variety: G-3 to F#4 before, which put the walks' tunes around G-4, where the first
+// 30's sit around B-3, within a fifth to an octave of their parts; C-3 to B-3 was tried and put the tunes among the chords
+// and voices written before them, which the review then heard blurring the tune)
 int TuneHome(const Key &K)
 {
-	return 36 + Mod12(K.Tonic);
+	return 36 + Mod12(K.Tonic) + (Mod12(K.Tonic) < 4 ? 12 : 0);
 }
 
 std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int BeatsPerBar, int RowsPerBeat,
@@ -915,7 +915,7 @@ std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int Beat
 		}
 	}
 
-	// The pitches: the tonic as home, from C-3 to B-3 (as a pulse plays it), so the phrase sits over chords written before
+	// The pitches: the tonic as home, from E-3 to D#4 (as a pulse plays it), so the phrase sits over chords written before
 	// it (a D major one around D-4, not D-3); it rises from its third to a high point past the middle and comes home, its
 	// open cell ending on the fifth
 	const int Home = TuneHome(K), Low = Home - 5, High = Home + 12;

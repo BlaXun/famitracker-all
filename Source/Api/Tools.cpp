@@ -34920,8 +34920,11 @@ void WhatNext::GrowForm()
 	std::string BChords = Voiced || m_Like.Found || AChords == "lush" ? AChords : OtherOf(Kind().ChordStyles, AChords);
 	if (BChords == "arpeggio" && AChords != "arpeggio")
 		BChords = AChords;
-	const std::string BBass = m_Like.Found ? ABass : Kind().MovingBass != 0 && *Kind().MovingBass && ABass != Kind().MovingBass ?
+	std::string BBass = m_Like.Found ? ABass : Kind().MovingBass != 0 && *Kind().MovingBass && ABass != Kind().MovingBass ?
 		std::string(Kind().MovingBass) : OtherOf(Kind().BassStyles, ABass);
+	// (an arpeggio bass reads as a chord part where A's plays otherwise: the milestone of chords and bass came undone)
+	if (BBass == "arpeggio" && ABass != "arpeggio")
+		BBass = OtherOf(Kind().BassStyles, ABass) != "arpeggio" ? OtherOf(Kind().BassStyles, ABass) : ABass;
 	B.Set("chord_style", Voiced ? "voices" : BChords.c_str());
 	if (BChords == "lush" && !Voiced)
 		B.Set("arp_frames", LushFrames());
