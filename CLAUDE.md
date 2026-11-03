@@ -3385,52 +3385,67 @@ Airship's bleed, which the cleaning takes out, still doesn't).
 `TestTriangleUnderTomFills` (`listen_tests`) and `TestCut`'s whole-song
 cases cover them; `TestExport` keeps an intro's second time through.
 
-Variety (from `feat-variety`): six songs made by following `what_next` after
-`feat-depth-back` reached the first 30's density and were heard as "still
-not on the level of the first 30". `gen4/gap-analysis.md` measured what still
-differed, mostly the tools' own defaults; the walks (`TestAllKindsTogether`'s,
-dumped with `API_DUMP_WALKS=<folder>` by `DumpWalk` in `ApiTests.cpp`, a song
-and its calls as JSON for `gen4/scripts/gapwalk.py`) showed the same. The
-melody: `grow_melody`'s sequences, answers and variations take a rhythm of
-their own from the motif's cells (`VaryRhythm` in `GrowMelody.cpp`: a note
-split, two joined, a pair dotted, the second half in the kind's figures, no
-note from between the beats held over the next), a two-bar motif comes back
-after a section's first block with its second bar changed (`M V`), so the
-hook's two bars as written return where sections start, and a note struck
-again costs more (`Pair`, and `HookTuneOf`'s `Again` but in a busy hook). The
-register: `TuneHome` is the tonic from C-3 to B-3 (G-3 to F#4 before), so the
-offered hooks and `ExampleTune` sit around B-3, and `write_notes` warns of a
-lead from a middle of E-4 reaching D-5 (`GUARD_LEAD_MIDDLE` 52,
-`GUARD_LEAD_TOP` 62; a calm kind's 50 and 60), as `grow_melody`'s hook remark
-and the kinds' register texts (`MelodyRegisterText`) say. Harmony:
-`NextProgression` gives every kind's eight bars through
+Variety (from `feat-variety`): six songs made by following `what_next`
+after `feat-depth-back` reached the first 30's density and were heard as
+"still not on the level of the first 30". `gen4/gap-analysis.md` measured
+what still differed, mostly the tools' own defaults; the walks
+(`TestAllKindsTogether`'s, dumped with `API_DUMP_WALKS=<folder>` by
+`DumpWalk` in `ApiTests.cpp`, a song and its calls as JSON for
+`gen4/scripts/gapwalk.py`) showed the same. The melody: `grow_melody`'s
+sequences, answers and variations take a rhythm of their own from the
+motif's cells (`VaryRhythm` in `GrowMelody.cpp`: a note split, two joined, a
+pair dotted, the second half in the kind's figures, no note from between the
+beats held over the next), a two-bar motif comes back after a section's first
+block with its second bar changed (`M V`), so the hook's two bars as written
+return where sections start, a note struck again costs more (`Pair`, and
+`HookTuneOf`'s `Again` but in a busy hook), and a climax's high point aims
+4-7 semitones over the tune before it, never past a fifth (its fallback
+too). The register: `TuneHome` is the tonic from E-3 to D#4 (G-3 to F#4
+before; C-3 to B-3 put the tunes among the chords and voices written before
+them, and the review heard them blurred), chords written before the tune sit
+lower (`ChordRegister`'s default top 39), and `write_notes` warns of a lead
+from a middle of E-4 reaching D-5 (`GUARD_LEAD_MIDDLE` 52, `GUARD_LEAD_TOP`
+62; a calm kind's 50 and 60), as `grow_melody`'s hook remark and the kinds'
+register texts (`MelodyRegisterText`) say. A climax grows a tune of its own
+on A's chords where A an octave up would peak more than a fifth over the
+tune before it (`GrowForm`'s `Backing`), and `ClimbingHooks` stay within a
+fifth. Harmony: `NextProgression` gives every kind's eight bars through
 `EnrichedProgression` (`WhatNext.cpp`): the fourth bar leads into the fifth
-on the half bar (V, or the next chord's own dominant, `V/vi`), the last into
-the loop (`IV V`, `ii V`, `iv V`, `IV iv`), and bar 6 or 7 takes a chord from
-outside the key (iv or bVII in major, the dorian IV in minor). B plays its
-chords and bass in another of the kind's styles than A (`GrowForm`'s
-`OtherOf`, the bass the kind's `MovingBass`). The bass: a plain bass (roots,
-halves, root and fifth) leads into the next chord on a phrase's last half
-beat (`BassPart` in `Arrange.cpp`, a step of the key, never rubbing), and
-`WhatNext::Renew` (after `Fill`, step id and skip word `renew`) gives a part
-that comes back with its bass note for note as an earlier part's another of
-the kind's styles on the same chords, tried on a dry run that adds no clash,
-no review tip and no bass alike another part's. The octave-moves tip judges
-one move every eight bars at the least (`BASS_OCTAVES_HOLLOW` or bars / 8)
-and rewrites a part's moves in one call, the song's own styles first, each
-with the landing chord over its third or fifth before another style (Lava
-Forge's composer got four root_fifth rewrites in a row). Second lines: a soft
-kind's development tries a counter-line that answers before a harmony
-(`Develop`'s `SOFT`), and a repeat is varied in its second half before its
-last quarter. A lead whose kind has no vibrato gets a faint one (not a
-flavour's without one, nor the music box). Over the 28 walks of the full set
-(`gen4/variety/before.json` against `after.json`, first 30's medians in
-brackets): melody rhythms in 8 bars 1.70 -> 2.42 (3.5), the hook's two bars
-5.8 -> 1.8 times in 32 bars (2.0), the melody's middle 55 -> 48 (47),
-chord changes a bar 1.02 -> 1.27 (1.56), outside the key 0.07 -> 0.23 (0.33)
-in 2 -> 4 kinds (7), bass rhythms in 8 bars 0.22 -> 0.67 (1.11), channels
-changing at a block 2.75 -> 3.33 (6.67), second lines in the tune's rests
-0.11 -> 0.14 (0.25). No check was added.
+on the half bar (V into the tonic, else the key's own chord a fifth over the
+next one: a secondary dominant's raised third was a note check_song asked
+about), the last into the loop (`IV V`, `ii V`, `iv V`, `IV iv`; a dorian
+key's `III` and `v`, since its VI and iv are other chords), and bar 6 or 7
+takes a chord from outside the key (iv or bVII in major, the dorian IV in
+minor). `ChordedOutsideKey` counts a chord part's own notes a beat around a
+note (a borrowed iv broken on one pulse). B plays its chords and bass in
+another of the kind's styles than A (`GrowForm`'s `OtherOf`), but for a lively
+stage (the lively mix moves a chord layer as a whole; an octaves bass beside
+A's arpeggio one read as no bass), lush chords (`Colors` hears one chord
+part), an `0xy` arpeggio after A's (it carried on into A's chords copied
+after B) and a pedal (under a flavour's bII). The bass: a plain bass (roots,
+halves, root and fifth) leads into the next chord in the second bar of each
+four on its last half beat (`BassPart` in `Arrange.cpp`, a step of the key,
+never rubbing), and `WhatNext::Renew` (after `Fill`, step id and skip word
+`renew`) gives a part that comes back (not the climax) with its bass note
+for note as an earlier part's another of the kind's styles on the same
+chords, tried on a dry run that adds no clash, no review tip and no bass
+alike another part's. The octave-moves tip judges one move every eight bars
+at the least (`BASS_OCTAVES_HOLLOW` or bars / 8) and rewrites a part's moves
+in one call, the song's own styles first. Second lines: a soft kind's
+development tries a counter-line that answers before a harmony (`Develop`'s
+`SOFT`), a repeat is varied in its second half before its last quarter, and
+`Fill`'s `Keeps` doesn't count "chords resting" (a line filled into A reads
+so in every later part). A lead whose kind has no vibrato gets a faint one
+(not a flavour's without one, nor the music box). Over the 28 walks of the
+full set (`gen4/variety/before.json` against `after.json`, the first 30's
+medians in brackets): melody rhythms in 8 bars 1.70 -> 2.42 (3.5), the hook's
+two bars 5.8 -> 1.8 times in 32 bars (2.0), the melody's middle 55 -> 51.5
+(47), repeated notes 0.10 -> 0.08 (0.01), chord changes a bar 1.02 -> 1.25
+(1.56), outside the key 0.07 -> 0.22 (0.33) in 2 -> 4 kinds (7), distinct
+chords 6.5 -> 9 (14), bass rhythms in 8 bars 0.22 -> 0.67 (1.11), channels
+changing at a block 2.75 -> 3.25 (6.67); second lines in the tune's rests
+stayed at 0.10 (0.25), and instruments with a pitch sequence at 0.10 (0.25).
+No check was added.
 
 Depth round's tool faults (from `fix-depth-bugs`): six composers made the
 depth round's songs and met these. `add_chords_and_bass` keeps a bass

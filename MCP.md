@@ -735,7 +735,7 @@ is the recipes':
    `add_chords_and_bass` on the same chords with another of the kind's bass
    styles, tried so it adds no clash nor review tip (step id and skip word
    `renew`). B already plays its chords and bass in another of the kind's
-   styles than A, and what_next's progressions change on the half bar at
+   styles than A (a lively stage's keeps A's), and what_next's progressions change on the half bar at
    their cadences, with a chord from outside the key in each eight bars.
 7. The last steps, once the parts are written: `polish` (on a lively stage
    with its accents), then the mix in the kind's style when another mix
