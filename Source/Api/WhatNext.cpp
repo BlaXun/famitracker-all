@@ -700,7 +700,7 @@ std::string PlainProgression(int Kind, bool Minor, bool B, bool Dorian);
 
 }	// namespace
 
-std::string EnrichedProgression(const std::string &Progression, bool Minor)
+std::string EnrichedProgression(const std::string &Progression, bool Minor, bool Dorian)
 {
 	std::vector<std::string> Bars = ProgressionBars(Progression);
 	if (Bars.size() != 8)
@@ -720,7 +720,7 @@ std::string EnrichedProgression(const std::string &Progression, bool Minor)
 			Bars[b] = "bVII";
 			break;
 		}
-		if (Minor && Bars[b] == "iv" && Bars[b + 1] != "iv") {
+		if (Minor && !Dorian && Bars[b] == "iv" && Bars[b + 1] != "iv") {
 			Bars[b] = "IV";
 			break;
 		}
@@ -740,14 +740,19 @@ std::string EnrichedProgression(const std::string &Progression, bool Minor)
 			static const char *const MINOR[][2] = { { "VI", "III" }, { "iv", "i" }, { "III", "VII" }, { "VII", "iv" } };
 			for (size_t m = 0; m < 4; ++m) {
 				const char *const *pPair = Minor ? MINOR[m] : MAJOR[m];
-				if (Next == pPair[0] && X != pPair[1] && std::string(pPair[1]) != "vii")
+				// (not the dorian's iv, outside its mode, nor vii)
+				if (Next == pPair[0] && X != pPair[1] && std::string(pPair[1]) != "vii" && !(Dorian && std::string(pPair[1]) == "iv"))
 					Bars[3] = X + " " + pPair[1];
 			}
 		}
 	}
 	{
 		const std::string X = Bars[7], Before = FirstChordOf(Bars[6]);
-		if (X == "V")
+		// (a dorian key's VI and iv are other chords than a minor key's, B major and G minor in D dorian: its lead-ins are the
+		// chords both modes share, III and v)
+		if (Dorian && Minor)
+			Bars[7] = X == "III" || X == "v" ? Bars[7] : Before != "III" ? "III " + X : "v " + X;
+		else if (X == "V")
 			Bars[7] = Minor ? (Before != "iv" && Before != "IV" ? "iv V" : "VI V") : Before == "iv" ? "bVI V" : Before != "IV" ? "IV V" :
 				"ii V";
 		else if (X == "IV" && !Minor)
@@ -770,7 +775,7 @@ std::string EnrichedProgression(const std::string &Progression, bool Minor)
 // change chords 1.56 times a bar, a third of them from outside the key, 7 kinds of those in a song; the walks' 1.02, 2)
 std::string NextProgression(int Kind, bool Minor, bool B, bool Dorian)
 {
-	return EnrichedProgression(PlainProgression(Kind, Minor, B, Dorian), Minor);
+	return EnrichedProgression(PlainProgression(Kind, Minor, B, Dorian), Minor, Dorian && Minor);
 }
 
 namespace {

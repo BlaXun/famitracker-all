@@ -874,7 +874,7 @@ private:
 					}
 			}
 			for (int Pass = 0; Pass < 2 && Best < 0; ++Pass)
-				for (int p = m_MotifMax + 1; p <= std::min(m_Q.High, m_MotifMax + 12); ++p) {
+				for (int p = m_MotifMax + 1; p <= std::min(m_Q.High, m_Q.Over >= 0 ? m_Q.Over + 7 : m_MotifMax + 12); ++p) {
 					if (!Allowed(p, At, Length) || (Pass == 0 && !FitsChords(p, Chords)) || Rubs(p, At, Length))
 						continue;
 					const double Cost = std::abs(p - m_MotifMax - Wanted) + (p - m_MotifMax < 2 ? 3.0 : 0.0) +

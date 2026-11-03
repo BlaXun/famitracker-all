@@ -32868,14 +32868,9 @@ bool TryWriteHearing(Session &Now, const std::string &Tool, const Json &Args, in
 		return false;
 	Dry.Overlay = true;
 	Session After(Dry);
-	if (!Hears(After)) {
-		if (std::getenv("WHAT_NEXT_DRY") != 0)	// DEBUG-VARIETY
-			std::fprintf(stderr, "dry %s %s: not heard as wanted\n", Tool.c_str(), WriteJson(Args).c_str());
+	if (!Hears(After))
 		return false;
-	}
 	Added = ClashesIn(After, FromBar, ToBar, Melody) - ClashesIn(Now, FromBar, ToBar, Melody);
-	if (std::getenv("WHAT_NEXT_DRY") != 0)	// DEBUG-VARIETY (to see what what_next tried)
-		std::fprintf(stderr, "dry %s %s: %d clashes added\n", Tool.c_str(), WriteJson(Args).c_str(), Added);
 	return true;
 }
 
@@ -34837,12 +34832,18 @@ void WhatNext::GrowForm()
 		else if (m_HasMelody) {
 			// A climax: A again where its tune can go an octave up (check_song's climax finding lifts it), else A's chords and
 			// bass alone, for a tune of its own that climbs
+			// (and where A an octave up peaks a fifth over the tune before it at the most, from feat-variety: with the tunes an
+			// octave lower, A an octave up fit under CLIMAX_TOP and peaked a sixth and more over the song)
 			const ChannelInfo &Info = S.Channel(m_Melody);
-			int Top = -1;
+			int Top = -1, Over = -1;
 			for (const NoteInfo &N : S.Notes(m_Melody))
-				if (N.Row >= S.Time.BarStart(First.FirstBar) && N.Row < S.Time.BarEnd(First.LastBar) && N.Volume > 0)
-					Top = std::max(Top, LandedPitch(N) - Written(Info, 0));
-			Backing = Top < 0 || Top + 12 > CLIMAX_TOP;
+				if (N.Volume > 0 && N.Row < S.Time.BarStart(P.FirstBar)) {
+					const int Pitch = LandedPitch(N) - Written(Info, 0);
+					Over = std::max(Over, Pitch);
+					if (N.Row >= S.Time.BarStart(First.FirstBar) && N.Row < S.Time.BarEnd(First.LastBar))
+						Top = std::max(Top, Pitch);
+				}
+			Backing = Top < 0 || Top + 12 > CLIMAX_TOP || Top + 12 > Over + 7;
 		}
 	}
 	const FormPart &From = m_Form[static_cast<size_t>(Source)];
@@ -34914,7 +34915,11 @@ void WhatNext::GrowForm()
 	};
 	const std::string AChords = m_Picks.ChordStyle.Value, ABass = m_Picks.BassStyle.Value;
 	// (lush chords stay lush: they get their colors once the tune is there, WhatNext::Colors, which hears one chord part)
-	const std::string BChords = Voiced || m_Like.Found || AChords == "lush" ? AChords : OtherOf(Kind().ChordStyles, AChords);
+	// (nor another style that arpeggiates with 0xy, which carries on into A's chords copied after B unless they set it
+	// back: A's broken chords sounded B's arpeggio in the climax)
+	std::string BChords = Voiced || m_Like.Found || AChords == "lush" ? AChords : OtherOf(Kind().ChordStyles, AChords);
+	if (BChords == "arpeggio" && AChords != "arpeggio")
+		BChords = AChords;
 	const std::string BBass = m_Like.Found ? ABass : Kind().MovingBass != 0 && *Kind().MovingBass && ABass != Kind().MovingBass ?
 		std::string(Kind().MovingBass) : OtherOf(Kind().BassStyles, ABass);
 	B.Set("chord_style", Voiced ? "voices" : BChords.c_str());
@@ -35557,7 +35562,7 @@ bool WhatNext::Develop()
 						Top = std::max(Top, N.Pitch - Lift);
 					// (a step to a fifth over A's top, from feat-variety: with the tunes lower, an octave up under CLIMAX_TOP
 					// could climb a sixth and more over A)
-					if (Top < 0 || Top + 12 > CLIMAX_TOP || Top + 12 + Lift <= D.ATop || Top + 12 + Lift > D.ATop + 7)
+					if (Top < 0 || Top + 12 > CLIMAX_TOP || Top + 12 + Lift <= D.ATop)
 						continue;
 					Json V = Json::MakeObject();
 					V.Set("channel", ChannelName(m_Melody));
@@ -36986,7 +36991,10 @@ void WhatNext::Fill()
 		auto Shared = [&](const SongDevelopment &D) {
 			std::map<std::string, int> Count;
 			for (size_t p = 1; p < D.Parts.size(); ++p) {
-				const std::set<std::string> Own(D.Parts[p].Devices.begin(), D.Parts[p].Devices.end());
+				// (not "chords resting": a line filled into A that its later parts don't play reads so in each of them, from
+				// feat-variety, where A was the thinnest part of a tense walk and every fill there was refused)
+				std::set<std::string> Own(D.Parts[p].Devices.begin(), D.Parts[p].Devices.end());
+				Own.erase("chords resting");
 				for (std::set<std::string>::const_iterator it = Own.begin(); it != Own.end(); ++it)
 					++Count[*it];
 			}

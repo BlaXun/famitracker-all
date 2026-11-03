@@ -201,7 +201,7 @@ bool KindWantsMinor(int Kind);
 std::string NextProgression(int Kind, bool Minor, bool B, bool Dorian = false);
 // A progression of eight bars, a chord a bar, with its cadences on the half bar (the fourth bar into the fifth, the last into
 // the loop) and a chord from outside the key in bar 6 or 7 (feat-variety); one written with half bars stays as it is
-std::string EnrichedProgression(const std::string &Progression, bool Minor);
+std::string EnrichedProgression(const std::string &Progression, bool Minor, bool Dorian = false);
 
 // A note of the phrase ExampleTune offers: its bar (from 1), its beat in the
 // bar (from 1), how long it lasts in beats, and its pitch as written on a pulse

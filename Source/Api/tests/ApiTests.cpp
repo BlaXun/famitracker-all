@@ -20856,7 +20856,10 @@ void TestWhatNextLoop()
 		}
 		// (and a climax whose tune can't go an octave up grows one of its own, from feat-shape-variations)
 		const std::string Other = Motifs.count("B") == 1 ? "B" : "Climax";
-		Check(Motifs.size() >= 2 && Motifs.size() <= 3 && Motifs.count("A") == 1 && Motifs.count(Other) == 1, K.Asked, __LINE__);
+		// (A's first phrase may be ExampleTune's, written, where no offered hook grows over A's chords without a clash: then
+		// its later bars grow from it, feat-variety)
+		Check(Motifs.size() >= 2 && Motifs.size() <= 3 && (Motifs.count("A") == 1 || CallIndex(Made, "write_notes") >= 0) &&
+			Motifs.count(Other) == 1, K.Asked, __LINE__);
 		// (a part of its own, B, from a hook unlike A's, and a climax's climbing over A's top: fix-melody-roles)
 		Reused += Motifs["A"] == Motifs[Other] ? 1 : 0;
 		CheckMelodyContrast(Song, Made, K.Asked, __LINE__);
@@ -30436,7 +30439,7 @@ void TestRecipesAgree()
 			CHECK(Contains(NextProgression(k, true, false, true), "| IV |"));
 			CHECK_EQ(NextProgression(k, true, false, false), EnrichedProgression(NextKindInfo(k).ProgMinor[0], true));
 		}
-	CHECK_EQ(NextProgression(NEXT_MYSTERIOUS, true, false, true), EnrichedProgression("| i | IV | III | VII | i | IV | v | VII |", true));
+	CHECK_EQ(NextProgression(NEXT_MYSTERIOUS, true, false, true), EnrichedProgression("| i | IV | III | VII | i | IV | v | VII |", true, true));
 	const char *const NAMES[] = { "Old Mill", "Brook", "Hollow", "Lantern Row" };
 	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k) {
 		const NextKind &K = NextKindInfo(k);
