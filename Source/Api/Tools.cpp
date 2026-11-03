@@ -34918,7 +34918,9 @@ void WhatNext::GrowForm()
 	// (nor another style that arpeggiates with 0xy, which carries on into A's chords copied after B unless they set it
 	// back: A's broken chords sounded B's arpeggio in the climax)
 	std::string BChords = Voiced || m_Like.Found || AChords == "lush" ? AChords : OtherOf(Kind().ChordStyles, AChords);
-	if (BChords == "arpeggio" && AChords != "arpeggio")
+	// (nor a lively stage's: the lively mix moves a chord layer as a whole, and A's and B's figures on one channel at one
+	// level left A's chords over the place they keep under the tune)
+	if ((BChords == "arpeggio" && AChords != "arpeggio") || std::string(Kind().Style) == "lively")
 		BChords = AChords;
 	std::string BBass = m_Like.Found ? ABass : Kind().MovingBass != 0 && *Kind().MovingBass && ABass != Kind().MovingBass ?
 		std::string(Kind().MovingBass) : OtherOf(Kind().BassStyles, ABass);
