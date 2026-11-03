@@ -1000,11 +1000,20 @@ void Ears::Measure()
 				Levels.push_back(Level);
 			if (P.Pitched && N.Hz > 0.0 && N.Steady) {
 				m_Tracks[p][i] = TrackNote(Clean, S.Rate, N.Begin, N.End, N.Hz);
-				// Measured both ways on a shared pin: as rendered and with the bleed taken out, the steadier one heard
-				if (Shared && m_Tracks[p][i].Pitch.Wobbles) {
+				// Measured both ways on a shared pin: as rendered and with the bleed taken out, the steadier one heard. A note off
+				// its pitch too (from fix-depth-bugs): the noise's hits don't bleed in proportion either (the pin compresses the
+				// triangle's steps by the noise's level, sample by sample), so taking the noise's share out of the Clockwork
+				// Factory's triangle put two of its octave bass notes 77-137 cents off, which the render alone holds in tune; the
+				// one nearer its pitch is heard
+				const ListenPitch &Cleaned = m_Tracks[p][i].Pitch;
+				const bool Off = Cleaned.Valid && !Cleaned.Wobbles && std::fabs(Cleaned.Steady) >= TUNE_CENTS;
+				if (Shared && (Cleaned.Wobbles || Off)) {
 					Track Raw = TrackNote(P.Samples, S.Rate, N.Begin, N.End, N.Hz);
-					if (Raw.Pitch.Valid && (!Raw.Pitch.Wobbles ||
-						Raw.Pitch.High - Raw.Pitch.Low < m_Tracks[p][i].Pitch.High - m_Tracks[p][i].Pitch.Low))
+					if (Cleaned.Wobbles) {
+						if (Raw.Pitch.Valid && (!Raw.Pitch.Wobbles || Raw.Pitch.High - Raw.Pitch.Low < Cleaned.High - Cleaned.Low))
+							m_Tracks[p][i] = Raw;
+					}
+					else if (Raw.Pitch.Valid && !Raw.Pitch.Wobbles && std::fabs(Raw.Pitch.Steady) < std::fabs(Cleaned.Steady))
 						m_Tracks[p][i] = Raw;
 				}
 			}

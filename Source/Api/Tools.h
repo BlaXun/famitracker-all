@@ -202,6 +202,8 @@ private:
 	// Then the agent log (AgentLog.h): the change lines and errors AfterCall added are written next to the song, and a
 	// client hears of notes from the user it hasn't read
 	void AfterLog(const std::string &Name, const Json &Args, ToolResult &Result, const Caller &Who);
+	// A client's change names the song it changed (from fix-depth-bugs)
+	void NameChangedSong(const std::string &Name, const Json &Args, ToolResult &Result, const Caller &Who);
 
 	SongHost &m_Host;
 	std::vector<ToolInfo> m_Tools;

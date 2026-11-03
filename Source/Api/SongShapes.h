@@ -74,6 +74,9 @@ const SongShape &ShapeForKind(const std::string &Kind);
 // The same for a track of that name: the shape its name asks for when that's one of the kind's that loops (a "Shop" or
 // "A first small song" gets the general recipe's short loop instead of its town), else the kind's own
 const SongShape &ShapeForKind(const std::string &Kind, const std::string &TrackName);
+// A shape's title as a kind lays it out (from fix-depth-bugs): "Calm night" for kind mysterious is "Mysterious night"; the
+// title as it is where the kind is its own or none
+std::string KindShapeTitle(const SongShape &Shape, const std::string &Kind);
 
 // What a section is for, in plain words: its line in the shape when it's one
 // of its parts (pShape null: none), else what its name says (Intro, A, A',
@@ -106,7 +109,8 @@ struct ShapeRequest {
 	int Roll;				// song_shape's seed argument, 1 when none
 	std::string Kind;		// what_next's kind given to song_shape (from feat-depth-back): its shape when no shape is named, and no
 							// other kind read from the words
-	ShapeRequest() : Bars(0), Variant(0), Seed(0), Roll(1) {}
+	bool KindKept;			// Kind is the one what_next was last given for the track, not song_shape's argument
+	ShapeRequest() : Bars(0), Variant(0), Seed(0), Roll(1), KindKept(false) {}
 };
 
 struct ShapeChoice {

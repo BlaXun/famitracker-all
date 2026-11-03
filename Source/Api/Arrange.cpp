@@ -85,7 +85,7 @@ const std::vector<StyleInfo> &BrokenPatterns()
 const std::vector<StyleInfo> &BassStyles()
 {
 	static const std::vector<StyleInfo> STYLES = {
-		{ "root_fifth", "the root, then the fifth halfway through the bar", "rootfifth|default|twofeel|countryboom" },
+		{ "root_fifth", "the root, then the fifth halfway through the bar", "rootfifth|default|twofeel|countryboom|rootfive|oompah|boompah|rootfifths|rootsfifths" },
 		{ "roots", "the root held for each chord: plain and calm", "root|held|whole|sustained|plain" },
 		{ "half", "the root every half bar", "halves|halfnotes" },
 		{ "octaves", "the root jumping between octaves every half beat: energetic, disco, action", "octave|disco|jumping|bounce" },
@@ -172,7 +172,27 @@ int FindStyle(const std::vector<StyleInfo> &Styles, const std::string &Name)
 			From = To + 1;
 		}
 	}
-	return -1;
+	// Said in words (from fix-depth-bugs: "root and fifth" was refused for root_fifth): the words without the ones that only
+	// join or name the part ("and", "the", "bass", "line", "style", "pattern")
+	static const char *const FILLERS[] = { "and", "the", "a", "bass", "line", "bassline", "style", "pattern" };
+	std::string Words, Word;
+	bool Dropped = false;
+	for (size_t i = 0; i <= Name.size(); ++i) {
+		const unsigned char c = i < Name.size() ? static_cast<unsigned char>(Name[i]) : ' ';
+		if (std::isalnum(c) || c == '/') {
+			Word += static_cast<char>(std::tolower(c));
+			continue;
+		}
+		bool Filler = false;
+		for (size_t f = 0; f < sizeof(FILLERS) / sizeof(FILLERS[0]) && !Filler; ++f)
+			Filler = Word == FILLERS[f];
+		if (Filler)
+			Dropped = true;
+		else
+			Words += (Words.empty() || Word.empty() ? "" : " ") + Word;
+		Word.clear();
+	}
+	return Dropped && !Simple(Words).empty() ? FindStyle(Styles, Words) : -1;
 }
 
 std::vector<std::string> StyleNames(const std::vector<StyleInfo> &Styles)
@@ -704,12 +724,16 @@ std::vector<PartNote> ChordPart(const std::vector<ChordAt> &Chords, const std::v
 		int Near = O.Pattern == BROKEN_ROLLING ? Low + 2 : Middle;
 		for (size_t s = 0; s < Segs.size(); ++s) {
 			const Segment &S = Segs[s];
-			std::vector<int> Tones = BrokenTones(S.pChord->C, O.Pattern, Near, Low, High, O.RootInBass, RoomFor(O, S.Row, S.End));
-			if (O.Lowest >= 0) {
+			const Room Space = RoomFor(O, S.Row, S.End);
+			std::vector<int> Tones = BrokenTones(S.pChord->C, O.Pattern, Near, Low, High, O.RootInBass, Space);
+			// Never on the bass's notes or under them (from fix-depth-bugs): where the melody sits low the room's ceiling pushed
+			// the Mossy Forest's broken chords down to the triangle's top note, D-2 on D-2; a tone there goes an octave up
+			const int Least = std::max(O.Lowest, Space.Bass > -1000 ? Space.Bass + BASS_ROOM : -1);
+			if (Least >= 0) {
 				// Out of the mud: a tone under the floor an octave up (or two), the chord's shape filled out again where
 				// two of its tones then meet
 				for (size_t t = 0; t < Tones.size(); ++t)
-					while (Tones[t] < O.Lowest && Tones[t] + 12 < PITCHES)
+					while (Tones[t] < Least && Tones[t] + 12 < PITCHES)
 						Tones[t] += 12;
 				std::sort(Tones.begin(), Tones.end());
 				Tones.erase(std::unique(Tones.begin(), Tones.end()), Tones.end());
