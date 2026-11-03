@@ -266,8 +266,10 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 	// -beats: each song's melody notes on strong beats that are off the chord there (OffChordBeats), for calibrating
-	// check_song's off_chord: the folder's songs (or one .ftm file given), then keep/ and flag/, every track
-	if (argc > 2 && std::string(argv[2]) == "-beats") {
+	// check_song's off_chord: the folder's songs (or one .ftm file given), then keep/ and flag/, every track. -seams: each
+	// seam's lead-in and downbeat (FindLeadIns), for calibrating check_song's lead_in, the same way
+	if (argc > 2 && (std::string(argv[2]) == "-beats" || std::string(argv[2]) == "-seams")) {
+		const bool Seams = std::string(argv[2]) == "-seams";
 		std::vector<std::string> Files;
 		if (Folder.size() > 4 && Folder.substr(Folder.size() - 4) == ".ftm")
 			Files.push_back(Folder);
@@ -288,7 +290,7 @@ int main(int argc, char *argv[])
 				if (!Song.Load(Files[i], t, Error))
 					continue;
 				ToolSet Tools(Song);
-				std::printf("%s track %d: %s\n", Files[i].c_str(), t + 1, Tools.StrongBeats().c_str());
+				std::printf("%s track %d: %s\n", Files[i].c_str(), t + 1, (Seams ? Tools.Seams() : Tools.StrongBeats()).c_str());
 			}
 		}
 		return 0;

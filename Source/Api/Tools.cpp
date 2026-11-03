@@ -14974,6 +14974,507 @@ std::vector<StrongBeatMove> PlanStrongBeats(Session &S, int Melody, int FromBar,
 	return Out;
 }
 
+
+// Seams (from feat-seams): where a section or the loop starts, the melody's last notes before its downbeat lead the ear
+// into it. The user heard two songs that passed every check as off there: Frozen Lake (variety)'s intro ends on a lone
+// D-4 on beat 3 over Pulse 1's broken F#m7 (a semitone over its C#, though no two notes sound together, so check_song
+// heard no clash) cut a beat before A's first note, and Lava Forge (variety)'s pickup into A (F#3, then A-3 scooped to
+// B-3) sat over the intro's C chord, a semitone under its G and under its C. A lead-in is the melody's notes sounding in
+// the SEAM_WINDOW_BEATS before the downbeat (the song's end for the loop's seam, as the loop wraps); a note heard there
+// SEAM_HEARD_BEATS or more rubs when its pitch class isn't a tone of the chord the parts beside the melody sound in its
+// half bar (HearChords on ChordPartsBeside, so a broken chord is heard as its chord) and is a semitone from one of that
+// chord's tones they sound there (a semitone, a minor ninth or a major seventh as it sounds). The downbeat's own note is
+// heard against the chord there the same way
+const double SEAM_WINDOW_BEATS = 2.0, SEAM_HEARD_BEATS = 0.5;
+
+struct SeamNote {
+	int Note;			// into the melody's pitched notes
+	int Pitch;			// where it lands (LandedPitch)
+	int From, End;		// the rows it sounds in the lead-in (End at most the downbeat or the song's end)
+	int Rubs;			// the pitch class of the chord's tone it rubs, -1 for none
+	Chord C;			// the chord it rubs (else the one where it starts)
+	bool HasChord;
+	bool Resolves;		// the melody's next note steps from it (a semitone or a tone) within half a beat of its end
+	SeamNote() : Note(-1), Pitch(0), From(0), End(0), Rubs(-1), HasChord(false), Resolves(false) {}
+};
+
+struct LeadIn {
+	int Target;				// the downbeat: the song row where the section or the loop starts
+	int Before;				// the row the lead-in runs up to: Target, or for the loop's seam the song's end
+	bool Loop;				// the loop's seam: the song's end into the loop's start, as it wraps
+	std::string Name;		// what starts there: a section's name, or "the loop"
+	std::vector<SeamNote> Notes;
+	bool Pickup;			// the lead-in starts after a rest of a beat or more in the melody (or nothing before it)
+	int Gap;				// rows from the last lead-in note's end to Before, the melody silent
+	int Down;				// the downbeat's melody note (into the pitched notes), -1 for none
+	int DownPitch, DownRubs;
+	int DownRows;			// how long the downbeat's note sounds
+	bool DownResolves;		// it steps on to the next note (as SeamNote::Resolves)
+	Chord DownChord;
+	LeadIn() : Target(0), Before(0), Loop(false), Pickup(false), Gap(0), Down(-1), DownPitch(0), DownRubs(-1), DownRows(0),
+		DownResolves(false) {}
+};
+
+// The chord the parts beside the melody (ChordPartsBeside) sound in the half bar holding Row, and the pitch classes they
+// sound there (Sounded); false when they sound none
+bool SeamChordAt(Session &S, int Melody, int Row, const Key &K, Chord &Out, std::set<int> &Sounded)
+{
+	Sounded.clear();
+	const int Bar = S.Time.BarOf(Row), Start = S.Time.BarStart(Bar), Length = S.Time.BarLength(Bar);
+	const int Half = std::max(1, Length / 2), Total = S.Time.TotalRows();
+	const int First = Row - Start >= Half ? Start + Half : Start, End = std::min(Total, First == Start ? Start + Half : Start + Length);
+	if (First >= End)
+		return false;
+	const std::vector<int> Parts = ChordPartsBeside(S, Melody, Start, std::min(Total, Start + Length));
+	std::vector<HeardNote> Heard;
+	for (size_t p = 0; p < Parts.size(); ++p)
+		AddHeardNotes(S, Parts[p], First, End, Heard);
+	for (size_t h = 0; h < Heard.size(); ++h)
+		if (Heard[h].Row < End && Heard[h].Row + Heard[h].Rows > First && Heard[h].Weight > 0)
+			Sounded.insert(Heard[h].PitchClass);
+	if (Sounded.empty())
+		return false;
+	const std::vector<ChordAt> Chords = HearChords(Heard, std::vector<BarSpan>(1, BarSpan(First, End - First)),
+		std::max(1, S.Time.RowsPerBeat), K, false);
+	const ChordAt *pAt = ChordAtRow(Chords, Row);
+	if (pAt == 0 && Chords.empty())
+		return false;
+	Out = pAt != 0 ? pAt->C : Chords.front().C;
+	return true;
+}
+
+// The tone of C a pitch class rubs: not one of C's tones, a semitone from one the parts sound (Sounded); -1 for none
+int SeamRub(const Chord &C, const std::set<int> &Sounded, int Class)
+{
+	if (C.HasPitchClass(Class))
+		return -1;
+	const std::vector<int> Tones = C.PitchClasses();
+	for (size_t t = 0; t < Tones.size(); ++t)
+		if (Sounded.count(Tones[t]) > 0 && (ClassOf(Class - Tones[t]) == 1 || ClassOf(Tones[t] - Class) == 1))
+			return Tones[t];
+	return -1;
+}
+
+// Whether Pitch rubs on the rows [From, End) as a lead-in note of Melody: against the chord of each half bar it sounds in
+// (SeamRub), the first such chord in C and its tone in Tone
+bool SeamPitchRubs(Session &S, int Melody, int Pitch, int From, int End, const Key &K, Chord &C, int &Tone)
+{
+	Tone = -1;
+	for (int Row = From; Row < End; ) {
+		Chord Here;
+		std::set<int> Sounded;
+		if (SeamChordAt(S, Melody, Row, K, Here, Sounded)) {
+			const int t = SeamRub(Here, Sounded, ClassOf(Pitch - Written(S.Channel(Melody), 0)));
+			if (t >= 0) {
+				C = Here;
+				Tone = t;
+				return true;
+			}
+		}
+		const int Bar = S.Time.BarOf(Row), Start = S.Time.BarStart(Bar), Half = std::max(1, S.Time.BarLength(Bar) / 2);
+		Row = Row - Start >= Half ? S.Time.BarEnd(Bar) : Start + Half;
+	}
+	return false;
+}
+
+// The seams of the song: every section's start after the first (the downbeat reached from the bars before it), the loop's
+// start the first time where no section starts there, and the loop's seam (the song's end into the loop's start)
+std::vector<LeadIn> FindLeadIns(Session &S, int Melody, const Key &K)
+{
+	std::vector<LeadIn> Out;
+	if (Melody < 0 || Melody >= S.ChannelCount() || !IsMelodic(S.Channel(Melody)) || S.Channel(Melody).Kind == KIND_DPCM)
+		return Out;
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = PitchedNotes(S, Melody, Kept);
+	const int R = std::max(1, S.Time.RowsPerBeat), Total = S.Time.TotalRows();
+	const SongFlow F = Flow(S);
+	const int LoopRow = F.Halts() ? -1 : F.LoopRow(S.Time.PatternLength);
+	const int EndRow = F.Halts() ? Total : std::min(Total, F.EndRow(S.Time.PatternLength));
+	std::vector<LeadIn> Wants;
+	bool AtLoop = false;
+	for (size_t i = 0; i < S.Song.Sections.size(); ++i) {
+		const int Row = S.Time.BarStart(SectionFirstBar(S, S.Song.Sections[i]));
+		if (Row <= 0 || Row >= EndRow)
+			continue;
+		LeadIn L;
+		L.Target = L.Before = Row;
+		L.Name = S.Song.Sections[i].Name;
+		Wants.push_back(L);
+		AtLoop = AtLoop || Row == LoopRow;
+	}
+	if (LoopRow > 0 && !AtLoop) {
+		LeadIn L;
+		L.Target = L.Before = LoopRow;
+		L.Name = "the loop";
+		Wants.push_back(L);
+	}
+	if (LoopRow >= 0 && EndRow > LoopRow) {
+		LeadIn L;
+		L.Target = LoopRow;
+		L.Before = EndRow;
+		L.Loop = true;
+		L.Name = "the loop";
+		Wants.push_back(L);
+	}
+	const ChannelInfo &Info = S.Channel(Melody);
+	for (size_t w = 0; w < Wants.size(); ++w) {
+		LeadIn L = Wants[w];
+		const int Window = std::max(0, L.Before - static_cast<int>(SEAM_WINDOW_BEATS * R + 0.5));
+		for (size_t i = 0; i < Notes.size(); ++i) {
+			const NoteInfo &N = Notes[i];
+			if (N.Row >= L.Before)
+				break;
+			const int End = std::min(N.Row + std::max(1, N.Rows), L.Before);
+			if (N.Volume <= 0 || N.Row < Window)
+				continue;	// (a note held on into the lead-in from before it ends a phrase: MudCave's G#3 held over Cm into B)
+			SeamNote Note;
+			Note.Note = static_cast<int>(i);
+			Note.Pitch = LandedPitch(N);
+			Note.From = N.Row;
+			Note.End = End;
+			// (heard against the chord where it starts: a note held on from a chord it belongs to is that chord's)
+			const int Bar = S.Time.BarOf(N.Row), Start = S.Time.BarStart(Bar), Half = std::max(1, S.Time.BarLength(Bar) / 2);
+			const int HalfEnd = N.Row - Start >= Half ? S.Time.BarEnd(Bar) : Start + Half;
+			if (End - N.Row >= SEAM_HEARD_BEATS * R - 1e-9)
+				Note.HasChord = SeamPitchRubs(S, Melody, Note.Pitch, N.Row, std::min(End, HalfEnd), K, Note.C, Note.Rubs);
+			L.Notes.push_back(Note);
+		}
+		// The downbeat's note: the melody's first starting within half a beat of it
+		for (size_t i = 0; i < Notes.size() && Notes[i].Row <= L.Target + R / 2; ++i)
+			if (Notes[i].Row >= L.Target && Notes[i].Volume > 0) {
+				L.Down = static_cast<int>(i);
+				break;
+			}
+		if (L.Notes.empty() || L.Down < 0)
+			continue;	// (no lead-in, or nothing it leads to: a section starting on a rest)
+		const NoteInfo &FirstIn = Notes[static_cast<size_t>(L.Notes.front().Note)];
+		const int Previous = L.Notes.front().Note - 1;	// the melody's note before the lead-in
+		L.Pickup = FirstIn.Row >= Window && (Previous < 0 || Notes[static_cast<size_t>(Previous)].Row +
+			std::max(1, Notes[static_cast<size_t>(Previous)].Rows) <= FirstIn.Row - R);
+		L.Gap = L.Before - L.Notes.back().End;
+		// Each note's next: the lead-in's next, then the downbeat's note (across the loop's wrap), else the melody's next
+		for (size_t n = 0; n < L.Notes.size(); ++n) {
+			SeamNote &Note = L.Notes[n];
+			int NextPitch = -1, NextRow = 0;
+			if (n + 1 < L.Notes.size()) {
+				NextPitch = L.Notes[n + 1].Pitch;
+				NextRow = Notes[static_cast<size_t>(L.Notes[n + 1].Note)].Row;
+			}
+			else if (L.Down >= 0) {
+				NextPitch = LandedPitch(Notes[static_cast<size_t>(L.Down)]);
+				NextRow = L.Before;
+			}
+			else if (!L.Loop && static_cast<size_t>(Note.Note) + 1 < Notes.size()) {
+				NextPitch = LandedPitch(Notes[static_cast<size_t>(Note.Note) + 1]);
+				NextRow = Notes[static_cast<size_t>(Note.Note) + 1].Row;
+			}
+			// (by its pitch class: Nightshade Wood's G-5 over Bsus4 goes on to F#6)
+			const int Step = std::min(ClassOf(NextPitch - Note.Pitch), ClassOf(Note.Pitch - NextPitch));
+			Note.Resolves = NextPitch >= 0 && Step >= 1 && Step <= 2 && NextRow <= Note.End + R / 2;
+		}
+		if (L.Down >= 0) {
+			const NoteInfo &D = Notes[static_cast<size_t>(L.Down)];
+			L.DownPitch = LandedPitch(D);
+			L.DownRows = D.Rows;
+			if (static_cast<size_t>(L.Down) + 1 < Notes.size()) {
+				const NoteInfo &Next = Notes[static_cast<size_t>(L.Down) + 1];
+				const int Step = std::min(ClassOf(LandedPitch(Next) - L.DownPitch), ClassOf(L.DownPitch - LandedPitch(Next)));
+				L.DownResolves = Step >= 1 && Step <= 2 && Next.Row <= D.Row + D.Rows + R / 2;
+			}
+			Chord C;
+			int Tone = -1;
+			if (D.Rows >= SEAM_HEARD_BEATS * R - 1e-9 && SeamPitchRubs(S, Melody, L.DownPitch, D.Row, std::min(D.Row + D.Rows,
+				D.Row + R), K, C, Tone)) {
+				L.DownRubs = Tone;
+				L.DownChord = C;
+			}
+		}
+		(void)Info;
+		Out.push_back(L);
+	}
+	return Out;
+}
+
+// What makes a seam worth fixing (from feat-seams), measured with song_file_checks -seams on the 44 songs the user keeps
+// (songs/regress/keep) and the soundtrack's first 30 (gen4/first30). A lead-in note that rubs (SeamRub) and doesn't step
+// on to the note after it by a semitone or a tone (as an appoggiatura does: 002 Saveroom's F-4 over C7 to E-4, Rail
+// Rattle's C-4 over G to B-3, Nightshade Wood's G-5 over Bsus4 to F#6) where the seam has a downbeat note: none of theirs,
+// while Frozen Lake's D-4 over F#m7 (to A-3) and Lava Forge's F#3 and B-3 over C (to G-3) do. A pickup (after a rest of a
+// beat or more) that stops before the downbeat leaves the melody silent there: theirs leave a beat at most (011
+// NewCityRandomHouse's lone A-4 a beat before A-3, Sunless Deep's calm pickups), so SEAM_GAP_BEATS (a calm song's
+// SEAM_CALM_GAP_BEATS: it may breathe) or more is a gap. The downbeat's note rubbing the chord there for SEAM_DOWN_BEATS
+// or more without stepping on: none of theirs (010 Mines' B-2 over C lasts half a beat)
+const double SEAM_GAP_BEATS = 1.5, SEAM_CALM_GAP_BEATS = 2.0, SEAM_DOWN_BEATS = 1.0;
+
+struct SeamTrouble {
+	std::vector<size_t> Rubs;	// into the lead-in's notes
+	bool Gap, Down;
+	SeamTrouble() : Gap(false), Down(false) {}
+	bool Any() const { return !Rubs.empty() || Gap || Down; }
+};
+
+SeamTrouble TroubleOf(const Session &S, const LeadIn &L, int Style)
+{
+	SeamTrouble T;
+	const int R = std::max(1, S.Time.RowsPerBeat);
+	for (size_t n = 0; n < L.Notes.size(); ++n)
+		if (L.Notes[n].Rubs >= 0 && !L.Notes[n].Resolves)
+			T.Rubs.push_back(n);
+	T.Gap = L.Pickup && L.Gap >= (Style == STYLE_CALM ? SEAM_CALM_GAP_BEATS : SEAM_GAP_BEATS) * R - 1e-9;
+	T.Down = L.DownRubs >= 0 && L.DownRows >= SEAM_DOWN_BEATS * R - 1e-9 && !L.DownResolves;
+	return T;
+}
+
+// A change polish's seams touch makes: a note of Channel at Row moves From -> To (its scoop or slide as it starts taken
+// out), and (Hold) the end that cut it at Cut taken out so it holds to HoldTo
+struct SeamMove {
+	int Channel, Row, From, To;
+	int Cut, HoldTo;			// -1 for none
+	bool Echo;					// an echo's copy of a melody note moved
+	bool Down;					// the downbeat's own note (it rubbed the chord there)
+	bool Into;					// held into the downbeat (else to half a beat before it)
+	std::string Where;			// the seam: "A (bar 5)", "the loop (bars 48-5)"
+	Chord C;
+	SeamMove() : Channel(-1), Row(0), From(0), To(0), Cut(-1), HoldTo(-1), Echo(false), Down(false), Into(false) {}
+};
+
+std::string SeamWhere(const Session &S, const LeadIn &L)
+{
+	return L.Loop ? Format("the loop's seam (bar %d into bar %d)", S.Time.BarOf(L.Before - 1), S.Time.BarOf(L.Target)) :
+		Format("%s%s%s (bar %d)", L.Name == "the loop" ? "" : "\"", L.Name.c_str(), L.Name == "the loop" ? "'s start" : "\"",
+		S.Time.BarOf(L.Target));
+}
+
+// The nearest pitch to Pitch, within six semitones, that's a tone of C and rubs nothing on the rows [From, End) (the
+// chords there, SeamPitchRubs, and every other part's notes, RubsAgainstOthers) in the channel's range: on Side of Target
+// (1 above, -1 below, 0 either) where one is, never Target's pitch itself unless nothing else is (it would strike the
+// downbeat's note early), and not Avoid (the note before); -1 for none
+int SeamPitch(Session &S, const SoundGrid &G, int Melody, const NoteInfo &N, int Pitch, const Chord &C, int From, int End, int Target,
+	int Side, int Avoid, const Key &K)
+{
+	const ChannelInfo &Info = S.Channel(Melody);
+	int Best = -1, BestCost = 0;
+	for (int Distance = 1; Distance <= 6; ++Distance)
+		for (int Way = 1; Way >= -1; Way -= 2) {
+			const int P = Pitch + Way * Distance;
+			if (P < 0 || P >= PITCHES || !C.HasPitchClass(ClassOf(P - Written(Info, 0))) || !NoteRangeReason(S, Info, P, N.Instrument).empty())
+				continue;
+			Chord Rubbed;
+			int Tone = -1;
+			if (SeamPitchRubs(S, Melody, P, From, End, K, Rubbed, Tone) || RubsAgainstOthers(S, G, Melody, P, From, End))
+				continue;
+			const int Cost = Distance + (Side != 0 && (P - Target) * Side <= 0 ? 4 : 0) + (P == Target ? 3 : 0) + (P == Avoid ? 1 : 0);
+			if (Best < 0 || Cost < BestCost) {
+				Best = P;
+				BestCost = Cost;
+			}
+		}
+	return Best;
+}
+
+// polish's seams touch (from feat-seams): at each seam of check_song's lead_in in the bars [FromBar, ToBar] (a seam is in
+// them where its lead-in's last bar or its downbeat's is), each lead-in note that rubs moves to the nearest tone of its
+// chord that rubs nothing (SeamPitch), on the same side of the downbeat's note as it was; the lead-in's last note holds
+// into the downbeat (its release or halt taken out), or to half a beat before it where holding on would rub, where the
+// melody was silent before it; the downbeat's note itself moves only where it rubs the chord there. An echo of the melody
+// moves its copies of the notes moved with them. Left counts the seams it couldn't fix
+std::vector<SeamMove> PlanSeams(Session &S, int Melody, int FromBar, int ToBar, const Key &K, int Style, int &Left)
+{
+	std::vector<SeamMove> Out;
+	Left = 0;
+	const std::vector<LeadIn> Seams = FindLeadIns(S, Melody, K);
+	if (Seams.empty())
+		return Out;
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = PitchedNotes(S, Melody, Kept);
+	const int R = std::max(1, S.Time.RowsPerBeat), Total = S.Time.TotalRows();
+	const SoundGrid G = HearGrid(S, 0, Total);
+	std::set<int> Moved;	// the melody's rows moved
+	for (size_t s = 0; s < Seams.size(); ++s) {
+		const LeadIn &L = Seams[s];
+		const SeamTrouble T = TroubleOf(S, L, Style);
+		const int LeadBar = S.Time.BarOf(L.Before - 1), DownBar = S.Time.BarOf(L.Target);
+		if (!T.Any() || ((LeadBar < FromBar || LeadBar > ToBar) && (DownBar < FromBar || DownBar > ToBar)))
+			continue;
+		bool Fixed = true;
+		const std::string Where = SeamWhere(S, L);
+		const int Side = L.Notes.back().Pitch > L.DownPitch ? 1 : L.Notes.back().Pitch < L.DownPitch ? -1 : 0;
+		// The last note's end: held into the downbeat where the melody was silent before it
+		const SeamNote &Last = L.Notes.back();
+		const NoteInfo &LastNote = Notes[static_cast<size_t>(Last.Note)];
+		const int CutRow = LastNote.Row + LastNote.Rows;
+		const bool CanHold = L.Gap > 0 && LastNote.EndNote != NOTE_NONE && CutRow < L.Before && CutRow < Total &&
+			S.Cells(Melody)[static_cast<size_t>(CutRow)].IsEnd();
+		int Previous = L.Notes.front().Note > 0 ? Notes[static_cast<size_t>(L.Notes.front().Note) - 1].Pitch : -1;
+		for (size_t n = 0; n < L.Notes.size(); ++n) {
+			const SeamNote &Note = L.Notes[n];
+			const NoteInfo &N = Notes[static_cast<size_t>(Note.Note)];
+			const bool Rubs = std::find(T.Rubs.begin(), T.Rubs.end(), n) != T.Rubs.end();
+			const bool IsLast = n + 1 == L.Notes.size();
+			int Pitch = Note.Pitch, HoldTo = -1;
+			if (Rubs) {
+				Chord Onset = Note.C;
+				std::set<int> Sounded;
+				SeamChordAt(S, Melody, N.Row, K, Onset, Sounded);
+				// Held where it can be, else as it was
+				const int Ends[3] = { IsLast && CanHold ? L.Before : -1, IsLast && CanHold ? L.Before - R / 2 : -1, Note.End };
+				for (int e = 0; e < 3 && Pitch == Note.Pitch; ++e) {
+					if (Ends[e] <= N.Row)
+						continue;
+					const int P = SeamPitch(S, G, Melody, N, Note.Pitch, Onset, N.Row, Ends[e], L.DownPitch, IsLast ? Side : 0, Previous, K);
+					if (P >= 0) {
+						Pitch = P;
+						HoldTo = Ends[e] != Note.End ? Ends[e] : -1;
+					}
+				}
+				if (Pitch == Note.Pitch || Moved.count(N.Row) > 0) {
+					Fixed = Fixed && Moved.count(N.Row) > 0;
+					Previous = Note.Pitch;
+					continue;
+				}
+			}
+			else if (IsLast && CanHold && (T.Gap || !T.Rubs.empty())) {
+				// Only held: as far as it rubs nothing
+				Chord Rubbed;
+				int Tone = -1;
+				for (int Try = 0; Try < 2 && HoldTo < 0; ++Try) {
+					const int To = Try == 0 ? L.Before : L.Before - R / 2;
+					if (To > CutRow && !SeamPitchRubs(S, Melody, Pitch, CutRow, To, K, Rubbed, Tone) &&
+						!RubsAgainstOthers(S, G, Melody, Pitch, CutRow, To))
+						HoldTo = To;
+				}
+				if (HoldTo < 0) {
+					Fixed = Fixed && !T.Gap;
+					continue;
+				}
+			}
+			else {
+				Previous = Note.Pitch;
+				continue;
+			}
+			SeamMove M;
+			M.Channel = Melody;
+			M.Row = N.Row;
+			M.From = Note.Pitch;
+			M.To = Pitch;
+			M.Where = Where;
+			M.C = Note.C;
+			if (HoldTo > 0) {
+				M.Cut = CutRow;
+				M.HoldTo = HoldTo;
+				M.Into = HoldTo == L.Before;
+			}
+			Moved.insert(N.Row);
+			Out.push_back(M);
+			Previous = Pitch;
+			// An echo's copy of a note moved moves with it
+			if (Pitch == Note.Pitch)
+				continue;
+			const int First = S.Time.BarStart(std::max(1, LeadBar - 3)), End = std::min(Total, S.Time.BarEnd(LeadBar));
+			for (int c = 0; c < S.ChannelCount(); ++c) {
+				if (c == Melody || !IsMelodic(S.Channel(c)))
+					continue;
+				const int Delay = FollowDelay(S, c, Melody, First, End);
+				const int Row = N.Row + Delay;
+				if (Delay <= 0 || Row >= Total)
+					continue;
+				const Cell &Copy = S.Cells(c)[static_cast<size_t>(Row)];
+				const int Lift = Written(S.Channel(c), 0) - Written(S.Channel(Melody), 0);
+				if (!Copy.HasNote() || Copy.Pitch() != N.Pitch + Lift)
+					continue;
+				SeamMove E;
+				E.Channel = c;
+				E.Row = Row;
+				E.From = Copy.Pitch();
+				E.To = Pitch + Lift;
+				E.Echo = true;
+				E.Where = Where;
+				E.C = Note.C;
+				Out.push_back(E);
+			}
+		}
+		if (T.Down && Moved.count(Notes[static_cast<size_t>(L.Down)].Row) == 0) {
+			const NoteInfo &D = Notes[static_cast<size_t>(L.Down)];
+			Chord C;
+			std::set<int> Sounded;
+			int P = -1;
+			if (SeamChordAt(S, Melody, D.Row, K, C, Sounded))
+				P = SeamPitch(S, G, Melody, D, L.DownPitch, C, D.Row, std::min(D.Row + D.Rows, D.Row + R), L.DownPitch, 0,
+					L.Notes.back().Pitch, K);
+			if (P < 0)
+				Fixed = false;
+			else {
+				SeamMove M;
+				M.Channel = Melody;
+				M.Row = D.Row;
+				M.From = L.DownPitch;
+				M.To = P;
+				M.Down = true;
+				M.Where = Where;
+				M.C = C;
+				Moved.insert(D.Row);
+				Out.push_back(M);
+			}
+		}
+		if (!Fixed)
+			++Left;
+	}
+	return Out;
+}
+
+// Writes the moves into the draft's cells: the pitch (a scoop or slide on the note's row taken out, so it sounds as
+// written) and the end taken out where it holds
+void WriteSeamMoves(Session &S, Draft &D, const std::vector<SeamMove> &Moves)
+{
+	for (size_t i = 0; i < Moves.size(); ++i) {
+		const SeamMove &M = Moves[i];
+		std::vector<Cell> &Cells = D.Cells(M.Channel);
+		Cell &Here = Cells[static_cast<size_t>(M.Row)];
+		if (M.To != M.From) {
+			Here.SetPitch(M.To);
+			for (int e = 0; e < EFFECT_COLUMNS; ++e)
+				if (Here.Effect[e] == EFF_SLIDE_UP || Here.Effect[e] == EFF_SLIDE_DOWN) {
+					Here.Effect[e] = EFF_NONE;
+					Here.Param[e] = 0;
+				}
+		}
+		if (M.Cut >= 0 && M.Cut < static_cast<int>(Cells.size()) && Cells[static_cast<size_t>(M.Cut)].IsEnd()) {
+			const unsigned char End = Cells[static_cast<size_t>(M.Cut)].Note;
+			Cells[static_cast<size_t>(M.Cut)].Note = NOTE_NONE;
+			Cells[static_cast<size_t>(M.Cut)].Octave = 0;
+			// Held to half a beat before the downbeat: its end goes there
+			if (!M.Into && M.HoldTo >= 0 && M.HoldTo < static_cast<int>(Cells.size()) && M.HoldTo < S.Time.TotalRows() &&
+				!Cells[static_cast<size_t>(M.HoldTo)].HasNote() && !Cells[static_cast<size_t>(M.HoldTo)].IsEnd())
+				Cells[static_cast<size_t>(M.HoldTo)].Note = End;
+		}
+	}
+}
+
+// "D-4 into "A" (bar 5) to C#4 (F#m7), held into its downbeat; ..."
+std::string SeamMovesText(Session &S, const std::vector<SeamMove> &Moves, const Key &K)
+{
+	std::string Text;
+	int Listed = 0, Hidden = 0;
+	for (size_t i = 0; i < Moves.size(); ++i) {
+		const SeamMove &M = Moves[i];
+		if (M.Echo)
+			continue;
+		if (Listed == 4) {
+			++Hidden;
+			continue;
+		}
+		std::string Item = M.To != M.From ? Format("%s %s at %s to %s (%s)", M.Down ? "the downbeat's" : "the lead-in's",
+			PitchName(M.From).c_str(), S.Time.Position(M.Row).c_str(), PitchName(M.To).c_str(), ChordName(M.C, K).c_str()) :
+			Format("the lead-in's %s at %s", PitchName(M.From).c_str(), S.Time.Position(M.Row).c_str());
+		if (M.HoldTo >= 0)
+			Item += M.Into ? ", held into the downbeat" : ", held to half a beat before it";
+		Text += (Listed == 0 ? "" : "; ") + Item + " into " + M.Where;
+		++Listed;
+	}
+	if (Hidden > 0)
+		Text += Format("; and %d more", Hidden);
+	return Text;
+}
 // "E-4 at bar 6 beat 1 to F-4 (Dm), ..."
 std::string StrongBeatMovesText(Session &S, const std::vector<StrongBeatMove> &Moves, const Key &K)
 {
@@ -15020,9 +15521,9 @@ std::string PolishTool(Session &S, const Json &Args)
 			const std::string Word = Squeezed(Words[i]);
 			if (Word != "accents" && Word != "vibrato" && Word != "separate" && Word != "fades" && Word != "scoops" &&
 				Word != "staccato" && Word != "falls" && Word != "clicks" && Word != "clashes" && Word != "colors" && Word != "unison" &&
-				Word != "strongbeats" && Word != "duty" && Word != "fadesunder")
-				throw Problem("touches: accents, vibrato, separate, fades, fades_under, scoops, falls, staccato, duty, clicks, clashes, colors, unison "
-					"or strong_beats.");
+				Word != "strongbeats" && Word != "duty" && Word != "fadesunder" && Word != "seams")
+				throw Problem("touches: accents, vibrato, separate, fades, fades_under, scoops, falls, staccato, duty, clicks, clashes, colors, unison, "
+					"strong_beats or seams.");
 			What.insert(Word);
 		}
 	}
@@ -15191,6 +15692,27 @@ std::string PolishTool(Session &S, const Json &Args)
 					S.Channel(c).FullName().c_str()));
 		}
 	}
+	// Seams: where a section or the loop starts, the melody's lead-in notes that rub moved to the nearest chord tone that
+	// rubs nothing and its last note held into the downbeat (PlanSeams, check_song's lead_in); the melody the one given,
+	// else the song's
+	std::vector<SeamMove> Seamed;
+	int SeamsLeft = 0;
+	if (What.count("seams")) {
+		bool KeyFound = false;
+		const Key K = KeyArg(S, Args, "key", 0, S.Time.TotalRows(), KeyFound);
+		const int Lead = Arg(Args, "melody_channel") != 0 ? Melody : GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		if (Lead >= 0) {
+			Seamed = PlanSeams(S, Lead, From, To, K, Chosen.Style, SeamsLeft);
+			WriteSeamMoves(S, D, Seamed);
+			if (!Seamed.empty())
+				Done.push_back(Format("the lead-ins of %s into the downbeats a section or the loop starts on (%s)",
+					S.Channel(Lead).FullName().c_str(), SeamMovesText(S, Seamed, K).c_str()));
+			if (SeamsLeft > 0)
+				Warnings.push_back(Format("%s stayed as %s (no chord tone near that rubs nothing): write the melody's last notes "
+					"before %s again on tones of the chord, held into the downbeat (write_notes).", Plural(SeamsLeft, "seam", "seams").c_str(),
+					SeamsLeft == 1 ? "it was" : "they were", SeamsLeft == 1 ? "it" : "them"));
+		}
+	}
 	// Strong beats: the melody's notes off the chord on a strong beat with only the bass under them moved to the nearest
 	// chord tone that rubs nothing (PlanStrongBeats, check_song's off_chord); the melody the one given, else the song's
 	std::vector<StrongBeatMove> Steadied;
@@ -15338,6 +15860,12 @@ std::string PolishTool(Session &S, const Json &Args)
 		if (What.size() == 1 && What.count("unison"))
 			throw Problem("There was nothing to tune there: every note sounding another part's pitch (or an octave of it) for half "
 				"the note or a quarter of a second plays it within a few cents already, as the two chips play it.");
+		if (What.size() == 1 && What.count("seams"))
+			throw Problem(SeamsLeft > 0 ? Format("No lead-in there could change: %s, and no chord tone near rubs nothing. Write "
+				"the melody's last notes before the downbeat again on tones of the chord, held into it (write_notes).",
+				SeamsLeft == 1 ? "a seam's lead-in rubs the chord or stops short" : "the seams' lead-ins rub the chord or stop short") :
+				"There was no seam to fix there: the melody's last notes before each section and the loop's start fit the chord "
+				"under them and lead into the downbeat (check_song's lead_in).");
 		if (What.size() == 1 && What.count("strongbeats"))
 			throw Problem(SteadyLeft > 0 ? Format("No melody note there could move: %s off the chord on a strong beat with only the "
 				"bass under %s, and none has a chord tone near that rubs nothing. Write %s again on a tone of the chord (write_notes), "
@@ -16061,9 +16589,10 @@ std::string SoundEffectReview(Session &S, const TrackUse &Use)
 // loops in under 55 s; and (another model's song, GitHub issue #1) an intro whose pulse or loudness jumps into the main
 // part (IntroFinding); and (BusyFindings) a part too busy for the NES; and (DroneFindings) chords that drone against the tune
 // through the song; and (ThroughoutFindings, feat-texture) a chord part that rolls on the same way in nearly every bar of
-// the melody; and (MonotoneFindings, feat-hooks) a melody that doesn't catch. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
+// the melody; and (MonotoneFindings, feat-hooks) a melody that doesn't catch; and (SeamFindings, feat-seams) a lead-in
+// into a section or the loop that rubs or stops short. Each carries the call that fixes it where one does (the intro's may be advice alone: Fix null)
 enum arrange_kind { ARRANGE_PHRASES, ARRANGE_BASS, ARRANGE_SOUND, ARRANGE_FADERS, ARRANGE_REPEAT, ARRANGE_LOOP, ARRANGE_INTRO, ARRANGE_BUSY,
-	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_THROUGHOUT, ARRANGE_MONOTONE, ARRANGE_OFF_CHORD, ARRANGE_THIN, ARRANGE_KINDS };
+	ARRANGE_CLIMAX, ARRANGE_DRONE, ARRANGE_THROUGHOUT, ARRANGE_MONOTONE, ARRANGE_OFF_CHORD, ARRANGE_THIN, ARRANGE_LEAD_IN, ARRANGE_KINDS };
 
 struct ArrangeFinding {
 	int Kind;				// arrange_kind
@@ -18396,6 +18925,121 @@ void ThinFindings(Session &S, int Melody, int From, int To, int Style, std::vect
 	Out.push_back(F);
 }
 
+// The seams (check_song's lead_in, from feat-seams; the rule and its numbers before TroubleOf) in the bars [From, To]: the
+// melody's lead-in into a section or the loop's start that rubs the chord under it without stepping on, a pickup that
+// stops SEAM_GAP_BEATS or more before the downbeat, and the downbeat's note rubbing its chord. One finding for the song,
+// its seams in "seams"; the fix is polish's seams touch over their bars, offered where its plan changes a note and a dry
+// run of it adds no clash and leaves a seam it changed clean, else advice (Fix null)
+bool SeamFinding(Session &S, int Melody, int From, int To, int Style, const Key &K, ArrangeFinding &F)
+{
+	if (Melody < 0 || !IsMelodic(S.Channel(Melody)))
+		return false;
+	const std::vector<LeadIn> Seams = FindLeadIns(S, Melody, K);
+	const int R = std::max(1, S.Time.RowsPerBeat);
+	std::vector<NoteInfo> Kept;
+	const std::vector<NoteInfo> Notes = PitchedNotes(S, Melody, Kept);
+	std::vector<std::string> Places;
+	Json List = Json::MakeArray();
+	int FirstBar = -1, LastBar = -1;
+	for (size_t s = 0; s < Seams.size(); ++s) {
+		const LeadIn &L = Seams[s];
+		const SeamTrouble T = TroubleOf(S, L, Style);
+		const int LeadBar = S.Time.BarOf(L.Before - 1), DownBar = S.Time.BarOf(L.Target);
+		if (!T.Any() || LeadBar < From || LeadBar > To)
+			continue;
+		std::vector<std::string> What;
+		for (size_t r = 0; r < T.Rubs.size(); ++r) {
+			const SeamNote &N = L.Notes[T.Rubs[r]];
+			What.push_back(Format("%s at %s over %s, a semitone from its %s", PitchName(N.Pitch).c_str(),
+				S.Time.Position(Notes[static_cast<size_t>(N.Note)].Row).c_str(), ChordName(N.C, K).c_str(), NoteClassName(N.Rubs, K).c_str()));
+		}
+		if (T.Gap || (!T.Rubs.empty() && L.Pickup && L.Gap >= R))
+			What.push_back(Format("the lead-in stops %s before the downbeat, the melody silent there", (FormatNumber(L.Gap / static_cast<double>(R)) + (L.Gap == R ? " beat" : " beats")).c_str()));
+		if (T.Down)
+			What.push_back(Format("the downbeat's %s over %s, a semitone from its %s", PitchName(L.DownPitch).c_str(),
+				ChordName(L.DownChord, K).c_str(), NoteClassName(L.DownRubs, K).c_str()));
+		std::string Line = "into " + SeamWhere(S, L) + ": ";
+		for (size_t w = 0; w < What.size(); ++w)
+			Line += (w == 0 ? "" : w + 1 == What.size() ? " and " : ", ") + What[w];
+		Places.push_back(Line);
+		Json Item = Json::MakeObject();
+		Item.Set("into", L.Name);
+		Item.Set("loop", L.Loop);
+		Item.Set("bar", DownBar);
+		Item.Set("lead_in_bar", LeadBar);
+		Item.Set("rubs", static_cast<int>(T.Rubs.size()));
+		Item.Set("gap_beats", Json::NumberText(FormatNumber(L.Gap / static_cast<double>(R))));
+		Item.Set("downbeat_rubs", T.Down);
+		List.Push(Item);
+		const int A = std::min(LeadBar, DownBar), Z = std::max(LeadBar, DownBar);
+		FirstBar = FirstBar < 0 ? A : std::min(FirstBar, A);
+		LastBar = std::max(LastBar, Z);
+	}
+	if (Places.empty())
+		return false;
+	const std::string Name = S.Channel(Melody).FullName();
+	F = ArrangeFinding();
+	F.Kind = ARRANGE_LEAD_IN;
+	F.Channel = Melody;
+	F.FromBar = FirstBar;
+	F.ToBar = LastBar;
+	F.Weight = 1.0;
+	std::string Text;
+	for (size_t p = 0; p < Places.size() && p < 3; ++p)
+		Text += (p == 0 ? "" : "; ") + Places[p];
+	if (Places.size() > 3)
+		Text += Format("; and %d more", static_cast<int>(Places.size()) - 3);
+	F.Text = Format("The melody (%s) stumbles into %s: %s. The notes that lead into a downbeat are the ones the ear follows "
+		"across a seam: a lead-in on a tone of the chord under it, held into the downbeat (or stepping on to it), carries the song "
+		"into the next part; one a semitone off the chord, or cut short so the tune drops out just before, sounds misplaced.",
+		Name.c_str(), Places.size() == 1 ? "a section's start" : "the starts of its sections", Text.c_str());
+	F.Summary = Format("the melody's lead-in rubs or stops short at %s", Plural(static_cast<int>(Places.size()), "seam", "seams").c_str());
+	F.Details.Set("problem", "lead_in");
+	F.Details.Set("seams", List);
+	F.Fix = Json();
+	int Left = 0;
+	const std::vector<SeamMove> Moves = PlanSeams(S, Melody, FirstBar, LastBar, K, Style, Left);
+	if (!Moves.empty()) {
+		Session View(S);
+		Draft D(S);
+		WriteSeamMoves(S, D, Moves);
+		std::set<int> Touched;
+		for (size_t i = 0; i < Moves.size(); ++i)
+			Touched.insert(Moves[i].Channel);
+		for (std::set<int>::const_iterator it = Touched.begin(); it != Touched.end(); ++it)
+			View.Assume(*it, D.Cells(*it));
+		const int First = S.Time.BarStart(FirstBar), End = std::min(S.Time.TotalRows(), S.Time.BarEnd(LastBar));
+		const size_t Before = ClashRuns(S, HearGrid(S, First, End)).size();
+		int Still = 0;
+		const std::vector<LeadIn> After = FindLeadIns(View, Melody, K);
+		for (size_t s = 0; s < After.size(); ++s) {
+			const int LeadBar = View.Time.BarOf(After[s].Before - 1);
+			Still += LeadBar >= From && LeadBar <= To && TroubleOf(View, After[s], Style).Any() ? 1 : 0;
+		}
+		if (ClashRuns(View, HearGrid(View, First, End)).size() <= Before && Still < static_cast<int>(Places.size())) {
+			Json A = Json::MakeObject();
+			Json Touches = Json::MakeArray();
+			Touches.Push("seams");
+			A.Set("touches", Touches);
+			A.Set("melody_channel", Name);
+			A.Set("from_bar", FirstBar);
+			A.Set("to_bar", LastBar);
+			F.Fix = ToolCall("polish", A, "moves the lead-in notes that rub to the nearest tone of the chord that rubs nothing and "
+				"holds the last one into the downbeat");
+		}
+	}
+	if (F.Fix.IsNull())
+		F.Text += " Write the melody's last notes before the downbeat again on tones of the chord, held into it (write_notes).";
+	return true;
+}
+
+void SeamFindings(Session &S, int Melody, int From, int To, int Style, const Key &K, std::vector<ArrangeFinding> &Out)
+{
+	ArrangeFinding F;
+	if (SeamFinding(S, Melody, From, To, Style, K, F))
+		Out.push_back(F);
+}
+
 std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melody, int From, int To, int Style, const TrackUse &Use,
 	const Key &K)
 {
@@ -18418,6 +19062,7 @@ std::vector<ArrangeFinding> ArrangeFindings(Session &S, Hearing &Ears, int Melod
 	ThroughoutFindings(S, Ears, Melody, From, To, Out);
 	StrongBeatFindings(S, Melody, From, To, K, Out);
 	ThinFindings(S, Melody, From, To, Style, Out);
+	SeamFindings(S, Melody, From, To, Style, K, Out);
 	return Out;
 }
 
@@ -29627,15 +30272,16 @@ void SoundingRows(const NoteInfo &N, int RowsPerBeat, int First, int End, std::v
 // ARRANGE_MONOTONE, a melody whose opening doesn't catch (MonotoneFindings). OFF_CHORD (from feat-strong-beats):
 // ARRANGE_OFF_CHORD, a melody landing off the chord on strong beats over a bare bass (StrongBeatFindings). THIN (from
 // feat-depth-back): ARRANGE_THIN, a body too thin for the NES: few parts, few sounds or, on the 2A03 alone, few effects
-// (ThinFindings)
+// (ThinFindings). LEAD_IN (from feat-seams): ARRANGE_LEAD_IN, the melody's lead-in into a section or the loop's start
+// rubbing the chord under it or stopping short of the downbeat, or the downbeat's note rubbing its chord (SeamFindings)
 enum check_kind { FOUND_VANISHING, FOUND_CLICK, FOUND_CLASH, FOUND_RANGE, FOUND_SILENT, FOUND_BUSY, FOUND_KEY, FOUND_HELD,
 	FOUND_PHRASES, FOUND_BASS, FOUND_SOUND, FOUND_FADERS, FOUND_REPEAT, FOUND_LOOP, FOUND_INTRO, FOUND_WARBLE, FOUND_TOO_BUSY,
-	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_CHORDS_THROUGHOUT, FOUND_MONOTONE, FOUND_OFF_CHORD, FOUND_THIN, FOUND_KINDS };
+	FOUND_CLIMAX, FOUND_CHORD_DRONE, FOUND_CHORDS_THROUGHOUT, FOUND_MONOTONE, FOUND_OFF_CHORD, FOUND_THIN, FOUND_LEAD_IN, FOUND_KINDS };
 const char *const CHECK_KIND[FOUND_KINDS] = { "vanishing", "click", "clash", "range", "silent", "busy", "key", "held", "phrases", "bass",
 	"sound", "faders", "repeat", "short_loop", "intro", "warble", "too_busy", "climax_repeats", "chord_drone", "chords_throughout",
-	"monotone", "off_chord", "thin" };
+	"monotone", "off_chord", "thin", "lead_in" };
 const char *const CHECK_SEVERITY[FOUND_KINDS] = { "high", "high", "high", "medium", "low", "low", "low", "medium", "medium", "medium",
-	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium", "low", "medium", "medium", "medium" };
+	"medium", "low", "low", "low", "medium", "high", "medium", "medium", "medium", "low", "medium", "medium", "medium", "medium" };
 
 // The check_song kind of one of ArrangeFindings' (arrange_kind)
 int ArrangeCheckKind(int Kind)
@@ -29644,7 +30290,7 @@ int ArrangeCheckKind(int Kind)
 		Kind == ARRANGE_DRONE ? static_cast<int>(FOUND_CHORD_DRONE) :
 		Kind == ARRANGE_THROUGHOUT ? static_cast<int>(FOUND_CHORDS_THROUGHOUT) :
 		Kind == ARRANGE_MONOTONE ? static_cast<int>(FOUND_MONOTONE) : Kind == ARRANGE_OFF_CHORD ? static_cast<int>(FOUND_OFF_CHORD) :
-		Kind == ARRANGE_THIN ? static_cast<int>(FOUND_THIN) :
+		Kind == ARRANGE_THIN ? static_cast<int>(FOUND_THIN) : Kind == ARRANGE_LEAD_IN ? static_cast<int>(FOUND_LEAD_IN) :
 		FOUND_PHRASES + Kind;
 }
 
@@ -30203,7 +30849,8 @@ std::string CheckTool(Session &S, const Json &Asked)
 	const int Counts[FOUND_KINDS] = { Vanished, Clicking, Clashes, OutOfRange, Silent, Busy, OutOfKey, Held, Arranged[ARRANGE_PHRASES],
 		Arranged[ARRANGE_BASS], Arranged[ARRANGE_SOUND], Arranged[ARRANGE_FADERS], Arranged[ARRANGE_REPEAT], Arranged[ARRANGE_LOOP],
 		Arranged[ARRANGE_INTRO], Warbling, Arranged[ARRANGE_BUSY], Arranged[ARRANGE_CLIMAX], Arranged[ARRANGE_DRONE],
-		Arranged[ARRANGE_THROUGHOUT], Arranged[ARRANGE_MONOTONE], Arranged[ARRANGE_OFF_CHORD], Arranged[ARRANGE_THIN] };
+		Arranged[ARRANGE_THROUGHOUT], Arranged[ARRANGE_MONOTONE], Arranged[ARRANGE_OFF_CHORD], Arranged[ARRANGE_THIN],
+		Arranged[ARRANGE_LEAD_IN] };
 
 	if (Form == "json") {
 		Json Out = Json::MakeObject();
@@ -39341,7 +39988,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"a semitone go: the nearest color that doesn't, Cm(add9) as Cm7; notes and bass kept) and unison (a detuned part, "
 			"an echo's P81, plays P80 where it doubles another part's pitch, so the two don't beat) and strong_beats (the "
 			"melody's notes off the chord on a strong beat with only the bass under them, check_song's off_chord, move to the "
-			"nearest chord tone that rubs nothing). Default: accents, "
+			"nearest chord tone that rubs nothing) and seams (check_song's lead_in: a lead-in note into a section or the loop "
+			"moves to a chord tone, held into the downbeat). Default: accents, "
 			"vibrato, separate and clicks. "
 			"Polish again changes nothing it did: a part accented already keeps its volumes.");
 		Json TouchItem = Json::MakeObject();
@@ -39359,6 +40007,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		TouchNames.Push("colors");
 		TouchNames.Push("unison");
 		TouchNames.Push("strong_beats");
+		TouchNames.Push("seams");
 		TouchItem.Set("enum", TouchNames);
 		Touches.Set("items", TouchItem);
 		AddTool("polish", "Finishing touches",
@@ -40612,7 +41261,8 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 			Finishing = pTouches == 0 || !pTouches->IsArray();
 			for (size_t i = 0; !Finishing && i < pTouches->Size(); ++i) {
 				const std::string Touch = pTouches->At(i).IsString() ? pTouches->At(i).String() : std::string();
-				Finishing = Touch != "unison" && Touch != "clicks" && Touch != "clashes" && Touch != "colors" && Touch != "strong_beats";
+				Finishing = Touch != "unison" && Touch != "clicks" && Touch != "clashes" && Touch != "colors" && Touch != "strong_beats" &&
+					Touch != "seams";
 			}
 		}
 		if (Finishing) {
@@ -40985,6 +41635,46 @@ std::string ToolSet::Thin()
 	}
 }
 
+std::string ToolSet::Seams()
+{
+	try {
+		Session S(m_Host);
+		const int Melody = GuessMelodyChannel(S, 0, S.Time.TotalRows());
+		if (Melody < 0)
+			return "no melody";
+		bool Found = false;
+		const Key K = KeyArg(S, Json::MakeObject(), "key", 0, S.Time.TotalRows(), Found);
+		double Bpm = 0;
+		const bool Calm = LooksCalm(S, Bpm) || NameSaysCalm(S.Song.TrackName);
+		const int R = std::max(1, S.Time.RowsPerBeat);
+		const std::vector<LeadIn> Seams = FindLeadIns(S, Melody, K);
+		std::vector<NoteInfo> Kept;
+		const std::vector<NoteInfo> Pitched = PitchedNotes(S, Melody, Kept);
+		std::string Out = S.Channel(Melody).FullName() + Format(" %s %s %.0f BPM", KeyName(K).c_str(), Calm ? "calm" : "-", Bpm);
+		for (size_t i = 0; i < Seams.size(); ++i) {
+			const LeadIn &L = Seams[i];
+			Out += Format("\n  %s%s bar %d:", L.Loop ? "loop " : "", L.Name.c_str(), S.Time.BarOf(L.Target));
+			for (size_t n = 0; n < L.Notes.size(); ++n) {
+				const SeamNote &N = L.Notes[n];
+				Out += Format(" %s(%.2f/%.2f%s)", PitchName(N.Pitch).c_str(), (N.End - N.From) / static_cast<double>(R),
+					(N.End - Pitched[static_cast<size_t>(N.Note)].Row) / static_cast<double>(R), N.Resolves ? " res" : "");
+				if (N.Rubs >= 0)
+					Out += Format("*RUB %s/%s", NoteClassName(N.Rubs, K).c_str(), ChordName(N.C, K).c_str());
+			}
+			Out += Format(" pickup %d gap %.2f", L.Pickup ? 1 : 0, L.Gap / static_cast<double>(R));
+			if (L.Down >= 0)
+				Out += Format(" down %s(%.2f%s)%s", PitchName(L.DownPitch).c_str(), L.DownRows / static_cast<double>(R),
+					L.DownResolves ? " res" : "", L.DownRubs >= 0 ? Format("*DOWNRUB %s/%s",
+					NoteClassName(L.DownRubs, K).c_str(), ChordName(L.DownChord, K).c_str()).c_str() : "");
+			else
+				Out += " down -";
+		}
+		return Out;
+	}
+	catch (const Problem &P) {
+		return P.Text;
+	}
+}
 std::string ToolSet::StrongBeats()
 {
 	try {
