@@ -171,10 +171,10 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "by", 0 },
 			{ "channels", 0 } } },
 		{ "add_chords_and_bass", "Writes chords on a pulse and a bass on the triangle or sawtooth: your progression, or chords "
-			"fitted to the melody. Pick chord_style, color and bass_style for the mood. Chords and bass already there are "
-			"replaced.", {
-			{ "chords", "The progression: \"| Am7 | Fmaj7 | C | G7sus4 G7 |\", degrees \"I vi IV V\", or a list of bars "
-				"[\"Am7\", \"F G\"]. \".\" holds the chord before a share, \"%\" repeats a bar; it repeats to fill the bars." },
+			"fitted to the melody. Pick chord_style, color and bass_style. Chords there are replaced; a bass that fits them stays "
+			"unless bass_style is given.", {
+			{ "chords", "The progression: \"| Am7 | Fmaj7 | C | G7sus4 G7 |\" or degrees \"I vi IV V\". \".\" holds the chord "
+				"before a share, \"%\" repeats a bar; it repeats to fill the bars." },
 			{ "chord_channel", "Pulse channel for the chords, or \"none\"." },
 			{ "chord_channels", "Voiced chords: 2-4 channels, a voice each." },
 			{ "bass_channel", "Triangle or sawtooth for the bass, or \"none\"." },
@@ -201,7 +201,8 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "crash", "Crashes where the drums start and after fills (default true)." },
 			{ "volume", "The loudest hit's volume, 1-15." },
 			{ "kit", "noise (default) or samples: a sampled kick and snare on the DPCM channel, punchier." },
-			{ "channel", "The noise channel (default: the song's)." } } },
+			{ "channel", "The noise channel (default: the song's)." },
+			{ "over_ambience", 0 } } },
 		{ "add_ambience", "Adds a quiet layer of the place's sounds on the noise channel (waves, rain, wind, a stream, fire "
 			"or drips) under the music, in step with its bars and loop.", {
 			{ "kind", "waves, rain, wind, stream, fire or drips (default: from about or the name)." },

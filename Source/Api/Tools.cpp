@@ -8139,7 +8139,16 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		// The bass kept only where it plays the new chords: its notes on the beats their chords' tones (a groove's bass under
 		// other chords, or a line written for another progression, is replaced as before, and said so)
 		int OnBeats = 0, Fits = 0;
+		bool Grounded = true;	// where each chord starts, the bass sounds its bass note (the root, a slash chord's) or its fifth
 		const std::vector<NoteInfo> Old = NotesIn(S.Notes(KeptBass), First, End);
+		for (size_t c = 0; c < Chords.size(); ++c)
+			for (size_t i = 0; i < Old.size(); ++i)
+				if (Old[i].Row <= Chords[c].Row && Chords[c].Row < Old[i].Row + std::max(1, Old[i].Rows) && Old[i].Volume > 0) {
+					const int Class = ((Old[i].Pitch % 12) + 12) % 12, Fifth = Chords[c].C.Fifth();
+					Grounded = Grounded && (Class == Chords[c].C.Bass || Class == Chords[c].C.Root ||
+						(Fifth >= 0 && Class == (Chords[c].C.Root + Fifth) % 12));
+					break;
+				}
 		for (size_t i = 0; i < Old.size(); ++i) {
 			if ((Old[i].Row - First) % R != 0 || Old[i].Volume <= 0)
 				continue;
@@ -8150,7 +8159,7 @@ std::string AddBackingTool(Session &S, const Json &Args)
 					break;
 				}
 		}
-		if (OnBeats > 0 && Fits * 5 < OnBeats * 4) {
+		if (OnBeats > 0 && (Fits * 5 < OnBeats * 4 || !Grounded)) {
 			BassChannel = KeptBass;
 			Replaced.push_back(KeptBass);
 			KeptBass = -1;
@@ -38903,8 +38912,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"bVII, V7/V). Chords in a bar share it; \".\" holds the chord before for a share (\"C . . G\": three beats of C, "
 			"one of G); \"%\" repeats a bar. The progression repeats to fill the bars.");
 		AddTool("add_chords_and_bass", "Add chords and a bass line",
-			"Writes chords on a pulse channel (or a named VRC6 sawtooth or N163 channel) and a bass line on the triangle or "
-			"sawtooth: chords fitted to a melody bar by bar "
+			"Writes chords on a pulse channel and a bass line on the triangle or sawtooth: chords fitted to a melody bar by bar "
 			"in its key, or the progression you give (no melody needed then). Choose how they're played; the defaults are the "
 			"plainest (triads held as an arpeggio, root and fifth in the bass), and most songs want more. chord_style: " +
 			StyleList(ChordStyles()) + ". rhythm (arpeggio, stabs and lush): " + StyleList(ChordRhythms()) + ". pattern (broken, "
@@ -38913,18 +38921,17 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"or richer tones that keep each chord's part (\"rich\": add9, maj7 or 6 on I and IV, m7 and m9, add9 on the V) where "
 			"the melody allows. Every style keeps each chord under the melody's lowest note while it sounds (a minor third under "
 			"it) and over the bass. Lush chords are instruments made for each chord's notes (\"Lush maj7\", \"Lush m9\") from a "
-			"preset or one of the song's own pulse sounds, added when first needed. Chords there already are replaced; a bass "
-			"line there stays if it fits them, unless bass_style, bass_channel or bass_instrument asks for one; else free channels "
-			"are picked. The reply lists the chords by name and as degrees.",
+			"preset or one of the song's own pulse sounds, added when first needed. Chords there are replaced; a bass there stays "
+			"if it fits them, unless bass_style or bass_channel is given; else free channels are picked. The reply lists the chords by name and as degrees.",
 			Schema()
 				.Add("chords", Chords)
 				.Add("melody_channel", ChannelProp("Channel with the melody. Default: the busiest one."))
-				.Add("chord_channel", ChannelProp("Pulse channel for the chords (or a VRC6 sawtooth or N163 channel), or \"none\". "
-					"Default: the one playing chords there already, else a free pulse."))
+				.Add("chord_channel", ChannelProp("Pulse (or VRC6 sawtooth or N163) channel for the chords, or \"none\". Default: the "
+					"one playing chords there already, else a free pulse."))
 				.Add("chord_channels", ChannelListProp("Voiced chords: 2-4 channels, a voice each (VRC7 FM, N163 or pulse channels). "
 					"Default: free FM channels, else N163 ones, else pulses."))
-				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a bass there that fits "
-					"stays, unless bass_style or bass_instrument is given; else a free one."))
+				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: one there that fits "
+					"stays (bass_style replaces it), else a free one."))
 				.Add("key", Prop("string", "Key, like \"C major\" or \"A minor\". Default: found from the melody."))
 				.Add("color", EnumProp("plain (triads; the default but for lush and voices), sevenths, or rich (the default for lush "
 					"and voices).",
@@ -38962,8 +38969,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			Schema()
 				.Add("groove", EnumProp("The beat (default basic; waltz in bars of three beats).", StyleNames(Grooves())))
 				.Add("intensity", Intensity)
-				.Add("over_ambience", Prop("boolean", "true: the drums take an ambience's place on the noise (default: its bars keep "
-					"it)."))
+				.Add("over_ambience", Prop("boolean", "true: drums replace an ambience there."))
 				.Add("fill_every", Prop("integer", "A fill in the last bar of every so many bars, counted from bar 1, or from "
 					"where the loop starts when an intro plays once before it (default 4; 0 for none)."))
 				.Add("crash", Prop("boolean", "A crash where the drums start and after each fill (default true)."))
@@ -39141,8 +39147,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"overlap. An echo note a semitone from what sounds with it (or a semitone and octaves, a minor ninth: what check_song "
 		"hears as a clash) is left out or cut short; a major seventh over the bass stays, a chord's color.",
 		Schema()
-			.Add("channel", ChannelProp("The source, whose notes are echoed."), true)
-			.Add("to_channel", ChannelProp("The target the echo is written on. Default: a free one of the same kind, else another "
+			.Add("channel", ChannelProp("Channel to echo (the source)."), true)
+			.Add("to_channel", ChannelProp("Channel the echo goes on (the target). Default: a free one of the same kind, else another "
 				"free one."))
 			.Add("delay_beats", Prop("number", "How much later, in beats (default 3 rows; a beat is the other common choice)."))
 			.Add("volume", Prop("integer", "Echo volume 1-15 at the original's full loudness (default 6, about 40%), scaled with "

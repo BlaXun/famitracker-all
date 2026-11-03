@@ -32350,9 +32350,10 @@ void TestBackingDepthBugs()
 	{
 		FakeSong Song;
 		PutTune(Song, 4, TUNE, 4);
-		static const char *const LOWS[] = { "C-3", "F-3", "G-3", "C-3" }, HIGHS[] = { "C-4", "F-4", "G-4", "C-4" };	// driving octaves
+		static const char *const LOWS[] = { "C-3", "F-3", "G-3", "C-3" }, *const HIGHS[] = { "C-4", "F-4", "G-4", "C-4" };	// driving octaves
 		for (int r = 0; r < 64; r += 2)
 			Song.Put(2, r, (r % 4 == 0 ? LOWS : HIGHS)[r / 16], r == 0 ? 1 : NO_INSTRUMENT);
+		Song.End(2, 64, NOTE_HALT);
 		const std::string Before = Notes(Song, 2);
 		ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
 			"\"chord_channel\": \"2A03 Pulse 2\", \"chord_style\": \"lush\"}");
@@ -32622,8 +32623,8 @@ void TestSmallDepthBugs()
 	for (size_t i = 0; i < Tools.List().size(); ++i)
 		if (Tools.List()[i].Name == "add_echo")
 			Echo = WriteJson(Tools.List()[i].InputSchema);
-	CHECK_HAS(Echo, "The source, whose notes are echoed");
-	CHECK_HAS(Echo, "The target the echo is written on");
+	CHECK_HAS(Echo, "Channel to echo (the source).");
+	CHECK_HAS(Echo, "Channel the echo goes on (the target).");
 	// A bell that's gone in under a beat: the calm counter-line's notes of a bar cut to a beat
 	ToolResult Counter = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"2A03 Pulse 2\", "
 		"\"style\": \"calm\", \"instrument\": \"bell\"}");
