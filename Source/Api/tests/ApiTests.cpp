@@ -20395,12 +20395,99 @@ int ReviewScore(const std::string &Text)
 	return std::atoi(Text.substr(From, Out - From).c_str());
 }
 
+// API_DUMP_WALKS=<folder>: each walk's song as JSON for the gap analysis (gen4's scripts/gapwalk.py reads it): the
+// channels' names, the instruments' sequences (0 volume, 1 arpeggio, 2 pitch, 3 hi-pitch, 4 duty) and the cells as
+// FamiTracker's text export writes them, a frame a pattern length
+void DumpWalk(const FakeSong &Song, const std::string &What)
+{
+	const std::string Folder = Environment("API_DUMP_WALKS");
+	if (Folder.empty())
+		return;
+	static std::map<std::string, int> Count;
+	std::string Name;
+	for (char C : What)
+		Name += std::isalnum(static_cast<unsigned char>(C)) ? C : '_';
+	if (Count[Name]++ > 0)
+		Name += "_" + std::to_string(Count[Name]);
+	const auto Quote = [](const std::string &Text) {
+		std::string Out = "\"";
+		for (char C : Text)
+			Out += C == '"' || C == '\\' ? std::string("\\") + C : (static_cast<unsigned char>(C) < 32 ? std::string(" ") : std::string(1, C));
+		return Out + "\"";
+	};
+	const auto Sequence = [](const std::vector<int> &Items, int Loop, int Release, int Setting) {
+		std::string Out = "{\"loop\": " + std::to_string(Loop) + ", \"rel\": " + std::to_string(Release) + ", \"set\": " +
+			std::to_string(Setting) + ", \"vals\": [";
+		for (size_t i = 0; i < Items.size(); ++i)
+			Out += (i ? ", " : "") + std::to_string(Items[i]);
+		return Out + "]}";
+	};
+	std::string Out = "{\"what\": " + Quote(What) + ", \"kind\": " + Quote(Song.Info.TrackName) + ", \"rows\": " +
+		std::to_string(Song.Info.PatternLength) + ", \"speed\": " + std::to_string(Song.Info.Speed) + ", \"tempo\": " +
+		std::to_string(Song.Info.Tempo) + ", \"beat_rows\": " + std::to_string(Song.Info.FirstHighlight) + ", \"bar_rows\": " +
+		std::to_string(Song.Info.SecondHighlight) + ", \"names\": [";
+	for (size_t c = 0; c < Song.Info.Channels.size(); ++c) {
+		const ChannelInfo &Channel = Song.Info.Channels[c];
+		const std::string Shown = Channel.Kind == KIND_NOISE ? "Noise" : Channel.Kind == KIND_DPCM ? "DPCM" : Channel.Kind ==
+			KIND_TRIANGLE ? "Tri" : Channel.Chip + " " + Channel.Name;
+		Out += (c ? ", " : "") + Quote(Shown);
+	}
+	Out += "], \"insts\": {";
+	for (size_t i = 0; i < Song.Info.Instruments.size(); ++i) {
+		const InstrumentInfo &I = Song.Info.Instruments[i];
+		char Key[8];
+		std::snprintf(Key, sizeof Key, "%02X", I.Index);
+		Out += std::string(i ? ", " : "") + "\"" + Key + "\": {\"name\": " + Quote(I.Name) + ", \"chip\": " + Quote(I.Chip) +
+			", \"seq\": {";
+		std::string Seqs;
+		if (!I.Volume.empty())
+			Seqs += "\"0\": " + Sequence(I.Volume, I.VolumeLoop, I.VolumeRelease, 0);
+		const SequenceInfo *const OTHERS[] = { &I.Steps, &I.Pitch, &I.HiPitch, &I.Duty };
+		for (int t = 0; t < 4; ++t)
+			if (!OTHERS[t]->Items.empty())
+				Seqs += (Seqs.empty() ? "" : ", ") + std::string("\"") + std::to_string(t + 1) + "\": " + Sequence(OTHERS[t]->Items,
+					OTHERS[t]->Loop, OTHERS[t]->Release, OTHERS[t]->Setting);
+		Out += Seqs + "}}";
+	}
+	Out += "}, \"cells\": [";
+	const size_t Total = Song.Rows.empty() ? 0 : Song.Rows[0].size();
+	for (size_t r = 0; r < Total; ++r) {
+		Out += r ? ",\n[" : "\n[";
+		for (size_t c = 0; c < Song.Rows.size(); ++c) {
+			const Cell &X = r < Song.Rows[c].size() ? Song.Rows[c][r] : Cell();
+			std::string Text;
+			if (X.HasNote())
+				Text = Song.Info.Channels[c].Kind == KIND_NOISE ? NoisePitchName(X.Pitch()) :
+					PitchName(X.Pitch());
+			else
+				Text = X.Note == NOTE_RELEASE ? "===" : X.Note == NOTE_HALT ? "---" : "...";
+			char Number[8];
+			if (X.Instrument < 64)
+				std::snprintf(Number, sizeof Number, " %02X", X.Instrument);
+			else
+				std::snprintf(Number, sizeof Number, " ..");
+			Text += Number;
+			Text += X.Volume < 16 ? std::string(" ") + "0123456789ABCDEF"[X.Volume] : std::string(" .");
+			for (int e = 0; e < EFFECT_COLUMNS; ++e)
+				Text += X.Effect[e] != 0 ? " " + EffectText(X.Effect[e], X.Param[e]) : std::string(" ...");
+			Out += (c ? ", " : "") + Quote(Text);
+		}
+		Out += "]";
+	}
+	Out += "]}\n";
+	if (FILE *pFile = std::fopen((Folder + "/" + Name + ".json").c_str(), "wb")) {
+		std::fwrite(Out.data(), 1, Out.size(), pFile);
+		std::fclose(pFile);
+	}
+}
+
 // Once what_next says done, review_arrangement for the same track without arguments (the kind what_next kept) gives no tip
 // the tools could act on: each was a step before done, or the review leaves it out for the kind (fix-gen4-done: the Airship,
 // the Caves, the Hut and the Shop got tips right after done). The balance's tips (the melody over the chords, which mix
 // gives) are fix-gen4-balance's, left out here
 void CheckDoneReview(FakeSong &Song, const std::string &What, int Line)
 {
+	DumpWalk(Song, What);
 	// It isn't thin for the NES: parts enough in its body, sounds and effects (check_song's thin, feat-depth-back)
 	{
 		const Json Thin = Parse(Run(Song, "check_song", "{\"format\": \"json\"}").Text);
