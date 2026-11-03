@@ -60,7 +60,8 @@ const CheckedKind KINDS[] = { { "too_busy", "oo busy for the NES", true }, { "ch
 	{ "chords_throughout", "A chord part that plays all through", true },
 	{ "monotone", "doesn't catch: in ", false },
 	{ "off_chord", "lands off the chord on strong beats", true },
-	{ "thin", "Thin for the NES", true } };
+	{ "thin", "Thin for the NES", true },
+	{ "lead_in", "stumbles into", true } };
 const size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
 std::vector<std::string> FtmFiles(const std::string &Folder)

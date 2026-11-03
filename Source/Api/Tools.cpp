@@ -15507,6 +15507,7 @@ std::string PolishTool(Session &S, const Json &Args)
 		What.insert("vibrato");
 		What.insert("separate");
 		What.insert("clicks");
+		What.insert("seams");
 	}
 	else {
 		std::vector<std::string> Words;
@@ -27547,6 +27548,7 @@ Json KindPolish(int Kind, int Flavour)
 		Touches.Push("vibrato");
 	Touches.Push("separate");
 	Touches.Push("clicks");
+	Touches.Push("seams");	// (every song's lead-ins into its sections and the loop on chord tones, feat-seams)
 	Touches.Push("fades_under");
 	Touches.Push("duty");
 	// (not tense's ostinato: cut short, the review heard its bass as thin and the steps done fell after the finish)
@@ -38750,6 +38752,8 @@ std::string WhatNext::StepWhat(const NextStep &N) const
 		return Where("Let the chords change figure where the song turns", true);
 	if (Id == "off_chord")
 		return Where("Move the melody's notes off the chord on strong beats to chord tones", true);
+	if (Id == "lead_in")
+		return Where("Lead the melody into its sections on chord tones, held into the downbeat", true);
 	if (Id == "swing")
 		return "Swing the rhythm lightly";
 	if (Id == "renew")
@@ -39990,7 +39994,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"melody's notes off the chord on a strong beat with only the bass under them, check_song's off_chord, move to the "
 			"nearest chord tone that rubs nothing) and seams (check_song's lead_in: a lead-in note into a section or the loop "
 			"moves to a chord tone, held into the downbeat). Default: accents, "
-			"vibrato, separate and clicks. "
+			"vibrato, separate, clicks and seams. "
 			"Polish again changes nothing it did: a part accented already keeps its volumes.");
 		Json TouchItem = Json::MakeObject();
 		TouchItem.Set("type", "string");
