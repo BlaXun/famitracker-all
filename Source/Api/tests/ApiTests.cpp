@@ -20273,6 +20273,8 @@ std::string DoneAndLeft(const std::string &Text)
 // for the user, or gives StopAt's tool, which is left uncalled). Every answer must be a call that works (on the small set,
 // with its tools), and every answer must move on from the ones before, its count of steps done never falling. The calls
 // made, a line each
+std::vector<std::string> g_LastMade;	// the last walk's calls, for DumpWalk
+
 std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked, int Most, bool &Finished, int Line,
 	bool Core = false, const char *StopAt = 0, std::vector<std::string> *pReplies = 0)
 {
@@ -20367,6 +20369,7 @@ std::vector<std::string> FollowWhatNext(FakeSong &Song, const std::string &Asked
 		if (Did.IsError)
 			break;
 	}
+	g_LastMade = Made;
 	if (Show)
 		for (size_t i = 0; i < Made.size(); ++i)
 			std::printf("%d. %s\n", static_cast<int>(i) + 1, Made[i].c_str());
@@ -20474,6 +20477,9 @@ void DumpWalk(const FakeSong &Song, const std::string &What)
 		}
 		Out += "]";
 	}
+	Out += "], \"calls\": [";
+	for (size_t i = 0; i < g_LastMade.size(); ++i)
+		Out += (i ? ",\n" : "\n") + Quote(g_LastMade[i]);
 	Out += "]}\n";
 	if (FILE *pFile = std::fopen((Folder + "/" + Name + ".json").c_str(), "wb")) {
 		std::fwrite(Out.data(), 1, Out.size(), pFile);
@@ -21201,7 +21207,8 @@ void TestWhatNextChoices()
 			}
 			Check(End < 16.0, "it ends in a rest", __LINE__);
 		}
-	CHECK_EQ(NextProgression(NEXT_LIVELY, false, false), std::string("| I | V | vi | IV | I | V | IV | V |"));
+	CHECK_EQ(NextProgression(NEXT_LIVELY, false, false), std::string("| I | V | vi | IV V | I | bVII | IV | ii V |"));
+	CHECK_EQ(EnrichedProgression("| I | V | vi | IV | I | V | IV | V |", false), NextProgression(NEXT_LIVELY, false, false));
 	CHECK(NextProgression(NEXT_ACTION, true, true) != NextProgression(NEXT_ACTION, true, false));
 	int Kind = -1;
 	CHECK(ParseNextKind("Boss", Kind) && Kind == NEXT_ACTION && ParseNextKind("ambient", Kind) && Kind == NEXT_CALM &&
@@ -30409,9 +30416,9 @@ void TestRecipesAgree()
 	for (int k = NEXT_COZY + 1; k < NEXT_KIND_COUNT; ++k)
 		if (NextKindInfo(k).ProgMinor[0] != 0 && Contains(NextKindInfo(k).ProgMinor[0], "VII")) {
 			CHECK(Contains(NextProgression(k, true, false, true), "| IV |"));
-			CHECK_EQ(NextProgression(k, true, false, false), std::string(NextKindInfo(k).ProgMinor[0]));
+			CHECK_EQ(NextProgression(k, true, false, false), EnrichedProgression(NextKindInfo(k).ProgMinor[0], true));
 		}
-	CHECK_EQ(NextProgression(NEXT_MYSTERIOUS, true, false, true), std::string("| i | IV | III | VII | i | IV | v | VII |"));
+	CHECK_EQ(NextProgression(NEXT_MYSTERIOUS, true, false, true), EnrichedProgression("| i | IV | III | VII | i | IV | v | VII |", true));
 	const char *const NAMES[] = { "Old Mill", "Brook", "Hollow", "Lantern Row" };
 	for (int k = NEXT_GENERAL; k < NEXT_KIND_COUNT; ++k) {
 		const NextKind &K = NextKindInfo(k);

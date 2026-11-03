@@ -272,11 +272,13 @@ void SectionPlan(int Count, int MotifBars, bool MotifBreathes, int Form, bool Ca
 				Text = Last ? F.Close : F.Middle;
 			else
 				Text = Block > PeakBlock ? F.Return : F.Response;
-			// A two-bar motif that doesn't breathe comes back with its second bar changed, so the phrase holds a note
-			if (MotifBars > 1 && !MotifBreathes && !First) {
+			// A two-bar motif comes back after the section's first block with its second bar changed (one that doesn't breathe
+			// holding a note there), so its two bars as written return where a section starts (from feat-variety: the first 30's
+			// hooks return about twice in 32 bars)
+			if (MotifBars > 1 && !First) {
 				const size_t At = Text.find("M M");
 				if (At != std::string::npos)
-					Text.replace(At, 3, "M V,");
+					Text.replace(At, 3, MotifBreathes ? "M V" : "M V,");
 			}
 		}
 		else if (Sizes[i] == 3) {
@@ -637,6 +639,100 @@ private:
 		Hits = Kept;
 	}
 
+	// A bar that follows the motif (a sequence, an answer, a variation) in a rhythm of its own made from the motif's cells
+	// (from feat-variety): the soundtrack's first 30 change their tune's rhythm bar by bar, 3.5 rhythms in 8 bars, the hook's
+	// own two bars coming back about twice in 32, where the motif's rhythm in every such bar gave 1.7 rhythms and the hook 5.8
+	// times. One of: a note split in two, two notes joined, a pair dotted, the bar's second half in the kind's figures (a
+	// variation's opening stays the motif's). Notes that start between the beats don't hold over the next one
+	void VaryRhythm(std::vector<Hit> &H, int b)
+	{
+		const BarPlan &B = m_Plan[static_cast<size_t>(b)];
+		const std::vector<Hit> Before = H;
+		const int Half = m_Beats % 2 == 0 ? m_SPB / 2 : -1;
+		GrowRandom R(Mix(m_Seed ^ 0x51ED270Bu, static_cast<uint32_t>(b) * 7919u + static_cast<uint32_t>(B.Role)));
+		auto Same = [&](const std::vector<Hit> &a) {
+			if (a.size() != Before.size())
+				return false;
+			for (size_t i = 0; i < a.size(); ++i)
+				if (a[i].Step != Before[i].Step || a[i].Steps != Before[i].Steps)
+					return false;
+			return true;
+		};
+		// (a note from between the beats that holds past the next beat: the kind of tie the first 30 hardly use)
+		auto Crosses = [&](const Hit &h) {
+			return h.Step % m_SPBeat != 0 && (h.Step / m_SPBeat + 1) * m_SPBeat < h.Step + h.Steps;
+		};
+		for (int Try = 0; Try < 6 && Same(H); ++Try) {
+			std::vector<Hit> Out = Before;
+			const int Way = B.Role == BAR_VARIED ? 3 : static_cast<int>(R.Below(4));
+			if (Way == 0) {
+				// A long note split in two on a beat or half a beat (its second half free to move)
+				std::vector<size_t> Long;
+				for (size_t i = 0; i < Out.size(); ++i)
+					if (Out[i].Steps >= 2 && Out[i].Steps % 2 == 0 && (Out[i].Step + Out[i].Steps / 2) % std::max(1, m_SPBeat / 2) == 0)
+						Long.push_back(i);
+				if (Long.empty())
+					continue;
+				const size_t i = Long[static_cast<size_t>(R.Below(static_cast<int>(Long.size())))];
+				Hit Second = Out[i];
+				Out[i].Steps /= 2;
+				Second.Step += Out[i].Steps;
+				Second.Steps -= Out[i].Steps;
+				Second.Model = MODEL_NONE;
+				Out.insert(Out.begin() + static_cast<std::ptrdiff_t>(i) + 1, Second);
+			}
+			else if (Way == 1) {
+				// Two notes joined: the first held on through the second
+				std::vector<size_t> Pairs;
+				for (size_t i = 0; i + 1 < Out.size(); ++i) {
+					Hit Joined = Out[i];
+					Joined.Steps = Out[i + 1].Step + Out[i + 1].Steps - Out[i].Step;
+					if (Out[i].Step + Out[i].Steps == Out[i + 1].Step && !Crosses(Joined) && Out.size() > 2)
+						Pairs.push_back(i);
+				}
+				if (Pairs.empty())
+					continue;
+				const size_t i = Pairs[static_cast<size_t>(R.Below(static_cast<int>(Pairs.size())))];
+				Out[i].Steps = Out[i + 1].Step + Out[i + 1].Steps - Out[i].Step;
+				Out.erase(Out.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+			}
+			else if (Way == 2) {
+				// Two even notes on a beat dotted: long, short
+				std::vector<size_t> Pairs;
+				for (size_t i = 0; i + 1 < Out.size(); ++i)
+					if (Out[i].Step % m_SPBeat == 0 && Out[i].Steps == Out[i + 1].Steps && Out[i].Steps >= 2 && Out[i].Steps % 2 == 0 &&
+						Out[i].Step + Out[i].Steps == Out[i + 1].Step)
+						Pairs.push_back(i);
+				if (Pairs.empty())
+					continue;
+				const size_t i = Pairs[static_cast<size_t>(R.Below(static_cast<int>(Pairs.size())))];
+				const int Move = Out[i].Steps / 2;
+				Out[i].Steps += Move;
+				Out[i + 1].Step += Move;
+				Out[i + 1].Steps -= Move;
+				if (Crosses(Out[i + 1]))
+					continue;
+			}
+			else {
+				// The second half anew in the kind's figures (the opening stays the motif's)
+				if (Half <= 0)
+					continue;
+				std::vector<Hit> Head;
+				for (size_t i = 0; i < Out.size(); ++i)
+					if (Out[i].Step < Half) {
+						Hit h = Out[i];
+						h.Steps = std::min(h.Steps, Half - h.Step);
+						Head.push_back(h);
+					}
+				if (Head.empty())
+					continue;
+				Figures(Half, m_SPB, Head, true);
+				Out = Head;
+			}
+			H = Out;
+		}
+	}
+
 	std::vector<Hit> BarRhythm(int b)
 	{
 		const BarPlan &B = m_Plan[static_cast<size_t>(b)];
@@ -650,6 +746,8 @@ private:
 			H = MotifRhythm(B.MotifBar);
 			if (H.empty())
 				Figures(0, m_SPB, H);
+			else if (B.Role != BAR_MOTIF)
+				VaryRhythm(H, b);
 			break;
 		case BAR_RUN: {
 			// The motif's opening notes twice, from the bar's start and from its middle
@@ -1297,10 +1395,12 @@ private:
 	// tritone and a harmonic minor's augmented second worst; less after a rest, where a phrase starts afresh
 	double Pair(const Slot &From, const Slot &To, int a, int b) const
 	{
+		// (a note struck again costs more than a step or a third: the first 30's tunes strike one again in 1 move of 100, the
+		// walks' grown ones in 10, which the user heard as hammering; feat-variety)
 		static const double COST[3][13] = {
-			{ 1.1, 0.0, 0.0, 1.4, 1.6, 2.6, 7.0, 4.0, 6.0, 6.0, 8.0, 9.0, 7.0 },
-			{ 1.5, 0.0, 0.0, 0.5, 0.6, 1.1, 5.0, 1.7, 2.8, 3.0, 4.5, 5.5, 3.6 },
-			{ 0.5, 0.1, 0.0, 0.4, 0.4, 0.7, 3.5, 0.9, 2.2, 2.4, 3.5, 4.5, 1.6 },
+			{ 1.8, 0.0, 0.0, 1.4, 1.6, 2.6, 7.0, 4.0, 6.0, 6.0, 8.0, 9.0, 7.0 },
+			{ 2.2, 0.0, 0.0, 0.5, 0.6, 1.1, 5.0, 1.7, 2.8, 3.0, 4.5, 5.5, 3.6 },
+			{ 0.8, 0.1, 0.0, 0.4, 0.4, 0.7, 3.5, 0.9, 2.2, 2.4, 3.5, 4.5, 1.6 },
 		};
 		const int d = std::abs(b - a);
 		double Cost = d <= 12 ? COST[m_Table][d] : 14.0 + d - 12;

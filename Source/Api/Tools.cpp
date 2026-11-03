@@ -12972,8 +12972,8 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 	// A hook written an octave over where the kind's melody sings grows its versions up there, and write_notes then warns
 	// that the line sits high (from feat-depth-back: Lava Forge's and Clockwork Factory's composers read that as a
 	// contradiction, the user heard Lava Forge's melody "a bit too high"): said here first, before a version is picked.
-	// The middle as write_notes' warning reads it (GUARD_LEAD_MIDDLE, C-5; GUARD_CALM_LEAD_MIDDLE, G-4, for the kinds that
-	// sing in octave 3), not in a climax, which climbs
+	// The middle as write_notes' warning reads it (GUARD_LEAD_MIDDLE, E-4; GUARD_CALM_LEAD_MIDDLE, D-4, for the kinds that
+	// sing in octave 3, since feat-variety), not in a climax, which climbs
 	if (!Q.Motif.empty() && ClimaxOver(S, Channel, From) < 0) {
 		std::vector<int> Pitches;
 		for (size_t i = 0; i < Q.Motif.size(); ++i)
@@ -12985,9 +12985,9 @@ std::string GrowMelodyTool(Session &S, const Json &Args)
 		if (KindWord.empty() || !ParseNextKind(KindWord, HookKind))
 			HookKind = NEXT_GENERAL;
 		const bool Low = MelodyOctave(HookKind) == 3;
-		if (Middle >= (Low ? 55 : 60))
+		if (Middle >= (Low ? 50 : 52))
 			Remarks.push_back(Format("The hook sits high for a melody (its middle around %s): the versions grow up there, and the "
-				"line written would sit an octave over where %s melody sings (%s). Write the hook an octave lower and grow it again "
+				"line written would sit over where %s melody sings (%s). Write the hook lower (a few steps, or an octave) and grow it again "
 				"(C-3 is middle C, A-3 440 Hz); bells and sparkles sit up there, a tune doesn't.", PitchName(Middle).c_str(),
 				HookKind == NEXT_GENERAL ? "a" : (std::string(std::strchr("aeiou", NextKindInfo(HookKind).Name[0]) != 0 ? "an " : "a ") +
 				NextKindInfo(HookKind).Name).c_str(), HookKind == NEXT_GENERAL ? "octave 3, reaching into 4" : MelodyRegisterText(HookKind)));
@@ -26063,15 +26063,16 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 // the write. Measured on the soundtrack's 57 finished tracks: no triangle there goes under F#1 (46 Hz) nor a sawtooth
 // under A-0 (55 Hz), and their leads sit in octaves 3-4, while bells, music boxes and drips play in octaves 5-6.
 const int GUARD_LOWEST = 4;				// E-0 as a pulse plays it, 41 Hz: a bass is heard from there up (the triangle's E-1)
-// A melody whose middle sits at C-5 (as a pulse plays it) and that reaches G-5 is an octave over its own (the soundtrack's
-// leads sit in octaves 3-4 and peak at A-4 to E-5, a B part around C-5)
-const int GUARD_LEAD_MIDDLE = 60, GUARD_LEAD_TOP = 67;
+// A melody whose middle sits at E-4 (as a pulse plays it) and that reaches D-5 sits high (from feat-variety: C-5 and G-5
+// before, an octave over the first 30's leads, whose middles sit at A#3 to D-4, B-3 the median, within a fifth to an
+// octave of their parts; the six songs of feat-depth-back sat at A#4, and the user heard them "a bit too high")
+const int GUARD_LEAD_MIDDLE = 52, GUARD_LEAD_TOP = 62;
 // A climax may sit a fourth higher than that: its middle at F-5 and its top at C-6 is high even there (the soundtrack's
 // climaxes climb a step to a fourth over their A, and its leads reach C#6 to F-6 at their highest; MELODY_HIGHEST)
 const int CLIMAX_LEAD_MIDDLE = GUARD_LEAD_MIDDLE + 5, CLIMAX_LEAD_TOP = GUARD_LEAD_TOP + 5;
-// A calm kind's melody (MelodyOctave 3: the kept calm songs' openings sit around E-3 to A#3) is high from G-4 and D-5,
-// an octave over its own (fix-r6-bugs); the lively kinds' and general's stay at C-5 and G-5
-const int GUARD_CALM_LEAD_MIDDLE = 55, GUARD_CALM_LEAD_TOP = 62;
+// A calm kind's melody (MelodyOctave 3: the kept calm songs' openings sit around E-3 to A#3, the first 30's soft ones'
+// middles at A#3) is high from D-4 and C-5 (G-4 and D-5 before feat-variety)
+const int GUARD_CALM_LEAD_MIDDLE = 50, GUARD_CALM_LEAD_TOP = 60;
 const double GUARD_SILENT_SHARE = 0.12;	// heard for less of its bars than this, a part leaves its channel nearly silent
 const int GUARD_LISTED = 4;				// notes a warning names
 
@@ -34627,11 +34628,25 @@ void WhatNext::GrowForm()
 	}
 	if (Here.Bass >= 0)
 		B.Set("bass_channel", ChannelName(Here.Bass));
-	B.Set("chord_style", Voiced ? "voices" : m_Picks.ChordStyle.Value.c_str());
-	if (std::string(m_Picks.ChordStyle.Value.c_str()) == "lush" && !Voiced)
+	// B plays its chords and its bass otherwise than A (from feat-variety): the first 30 change 6.7 of 8 channels at each
+	// 8-bar block, a bass 1.1 rhythms in 8 bars, where the walks, B played as A, changed 2.8 and their bass 0.2. Its chords
+	// in another style of the kind's pool, its bass the kind's moving one (else another of the pool)
+	auto OtherOf = [](const char *Pool, const std::string &Not) {
+		const std::vector<std::string> All = PoolEntries(Pool);
+		for (size_t i = 0; i < All.size(); ++i)
+			if (!All[i].empty() && All[i] != Not)
+				return All[i];
+		return Not;
+	};
+	const std::string AChords = m_Picks.ChordStyle.Value, ABass = m_Picks.BassStyle.Value;
+	const std::string BChords = Voiced || m_Like.Found ? AChords : OtherOf(Kind().ChordStyles, AChords);
+	const std::string BBass = m_Like.Found ? ABass : Kind().MovingBass != 0 && *Kind().MovingBass && ABass != Kind().MovingBass ?
+		std::string(Kind().MovingBass) : OtherOf(Kind().BassStyles, ABass);
+	B.Set("chord_style", Voiced ? "voices" : BChords.c_str());
+	if (BChords == "lush" && !Voiced)
 		B.Set("arp_frames", LushFrames());
 	B.Set("color", ChordColor(false));	// (lively: Colors gives them theirs)
-	B.Set("bass_style", m_Picks.BassStyle.Value.c_str());
+	B.Set("bass_style", BBass.c_str());
 	if (m_KindId == NEXT_ACTION)
 		B.Set("bass_instrument", "thump bass");
 	// ("and its repeat" only where A has one before this part: the Caves' B came straight after A: fix-r6-bugs)
@@ -34642,11 +34657,12 @@ void WhatNext::GrowForm()
 	const char *const AfterA = RepeatBefore ? "After %s and its repeat, " : "After %s, ";
 	if (Laid >= 0)
 		Step("form", "add_chords_and_bass", B, Format((std::string(AfterA) + "%s (%s) gives the song somewhere to go: other chords there, "
-			"played as %s's are.").c_str(), First.Name.c_str(), m_Form[static_cast<size_t>(Laid)].Name.c_str(), RangeText(At, At + LaidBars -
-			1).c_str(), First.Name.c_str()));
+			"played otherwise than %s's (%s chords, a %s bass).").c_str(), First.Name.c_str(), m_Form[static_cast<size_t>(Laid)].Name.c_str(),
+			RangeText(At, At + LaidBars - 1).c_str(), First.Name.c_str(), Voiced ? "voiced" : BChords.c_str(), BBass.c_str()));
 	else
 		Step("form", "add_chords_and_bass", B, Format((std::string(AfterA) + "a B part on other chords gives the song somewhere to go: "
-			"bars %d-%d, played as %s's are.").c_str(), First.Name.c_str(), At, At + Length - 1, First.Name.c_str()));
+			"bars %d-%d, played otherwise than %s's (%s chords, a %s bass).").c_str(), First.Name.c_str(), At, At + Length - 1,
+			First.Name.c_str(), Voiced ? "voiced" : BChords.c_str(), BBass.c_str()));
 }
 
 // The parts the kind wants, and the form: the lead's sound, an A part's chords and bass, sections, the melody, more
@@ -35207,7 +35223,9 @@ bool WhatNext::Develop()
 			Plan.push_back("octave double");	// (a stage's climax lifts with the loud lines: the free Airship's harmony and octave)
 		// (the tune an octave under is a stage's: under a calm mix it weighs as a chord layer and covered the melody)
 		static const char *const SPACIOUS[] = { "echo", "counter-line", "harmony", "" };
-		static const char *const SOFT[] = { "harmony", "counter-line", "echo", "" };
+		// (a soft song's line answers in the tune's rests first, from feat-variety: the first 30's second lines put a quarter of
+		// their notes there, the walks' harmonies under a tenth)
+		static const char *const SOFT[] = { "counter-line", "harmony", "echo", "" };
 		// (a stage keeps the harmony for its peak, where it lifts the song most: the free Airship's climax; A' takes a line that
 		// answers instead)
 		static const char *const BAND[] = { "counter-line", "echo", "octave double", "harmony" };
@@ -36147,15 +36165,42 @@ bool WhatNext::TipStep(const std::string &Tip)
 			return false;
 		const int Melody = m_Melody, Low = m_Parts.Bass;
 		const std::vector<std::pair<int, int> > Moves = BassOctaveMoves(S, Melody, Low, 0, Total);
-		std::map<std::pair<int, int>, int> Spans;	// the bars of each move, and the row it lands on
-		for (size_t i = 0; i < Moves.size(); ++i)
-			Spans.insert(std::make_pair(std::make_pair(S.Time.BarOf(Moves[i].first), S.Time.BarOf(Moves[i].second)), Moves[i].second));
+		// (the moves of one part in one call, from feat-variety: Lava Forge's composer got four rewrites in a row, a span at a
+		// time, each to root_fifth, so the whole bass ended in one figure; the song's own bass styles are tried first, each with
+		// the landing chord over its third or its fifth, before another style)
+		std::map<std::pair<int, int>, int> Spans;	// the bars of each part's moves, and the row the first lands on
+		std::map<std::pair<int, int>, std::vector<int> > Landings;
+		for (size_t i = 0; i < Moves.size(); ++i) {
+			int From = S.Time.BarOf(Moves[i].first), To = S.Time.BarOf(Moves[i].second);
+			for (size_t f = 0; f < m_Form.size(); ++f)
+				if (m_Form[f].Named && From >= m_Form[f].FirstBar && From <= m_Form[f].LastBar) {
+					std::pair<int, int> Key(From, To);
+					for (std::map<std::pair<int, int>, int>::iterator k = Spans.begin(); k != Spans.end(); ++k)
+						if (k->first.first >= m_Form[f].FirstBar && k->first.first <= m_Form[f].LastBar)
+							Key = k->first;
+					const std::pair<int, int> Grown(std::min(Key.first, From), std::max(Key.second, std::min(To, m_Form[f].LastBar)));
+					std::vector<int> Rows = Landings[Key];
+					Rows.push_back(Moves[i].second);
+					const int Row = Spans.count(Key) ? Spans[Key] : Moves[i].second;
+					Spans.erase(Key);
+					Landings.erase(Key);
+					Spans[Grown] = Row;
+					Landings[Grown] = Rows;
+					From = -1;
+					break;
+				}
+			if (From >= 0) {
+				Spans.insert(std::make_pair(std::make_pair(From, To), Moves[i].second));
+				Landings[std::make_pair(From, To)].push_back(Moves[i].second);
+			}
+		}
 		std::vector<std::string> Styles;
-		for (const char *Style : { K.BassStyle, "root_fifth", "half", "roots" })
+		for (const char *Style : { m_Picks.BassStyle.Value.c_str(), K.MovingBass, K.BassStyle, "root_fifth", "half", "roots" })
 			if (Style != 0 && *Style && std::find(Styles.begin(), Styles.end(), Style) == Styles.end())
 				Styles.push_back(Style);
 		for (std::map<std::pair<int, int>, int>::const_iterator b = Spans.begin(); b != Spans.end(); ++b) {
 			const int FromBar = b->first.first, ToBar = b->first.second;
+			const std::vector<int> &Lands = Landings[b->first];
 			const int First = S.Time.BarStart(FromBar), End = std::min(Total, S.Time.BarEnd(ToBar));
 			std::vector<ChordAt> Heard = SongChords(S, First, End, m_Key, m_Melody);
 			if (Heard.empty())
@@ -36168,21 +36213,24 @@ bool WhatNext::TipStep(const std::string &Tip)
 			A.Set("melody_channel", ChannelName(m_Melody));
 			A.Set("chord_channel", "none");
 			A.Set("bass_channel", ChannelName(m_Parts.Bass));
+			for (size_t i = 0; i < Styles.size(); ++i)
 			for (int Over = 0; Over < 3; ++Over) {
 				std::vector<ChordAt> Chords = Heard;
 				bool Moved = Over == 0;
-				for (size_t c = 0; c < Chords.size() && !Moved; ++c)
-					if (b->second >= Chords[c].Row && b->second < Chords[c].Row + Chords[c].Rows) {
-						const int Tone = Over == 1 ? Chords[c].C.Third() : Chords[c].C.Fifth();
-						if (Tone > 0) {
-							Chords[c].C.Bass = (Chords[c].C.Root + Tone) % 12;
-							Moved = true;
+				for (size_t c = 0; c < Chords.size() && Over > 0; ++c)
+					for (size_t l = 0; l < Lands.size(); ++l)
+						if (Lands[l] >= Chords[c].Row && Lands[l] < Chords[c].Row + Chords[c].Rows) {
+							const int Tone = Over == 1 ? Chords[c].C.Third() : Chords[c].C.Fifth();
+							if (Tone > 0) {
+								Chords[c].C.Bass = (Chords[c].C.Root + Tone) % 12;
+								Moved = true;
+							}
+							break;
 						}
-					}
 				if (!Moved)
 					continue;
 				A.Set("chords", ProgressionText(Chords, SongBarSpans(S, First, End), m_Key, false, 256));
-				for (size_t i = 0; i < Styles.size(); ++i) {
+				{
 					A.Set("bass_style", Styles[i]);
 					int Added = 0;
 					if (TryWriteHearing(S, "add_chords_and_bass", A, FromBar, ToBar, m_Melody, Added, [&](Session &After) {
@@ -40808,8 +40856,8 @@ std::string ToolSet::Instructions()
 		"inverted, extended); phrases of two or four bars that breathe (a held note or a rest at the end); chord tones on "
 		"strong beats and steps between them; one high point in each section; long and short notes mixed (dotted rhythms, "
 		"syncopation). Not a scale run, not eighth notes without a rest. For warmth, a calm pulse lead lives mostly in octave 3 "
-		"(C-3 to C-4) and reaches into octave 4 at its high points; a lively one an octave up (its middle around C-4 to "
-		"E-4). Higher still, the pulses turn thin and the warm middle of the sound is left empty. Write a melody in steps (write_notes' notes as text, a token an eighth, | between bars: a pitch "
+		"(C-3 to C-4) and reaches into octave 4 at its high points; a lively one too, its middle around A-3 to D-4 (the "
+		"soundtrack's first 30 sit around B-3, within a fifth to an octave of their chords). Higher still, the pulses turn thin and the warm middle of the sound is left empty. Write a melody in steps (write_notes' notes as text, a token an eighth, | between bars: a pitch "
 		"starts a note, - holds it a step more, across | too, . is a step of rest): \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 -\". "
 		"A phrase breathes at its end, not at every bar line: inside it, let notes run up to the bar line or hold one across "
 		"it. read_notes with format steps gives a part back that way, to change and write again. grow_melody grows a hook (4-7 "
@@ -41243,13 +41291,13 @@ static std::string KindRecipe(const std::string &Kind, const std::string &Idea, 
 		"notes a frame or two late (Gxx 01-02), in a rhythm and a shape of the tune's own: not quarter notes by step every "
 		"time (a dotted rhythm, a rest on beat 1, a turn around the high note, a fall of a sixth after it); mostly in octave 3",
 		"a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
-		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, mostly in octave 4 (its middle around C-4 to E-4), reaching into "
-		"octave 5 at its high points",
+		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, its middle around A-3 to D-4, reaching into "
+		"octave 4 at its high points",
 		"a tune that smiles: short phrases of 2 bars, question and answer, each ending on a held note or a rest, a skip up "
 		"(a third, a sixth) and steps down, a dotted or a lilting rhythm, chord tones on the beats, the answer coming home to "
 		"the tonic; mostly in octave 3",
 		"a motif a player would hum, phrases of 2 or 4 bars ending on a held note "
-		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, mostly in octave 4 (its middle around C-4 to E-4)") +
+		"or a rest, chord tones on strong beats, one high point a section, long and short notes mixed, its middle around A-3 to D-4") +
 		". The melody must breathe: about 2 of every 3 two-bar spans end on a rest of a beat or more or a note held two "
 		"beats or more (review_arrangement counts them and names the bars that run on). Write it in steps (notes as text: "
 		"\"5: D4 G4 A4 B4 - A4 G4 -\", - holds across | too): it breathes at a phrase's end, not at every bar line. Or write "

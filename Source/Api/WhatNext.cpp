@@ -393,7 +393,7 @@ const NextKind KINDS[] = {
 		"open fields, travel, an airship flight", "wide and hopeful: the road ahead, a tune that leaps upward over a rolling bass "
 		"and a steady march",
 		"wide: a leap up of a fifth or a sixth (an octave at the high point) and steps back down, phrases of 2 or 4 bars that "
-		"end on a held note, a dotted rhythm that marches, mostly octave 4, reaching into 5 at each part's high point",
+		"end on a held note, a dotted rhythm that marches, its middle around A-3 to D-4, reaching into octave 4 at each part's high point",
 		"a harmony a third or sixth under the tune in the repeat, the drums busier, the bass in octaves for the last time "
 		"round, a fill and a crash into each part",
 		"bloom lead|lead|brass", "broken|arpeggio|stabs", "arpeggio|octaves", "basic|four_on_floor", "128.6|112.5", "D major|G major|Bb major|A major|F major", false },
@@ -670,8 +670,108 @@ bool KindWantsMinor(int Kind)
 	return NextKindInfo(Kind).KeyMode < 0;
 }
 
-// Eight bars each, ending open (on V, or IV for a calm song), so a repeat, a break or the loop leads back in
+namespace {
+
+std::vector<std::string> ProgressionBars(const std::string &Progression)
+{
+	std::vector<std::string> Bars;
+	std::string Item;
+	for (size_t i = 0; i < Progression.size(); ++i) {
+		if (Progression[i] == '|') {
+			const size_t First = Item.find_first_not_of(' '), Last = Item.find_last_not_of(' ');
+			if (First != std::string::npos)
+				Bars.push_back(Item.substr(First, Last - First + 1));
+			Item.clear();
+		}
+		else
+			Item += Progression[i];
+	}
+	return Bars;
+}
+
+// The first chord of a bar ("IV" of "IV V")
+std::string FirstChordOf(const std::string &Bar)
+{
+	const size_t Space = Bar.find(' ');
+	return Space == std::string::npos ? Bar : Bar.substr(0, Space);
+}
+
+bool PlainDegree(const std::string &Chord)
+{
+	return !Chord.empty() && Chord.find_first_not_of("IViv") == std::string::npos;
+}
+
+std::string PlainProgression(int Kind, bool Minor, bool B, bool Dorian);
+
+}	// namespace
+
+std::string EnrichedProgression(const std::string &Progression, bool Minor)
+{
+	std::vector<std::string> Bars = ProgressionBars(Progression);
+	if (Bars.size() != 8)
+		return Progression;
+	for (size_t b = 0; b < Bars.size(); ++b)
+		if (Bars[b].find(' ') != std::string::npos)
+			return Progression;	// (written with its own half bars)
+	const std::string Tonic = Minor ? "i" : "I";
+	// A chord from outside the key: in a major key the first IV of bars 6-7 borrowed from the minor (iv), else a V there the
+	// mixolydian bVII; in a minor key the first iv there the dorian IV
+	for (size_t b = 5; b < 7; ++b) {
+		if (!Minor && Bars[b] == "IV" && Bars[b + 1] != "IV") {
+			Bars[b] = "iv";
+			break;
+		}
+		if (!Minor && Bars[b] == "V" && b + 1 < 7) {
+			Bars[b] = "bVII";
+			break;
+		}
+		if (Minor && Bars[b] == "iv" && Bars[b + 1] != "iv") {
+			Bars[b] = "IV";
+			break;
+		}
+	}
+	// The cadences change on the half bar: the fourth bar leads into the fifth (the dominant into the tonic, else the next
+	// chord's own dominant), the last into the loop or the next part
+	{
+		const std::string &X = Bars[3], Next = FirstChordOf(Bars[4]);
+		if (Next == Tonic) {
+			if (X != "V" && X != "v" && X != "V7")
+				Bars[3] = X + " V";
+		}
+		else if (PlainDegree(Next) && Next != X && Next != "V" && Next != "v" && Next != "VII" && Next != "III" && Next != "vii")
+			Bars[3] = X + " V/" + Next;
+	}
+	{
+		const std::string X = Bars[7], Before = FirstChordOf(Bars[6]);
+		if (X == "V")
+			Bars[7] = Minor ? (Before != "iv" && Before != "IV" ? "iv V" : "VI V") : Before == "iv" ? "bVI V" : Before != "IV" ? "IV V" :
+				"ii V";
+		else if (X == "IV" && !Minor)
+			Bars[7] = Before != "iv" ? "IV iv" : "ii IV";
+		else if (X == "VII" && Minor)
+			Bars[7] = Before != "VI" ? "VI VII" : "iv VII";
+		else if ((X == "v" || X == "VII" || X == "bVII") && Before != "IV" && Before != "iv")
+			Bars[7] = std::string(Minor ? "iv " : "IV ") + X;
+		else if (X == Tonic && Before != "V")
+			Bars[7] = Tonic + " V";
+	}
+	std::string Out = "|";
+	for (size_t b = 0; b < Bars.size(); ++b)
+		Out += " " + Bars[b] + " |";
+	return Out;
+}
+
+// Eight bars each, ending open (on V, or IV for a calm song), so a repeat, a break or the loop leads back in. Each with
+// its cadences on the half bar and a chord from outside the key (EnrichedProgression, from feat-variety: the first 30
+// change chords 1.56 times a bar, a third of them from outside the key, 7 kinds of those in a song; the walks' 1.02, 2)
 std::string NextProgression(int Kind, bool Minor, bool B, bool Dorian)
+{
+	return EnrichedProgression(PlainProgression(Kind, Minor, B, Dorian), Minor);
+}
+
+namespace {
+
+std::string PlainProgression(int Kind, bool Minor, bool B, bool Dorian)
 {
 	if (Kind == NEXT_CALM) {
 		if (Minor)
@@ -725,6 +825,8 @@ std::string NextProgression(int Kind, bool Minor, bool B, bool Dorian)
 	return B ? "| IV | V | iii | vi | IV | V | ii | V |" : "| I | V | vi | IV | I | V | IV | V |";
 }
 
+}	// namespace
+
 // The example phrase
 
 namespace {
@@ -758,9 +860,11 @@ bool Has(const std::vector<int> &Classes, int PitchClass)
 
 }	// namespace
 
+// The tonic from E-3 to D#4 (from feat-variety: G-3 to F#4 before, which put the walks' tunes around G-4, where the first
+// 30's sit around B-3, within a fifth to an octave of their parts; E minor's home was E-4)
 int TuneHome(const Key &K)
 {
-	return 36 + Mod12(K.Tonic) + (Mod12(K.Tonic) < 7 ? 12 : 0);
+	return 36 + Mod12(K.Tonic) + (Mod12(K.Tonic) < 4 ? 12 : 0);
 }
 
 std::vector<TuneNote> ExampleTune(const Key &K, int FirstBar, int Bars, int BeatsPerBar, int RowsPerBeat,
@@ -1015,9 +1119,9 @@ int MelodyOctave(int Kind)
 
 const char *MelodyRegisterText(int Kind)
 {
-	return MelodyOctave(Kind) == 4 ? "mostly in octave 4 (its middle around C-4 to E-4), reaching into octave 5 at its high points" :
-		MelodyOctave(Kind) == 3 ? "mostly in octave 3, reaching into octave 4 at its high points" :
-		"mostly in octave 3 for a calm song, octave 4 for a lively one";
+	return MelodyOctave(Kind) == 4 ? "its middle around A-3 to D-4, reaching into octave 4 at its high points" :
+		MelodyOctave(Kind) == 3 ? "mostly in octave 3 (its middle around G-3 to C-4), reaching into octave 4 at its high points" :
+		"mostly in octave 3, its middle around A-3 to C-4, reaching into octave 4 at its high points";
 }
 
 // The offered hook's highest note: general's and cozy's under B-4, so its home sits no higher than E-4; the lively kinds'
