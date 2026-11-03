@@ -32191,6 +32191,8 @@ void CheckFlavourWalk(int Flavour, int Kind, const char *Name, bool Core, int Li
 		for (const Json *pFound : FindingsOf(Found, Kind_))
 			Count += std::string(Kind_) != "clash" || TextOf(pFound, "severity") != "low" ? 1 : 0;
 		Check(Count == 0, (What + " " + Kind_).c_str(), Line);
+		if (Count > 0)
+			std::printf("%s\n", Run(Song, "check_song", "{" + (Style.empty() ? std::string() : Style.substr(2)) + "}").Text.c_str());
 	}
 	// The reply names the flavour, and a step says what came from it
 	bool Named = false, Said = false;
