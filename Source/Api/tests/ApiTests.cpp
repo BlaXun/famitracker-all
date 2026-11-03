@@ -28486,6 +28486,145 @@ void TestStrongBeats()
 	}
 }
 
+// Seams (from feat-seams): a song built like Frozen Lake (variety)'s intro: Pulse 1's broken chords (D, then F#m7 for the
+// intro's last half bar), the triangle's roots, and the melody (VRC6 Pulse 1) coming in with A at bar 5 after a lead-in in
+// bar 4. Lead is its notes there: pitch at row (from bar 4's start), ending at End (-1: none, it rings on)
+void SeamSong(FakeSong &Song, const std::vector<std::pair<int, const char *> > &Lead, int End, const char *Downbeat = "A-3",
+	bool Hole = false)
+{
+	Song.Info.DirectChanges = true;
+	Song.Info.TrackName = "Seams";
+	Song.Info.KeyChosen = true;
+	ParseKey("D major", Song.Info.ChosenKey.K);
+	Song.Info.Sections.push_back(Section("Intro", 0, 0));
+	Song.Info.Sections.push_back(Section("A", 1, 2));
+	static const char *const ARPS[4][4] = { { "D-3", "F#3", "A-3", "F#3" }, { "G-2", "B-2", "D-3", "B-2" },
+		{ "A-2", "C#3", "E-3", "C#3" }, { "F#2", "A-2", "C#3", "E-3" } };
+	static const int CHORDS[12] = { 0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 2, 0 };
+	static const char *const ROOTS[3] = { "D-2", "G-2", "A-2" };
+	for (int Bar = 0; Bar < 12; ++Bar)
+		for (int Step = 0; Step < 8; ++Step) {
+			const int Chord = Bar == 3 && Step >= 4 ? 3 : CHORDS[Bar];
+			if (Hole && Bar == 3 && Step > 4)
+				continue;	// (the chord held, nothing starting after it)
+			Song.Put(0, Bar * 16 + Step * 2, ARPS[Chord][Step % 4], 2, 10);
+			if (Step % 4 == 0)
+				Song.Put(2, Bar * 16 + Step * 2, Chord == 3 ? "F#2" : ROOTS[Chord], 1);
+		}
+	for (size_t i = 0; i < Lead.size(); ++i)
+		Song.Put(5, 48 + Lead[i].first, Lead[i].second, 0, 9);
+	if (End >= 0)
+		Song.End(5, 48 + End, NOTE_RELEASE);
+	const char *const TUNE[16] = { Downbeat, "F#3", "B-3", "D-4", "A-3", "F#3", "E-4", "C#4", "F#4", "D-4", "G-4", "B-3",
+		"E-4", "C#4", "D-4", "A-3" };
+	for (int i = 0; i < 16; ++i)
+		Song.Put(5, 64 + i * 8, TUNE[i], 0, 9);
+}
+
+// The melody's lead-in into a section (check_song's lead_in, polish's seams touch): Frozen Lake's D-4 over F#m7 (a
+// semitone over its C#, though no note sounds with one, so check_song heard no clash) cut a beat before A's first note is
+// found and fixed (to C#4, held into the downbeat); an appoggiatura stepping on to the downbeat isn't; a pickup that
+// stops a beat and a half before it is (a calm song may breathe there); the downbeat's own note rubbing its chord is
+void TestSeams()
+{
+	const std::string Args = "{\"format\": \"json\", \"melody_channel\": \"VRC6 Pulse 1\"}";
+	{
+		FakeSong Song(3);
+		SeamSong(Song, { { 8, "D-4" } }, 12);
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "clash"), 0);
+		const std::vector<const Json *> Found = FindingsOf(Out, "lead_in", "lead_in");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		CHECK_EQ(IntegerOf(Out.Get("counts"), "lead_in"), 1);
+		if (!Found.empty()) {
+			CHECK_EQ(TextOf(Found[0], "severity"), std::string("medium"));
+			CHECK_HAS(TextOf(Found[0], "message"), "The melody (VRC6 Pulse 1) stumbles into a section's start: into \"A\" (bar 5): "
+				"D-4 at bar 4 beat 3 over F#m7, a semitone from its C# and the lead-in stops 1 beat before the downbeat");
+			const Json *pSeams = Found[0]->Get("seams");
+			CHECK(pSeams != 0 && pSeams->Size() == 1);
+			if (pSeams != 0 && pSeams->Size() == 1)
+				CHECK_EQ(WriteJson(pSeams->At(0)), std::string("{\"into\":\"A\",\"loop\":false,\"bar\":5,\"lead_in_bar\":4,\"rubs\":1,"
+					"\"gap_beats\":1,\"downbeat_rubs\":false}"));
+			const Json *pFix = Found[0]->Get("fix");
+			CHECK(pFix != 0 && pFix->Get("arguments") != 0);
+			if (pFix != 0 && pFix->Get("arguments") != 0)
+				CHECK_EQ(WriteJson(*pFix->Get("arguments")), std::string("{\"touches\":[\"seams\"],\"melody_channel\":\"VRC6 Pulse 1\","
+					"\"from_bar\":4,\"to_bar\":5}"));
+		}
+		ProblemList List;
+		std::string Error;
+		CHECK(List.Read(Run(Song, "check_song", Args).Text, Error));
+		CHECK_EQ(List.Count(PROBLEM_LEAD_IN), 1);
+		CHECK_EQ(std::string(ProblemKindId(PROBLEM_LEAD_IN)), std::string("lead_in"));
+		CHECK_EQ(ProblemSeverity(PROBLEM_LEAD_IN), 2);
+		CHECK_HAS(Run(Song, "review_arrangement", "{}").Text, "stumbles into a section's start");
+		CHECK_HAS(Run(Song, "what_next", "{\"all\": true}").Text, "polish {\"touches\":[\"seams\"],\"melody_channel\":\"VRC6 Pulse 1\","
+			"\"from_bar\":4,\"to_bar\":5}");
+		if (!Found.empty()) {
+			std::string Reply;
+			CHECK(RunFix(Song, *Found[0], &Reply));
+			CHECK_HAS(Reply, "the lead-in's D-4 at bar 4 beat 3 to C#4 (F#m7), held into the downbeat into \"A\" (bar 5)");
+			CHECK_EQ(Song.Rows[5][56].Pitch(), Song.Rows[5][64].Pitch() + 4);
+			CHECK(!Song.Rows[5][60].IsEnd());
+			const Json After = Parse(Run(Song, "check_song", Args).Text);
+			CHECK(FindingsOf(After, "lead_in").empty());
+			CHECK_EQ(IntegerOf(After.Get("counts"), "clash"), 0);
+			const ToolResult Again = Run(Song, "polish", "{\"touches\": [\"seams\"]}");
+			CHECK(Again.IsError);
+			CHECK_HAS(Again.Text, "There was no seam to fix there");
+			CHECK_LACKS(Run(Song, "what_next", "{\"all\": true}").Text, "\"seams\"");
+		}
+	}
+	{
+		// The default touches fix it too (finish_song's polish has them)
+		FakeSong Song(3);
+		SeamSong(Song, { { 8, "D-4" } }, 12);
+		CHECK_HAS(Run(Song, "polish", "{}").Text, "to C#4 (F#m7), held into the downbeat");
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "lead_in").empty());
+	}
+	{
+		// An appoggiatura: G-4 over F#m7 steps on to the downbeat's F#4, as the user's songs do (002 Saveroom's F-4 to E-4)
+		FakeSong Song(3);
+		SeamSong(Song, { { 8, "G-4" } }, -1, "F#4");
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "lead_in").empty());
+		CHECK_HAS(ToolSet(Song).Seams(), "A bar 5: G-4(2.00/2.00 res)*RUB F#/F#m7 pickup 1 gap 0.00 down F#4");
+	}
+	{
+		// A pickup on a chord tone that stops a beat and a half before the downbeat, nothing starting in the hole it leaves:
+		// found, but not on a calm track; the fix holds it
+		FakeSong Song(3);
+		SeamSong(Song, { { 8, "C#4" } }, 10, "A-3", true);
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		CHECK_EQ(FindingsOf(Out, "lead_in").size(), static_cast<size_t>(1));
+		CHECK(FindingsOf(Parse(Run(Song, "check_song", "{\"format\": \"json\", \"style\": \"calm\"}").Text), "lead_in").empty());
+		const std::vector<const Json *> Found = FindingsOf(Out, "lead_in");
+		if (!Found.empty()) {
+			CHECK_HAS(TextOf(Found[0], "message"), "into \"A\" (bar 5): the lead-in stops 1.5 beats before the downbeat");
+			std::string Reply;
+			CHECK(RunFix(Song, *Found[0], &Reply));
+			CHECK_HAS(Reply, "the lead-in's C#4 at bar 4 beat 3, held into the downbeat into \"A\" (bar 5)");
+			CHECK(!Song.Rows[5][58].IsEnd());
+			CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "lead_in").empty());
+		}
+	}
+	{
+		// The downbeat's own note rubbing its chord (D#4 over D for two beats): it moves, the lead-in (A-3 into it) stays
+		FakeSong Song(3);
+		SeamSong(Song, { { 8, "A-3" } }, -1, "D#4");
+		const Json Out = Parse(Run(Song, "check_song", Args).Text);
+		const std::vector<const Json *> Found = FindingsOf(Out, "lead_in");
+		CHECK_EQ(Found.size(), static_cast<size_t>(1));
+		if (!Found.empty()) {
+			Check(Found[0]->Get("fix") != 0 && !Found[0]->Get("fix")->IsNull(), WriteJson(*Found[0]).c_str(), __LINE__);
+			CHECK_HAS(TextOf(Found[0], "message"), "the downbeat's D#4 over D, a semitone from its D");
+			std::string Reply;
+			CHECK(RunFix(Song, *Found[0], &Reply));
+			CHECK_HAS(Reply, "the downbeat's D#4 at bar 5 beat 1 to ");
+			CHECK_EQ(Song.Rows[5][56].Pitch(), 45);
+			CHECK(FindingsOf(Parse(Run(Song, "check_song", Args).Text), "lead_in").empty());
+		}
+	}
+}
 // The texture (from feat-texture): a chord part that plays the same way all through changes figure where the song turns
 // (check_song's chords_throughout, its fix vary_part's restrike since feat-depth-back, what_next's step); a song whose parts all play the same
 // channels with the same sounds gets the review's tip and what_next's highlight, a new sound for the melody in B; an outro
@@ -33061,6 +33200,7 @@ int main()
 	RUN(TestChordDrones);
 	RUN(TestTexture);
 	RUN(TestStrongBeats);
+	RUN(TestSeams);
 	RUN(TestColorRubs);
 	RUN(TestIntroNoteIntoLoop);
 	RUN(TestEchoInTuneWhereDoubled);

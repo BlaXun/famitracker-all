@@ -15006,12 +15006,13 @@ struct LeadIn {
 	std::vector<SeamNote> Notes;
 	bool Pickup;			// the lead-in starts after a rest of a beat or more in the melody (or nothing before it)
 	int Gap;				// rows from the last lead-in note's end to Before, the melody silent
+	bool Hole;				// and no other part starts a note there either
 	int Down;				// the downbeat's melody note (into the pitched notes), -1 for none
 	int DownPitch, DownRubs;
 	int DownRows;			// how long the downbeat's note sounds
 	bool DownResolves;		// it steps on to the next note (as SeamNote::Resolves)
 	Chord DownChord;
-	LeadIn() : Target(0), Before(0), Loop(false), Pickup(false), Gap(0), Down(-1), DownPitch(0), DownRubs(-1), DownRows(0),
+	LeadIn() : Target(0), Before(0), Loop(false), Pickup(false), Gap(0), Hole(false), Down(-1), DownPitch(0), DownRubs(-1), DownRows(0),
 		DownResolves(false) {}
 };
 
@@ -15120,13 +15121,28 @@ std::vector<LeadIn> FindLeadIns(Session &S, int Melody, const Key &K)
 	for (size_t w = 0; w < Wants.size(); ++w) {
 		LeadIn L = Wants[w];
 		const int Window = std::max(0, L.Before - static_cast<int>(SEAM_WINDOW_BEATS * R + 0.5));
-		for (size_t i = 0; i < Notes.size(); ++i) {
+		const int BarIn = std::max(0, L.Before - S.Time.BarLength(S.Time.BarOf(L.Before - 1)));
+		std::vector<size_t> In;	// the melody's notes starting in the bar before
+		for (size_t i = 0; i < Notes.size() && Notes[i].Row < L.Before; ++i)
+			if (Notes[i].Volume > 0 && Notes[i].Row >= BarIn)
+				In.push_back(i);
+		// A pickup: the notes after the bar's last rest of a beat or more (or the melody's silence before them); else the notes
+		// starting in the last SEAM_WINDOW_BEATS (a note held on into them from before ends a phrase: MudCave's G#3 held
+		// over Cm into B)
+		size_t Lead = In.size();
+		for (size_t k = In.size(); k-- > 0 && Lead == In.size(); ) {
+			const size_t i = In[k];
+			const int Before = i > 0 ? Notes[i - 1].Row + std::max(1, Notes[i - 1].Rows) : -R;
+			if (Notes[i].Row - Before >= R)
+				Lead = k;
+		}
+		L.Pickup = Lead < In.size();
+		for (size_t k = 0; k < In.size(); ++k) {
+			const size_t i = In[k];
 			const NoteInfo &N = Notes[i];
-			if (N.Row >= L.Before)
-				break;
+			if (L.Pickup ? k < Lead : N.Row < Window)
+				continue;
 			const int End = std::min(N.Row + std::max(1, N.Rows), L.Before);
-			if (N.Volume <= 0 || N.Row < Window)
-				continue;	// (a note held on into the lead-in from before it ends a phrase: MudCave's G#3 held over Cm into B)
 			SeamNote Note;
 			Note.Note = static_cast<int>(i);
 			Note.Pitch = LandedPitch(N);
@@ -15147,11 +15163,12 @@ std::vector<LeadIn> FindLeadIns(Session &S, int Melody, const Key &K)
 			}
 		if (L.Notes.empty() || L.Down < 0)
 			continue;	// (no lead-in, or nothing it leads to: a section starting on a rest)
-		const NoteInfo &FirstIn = Notes[static_cast<size_t>(L.Notes.front().Note)];
-		const int Previous = L.Notes.front().Note - 1;	// the melody's note before the lead-in
-		L.Pickup = FirstIn.Row >= Window && (Previous < 0 || Notes[static_cast<size_t>(Previous)].Row +
-			std::max(1, Notes[static_cast<size_t>(Previous)].Rows) <= FirstIn.Row - R);
 		L.Gap = L.Before - L.Notes.back().End;
+		L.Hole = L.Gap > 0;
+		for (int c = 0; c < S.ChannelCount() && L.Hole; ++c)
+			if (c != Melody)
+				for (int r = L.Notes.back().End; r < L.Before && L.Hole; ++r)
+					L.Hole = !S.Cells(c)[static_cast<size_t>(r)].HasNote();
 		// Each note's next: the lead-in's next, then the downbeat's note (across the loop's wrap), else the melody's next
 		for (size_t n = 0; n < L.Notes.size(); ++n) {
 			SeamNote &Note = L.Notes[n];
@@ -15200,11 +15217,12 @@ std::vector<LeadIn> FindLeadIns(Session &S, int Melody, const Key &K)
 // on to the note after it by a semitone or a tone (as an appoggiatura does: 002 Saveroom's F-4 over C7 to E-4, Rail
 // Rattle's C-4 over G to B-3, Nightshade Wood's G-5 over Bsus4 to F#6) where the seam has a downbeat note: none of theirs,
 // while Frozen Lake's D-4 over F#m7 (to A-3) and Lava Forge's F#3 and B-3 over C (to G-3) do. A pickup (after a rest of a
-// beat or more) that stops before the downbeat leaves the melody silent there: theirs leave a beat at most (011
-// NewCityRandomHouse's lone A-4 a beat before A-3, Sunless Deep's calm pickups), so SEAM_GAP_BEATS (a calm song's
-// SEAM_CALM_GAP_BEATS: it may breathe) or more is a gap. The downbeat's note rubbing the chord there for SEAM_DOWN_BEATS
-// or more without stepping on: none of theirs (010 Mines' B-2 over C lasts half a beat)
-const double SEAM_GAP_BEATS = 1.5, SEAM_CALM_GAP_BEATS = 2.0, SEAM_DOWN_BEATS = 1.0;
+// beat or more) that stops before the downbeat leaves the melody silent there, and theirs do (007 Shopping's 2.25 beats,
+// 011 NewCityRandomHouse's lone A-4 a beat before A-3, while the other parts go on); a hole where no part starts a note
+// either they leave half a beat at most (Undefined), a calm one a beat (Sunless Deep), so a hole of SEAM_GAP_BEATS (a calm
+// song's SEAM_CALM_GAP_BEATS: it may breathe) or more after a pickup is a gap. The downbeat's note rubbing the chord there
+// for SEAM_DOWN_BEATS or more without stepping on: none of theirs (010 Mines' B-2 over C lasts half a beat)
+const double SEAM_GAP_BEATS = 1.0, SEAM_CALM_GAP_BEATS = 2.0, SEAM_DOWN_BEATS = 1.0;
 
 struct SeamTrouble {
 	std::vector<size_t> Rubs;	// into the lead-in's notes
@@ -15220,7 +15238,7 @@ SeamTrouble TroubleOf(const Session &S, const LeadIn &L, int Style)
 	for (size_t n = 0; n < L.Notes.size(); ++n)
 		if (L.Notes[n].Rubs >= 0 && !L.Notes[n].Resolves)
 			T.Rubs.push_back(n);
-	T.Gap = L.Pickup && L.Gap >= (Style == STYLE_CALM ? SEAM_CALM_GAP_BEATS : SEAM_GAP_BEATS) * R - 1e-9;
+	T.Gap = L.Pickup && L.Hole && L.Gap >= (Style == STYLE_CALM ? SEAM_CALM_GAP_BEATS : SEAM_GAP_BEATS) * R - 1e-9;
 	T.Down = L.DownRubs >= 0 && L.DownRows >= SEAM_DOWN_BEATS * R - 1e-9 && !L.DownResolves;
 	return T;
 }
@@ -41665,7 +41683,7 @@ std::string ToolSet::Seams()
 				if (N.Rubs >= 0)
 					Out += Format("*RUB %s/%s", NoteClassName(N.Rubs, K).c_str(), ChordName(N.C, K).c_str());
 			}
-			Out += Format(" pickup %d gap %.2f", L.Pickup ? 1 : 0, L.Gap / static_cast<double>(R));
+			Out += Format(" pickup %d gap %.2f%s", L.Pickup ? 1 : 0, L.Gap / static_cast<double>(R), L.Hole ? " hole" : "");
 			if (L.Down >= 0)
 				Out += Format(" down %s(%.2f%s)%s", PitchName(L.DownPitch).c_str(), L.DownRows / static_cast<double>(R),
 					L.DownResolves ? " res" : "", L.DownRubs >= 0 ? Format("*DOWNRUB %s/%s",
