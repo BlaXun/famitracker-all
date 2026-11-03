@@ -32515,7 +32515,7 @@ void TestRolesChangeInSong()
 	const int Chords = VolumeAt(0), Harmony = VolumeAt(32), Tune = Song.Rows[0][0].Volume;
 	std::printf("Roles in one channel: chords at %d, the harmony at %d, the tune at %d\n%s\n", Chords, Harmony, Tune, Result.Text.c_str());
 	Check(Harmony > Chords && Harmony >= 6, Result.Text.c_str(), __LINE__);
-	CHECK_HAS(Result.Text, "2A03 Pulse 2 (a second line)");
+	CHECK_HAS(Result.Text, "2A03 Pulse 2 (a second line, bars 3-4)");
 	// The lively mix, the stage's: the harmony set as a line, not crushed with the chords
 	const ToolResult Band = Run(Lively, "mix", "{\"melody_channel\": \"2A03 Pulse 1\", \"style\": \"lively\"}");
 	Check(!Band.IsError, Band.Text.c_str(), __LINE__);
@@ -32529,6 +32529,7 @@ void TestRolesChangeInSong()
 	}
 	std::printf("Lively: chords at %d, the harmony at %d\n%s\n", LiveChords, LiveHarmony, Band.Text.c_str());
 	Check(LiveHarmony >= 5, Band.Text.c_str(), __LINE__);
+	CHECK_HAS(Band.Text, "2A03 Pulse 2 (a second line, bars 3-4)");
 }
 
 // song_shape: a kind given wins over the words (the Haunted Library's mysterious, laid out as "the calm night"), as does the

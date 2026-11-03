@@ -12147,8 +12147,10 @@ std::string AddDrumsTool(Session &S, const Json &Args)
 				if (Old[i].Row >= Z || Old[i].Row + std::max(1, Old[i].Rows) <= A)
 					continue;
 				const InstrumentInfo *pInfo = FindInstrument(S.Song, Old[i].Instrument);
-				if (pInfo != 0 && IsAmbienceName(pInfo->Name))
+				if (pInfo != 0 && IsAmbienceName(pInfo->Name)) {
 					Ambience = true;
+					ReplacedNotes += OverAmbience && Old[i].Row >= A ? 1 : 0;
+				}
 				else if (Old[i].Row >= A) {
 					Other = true;
 					++ReplacedNotes;
