@@ -730,6 +730,13 @@ is the recipes':
    place with a sound of its own (a harbor, the sea, rain, wind, a river, a
    campfire) and whose noise channel is free, that sound under the music
    (`add_ambience`, skip word `ambience`; see [Ambience](#ambience)).
+   A part that comes back (a repeat, a climax on A's chords) with its bass
+   playing the original's bars note for note gets a bass of its own there:
+   `add_chords_and_bass` on the same chords with another of the kind's bass
+   styles, tried so it adds no clash nor review tip (step id and skip word
+   `renew`). B already plays its chords and bass in another of the kind's
+   styles than A, and what_next's progressions change on the half bar at
+   their cadences, with a chord from outside the key in each eight bars.
 7. The last steps, once the parts are written: `polish` (on a lively stage
    with its accents), then the mix in the kind's style when another mix
    would change the song, the loop's seam (`fix_loop`), a `listen` and the
@@ -1127,11 +1134,12 @@ was done.
   note written), a rumble on TV speakers and phones. FamiTracker's A-0 is
   55 Hz, where the soundtrack's own sawtooth basses go; none of its finished
   tracks goes under 41 Hz.
-- **A melody an octave too high:** a line sitting mostly in octave 5 and
-  reaching G-5 or higher (for a calm kind, around G-4 and reaching D-5), on a
-  sound that holds (40% of its peak or more) at a melody's volume, where a
-  calm kind's melody sings in octave 3 and a lively kind's in octave 4, each
-  reaching an octave up at its high points (C-3 is middle C, A-3 440 Hz). Bells, music boxes and
+- **A melody that sits high:** a line whose middle sits at E-4 or higher and
+  that reaches D-5 (for a calm kind, D-4 and C-5), on a sound that holds (40%
+  of its peak or more) at a melody's volume, where the soundtrack's first 30
+  sing with their middle around B-3 (A#3 to D-4), within a fifth to an octave
+  of their chords, reaching into octave 4 at their high points (C-3 is middle
+  C, A-3 440 Hz). Bells, music boxes and
   sparkles, which fade or play softly, sit up there by design, and so do
   echoes.
 - **Notes outside the track's key**, when the key was chosen (`set_key`, or

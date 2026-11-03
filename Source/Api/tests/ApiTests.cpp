@@ -21583,7 +21583,7 @@ void TestWritingWarnings()
 		Song.Info.DirectChanges = true;
 		CHECK(!Run(Song, "set_key", "{\"key\": \"G major\"}").IsError);
 		ToolResult R = Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, "
-			"\"notes\": \"D4 G4 A4 B4 - A4 G4 - | B4 - - - . . D5 - | C5 B4 A4 G4 - - . . | A4 - - - - - . .\"}");
+			"\"notes\": \"D3 G3 A3 B3 - A3 G3 - | B3 - - - . . D4 - | C4 B3 A3 G3 - - . . | A3 - - - - - . .\"}");
 		CHECK(!R.IsError);
 		CHECK_EQ(WarningCount(R.Text), 0);
 		R = Run(Song, "write_notes", "{\"channel\": \"Triangle\", \"instrument\": \"bass\", \"from_bar\": 1, \"notes\": \"G2 - - - D3 - - - | "
@@ -21632,7 +21632,8 @@ void TestWritingWarnings()
 	}
 
 	// A melody an octave over where melodies sing: mostly in octave 5, up to G-5 and over, on a lead's sound; the fix moves it
-	// down. A bell up there (it fades), a quiet line and a B part around C-5 that peaks at E-5 aren't
+	// down. A bell up there (it fades), a quiet line and a B part around C-4 that peaks at E-4 aren't (a B part around C-5
+	// is high since feat-variety: the first 30 sing around B-3)
 	{
 		FakeSong Song;
 		Song.Info.DirectChanges = true;
@@ -21650,8 +21651,10 @@ void TestWritingWarnings()
 			"A5 B5 - A5 G5 - | B5 - - - . . D6 - | C6 B5 A5 G5 - - . . | A5 - - - - - . .\"}").Text), 0);
 		CHECK_EQ(WarningCount(Run(Song, "write_notes", "{\"channel\": \"2A03 Pulse 1\", \"instrument\": \"soft lead\", \"from_bar\": 1, \"notes\": "
 			"\"D5v4 G5v4 A5v4 B5v4 - A5v4 G5v4 - | B5v4 - - - . . D6v4 - | C6v4 B5v4 A5v4 G5v4 - - . . | A5v4 - - - - - . .\"}").Text), 0);
+		CHECK_EQ(WarningCount(Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 5, \"notes\": \"C4 - B3 - C4 - E4 - | D4 - - - "
+			"C4 - B3 - | C4 - A3 - B3 - C4 - | D4 - - - - - . .\"}").Text), 0);
 		CHECK_EQ(WarningCount(Run(Song, "write_notes", "{\"channel\": \"VRC6 Pulse 1\", \"from_bar\": 5, \"notes\": \"C5 - B4 - C5 - E5 - | D5 - - - "
-			"C5 - B4 - | C5 - A4 - B4 - C5 - | D5 - - - - - . .\"}").Text), 0);
+			"C5 - B4 - | C5 - A4 - B4 - C5 - | D5 - - - - - . .\"}").Text), 1);
 	}
 
 	// Notes the chip doesn't play in tune, in check_song's words: an N163 wave turning grainy over A#5 with 4 channels, and
@@ -31165,9 +31168,10 @@ void TestLeadVibratoFits()
 			Check(pLead != 0, Design.c_str(), __LINE__);
 			if (pLead == 0 || Channel < 0)
 				continue;
-			// Where the hooks' upper part plays: vibrato_at when given, else C-5 (the highest home's sixth)
-			int At = 0;
-			CHECK(ParsePitch(Args.Get("vibrato_at") != 0 ? TextOf(&Args, "vibrato_at") : std::string("C-5"), At));
+			// Where the hooks' upper part plays: vibrato_at when given, else the song's home's sixth (TuneHome)
+			int At = TuneHome(Song.Info.KeyChosen ? Song.Info.ChosenKey.K : Key(0, MODE_MAJOR)) + 9;
+			if (Args.Get("vibrato_at") != 0)
+				CHECK(ParsePitch(TextOf(&Args, "vibrato_at"), At));
 			const ChannelInfo &Info = Song.Info.Channels[static_cast<size_t>(Channel)];
 			const double Cents = PitchSwing(pLead->Pitch) * ListenNoteTuning(Info.Chip, Info.Kind, At, 0, Info.ChipChannels, 16,
 				false).CentsPerStep;

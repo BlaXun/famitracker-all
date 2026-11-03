@@ -1448,12 +1448,14 @@ std::vector<PartNote> BassPart(const std::vector<ChordAt> &Chords, const std::ve
 			break;
 		}
 		}
-		// A phrase's last bar leads into the next chord with a passing note on its last half beat (from feat-variety: the first
-		// 30's basses play 1.1 rhythms in 8 bars, root, fifth and a passing note now and then, where a bass of roots, halves or
-		// a root and a fifth held one figure all song): a step of the key into the next root, else a whole tone, none a
-		// semitone from the chord's notes or the other parts'
+		// The second bar of each four leads into the next chord with a passing note on its last half beat (from feat-variety:
+		// the first 30's basses play 1.1 rhythms in 8 bars, root, fifth and a passing note now and then, where a bass of roots,
+		// halves or a root and a fifth held one figure all song; not a phrase's last bar, whose chords change on its half bar,
+		// a secondary dominant's root held under it): a step of the key into the next root, else a whole tone, none a semitone
+		// from the chord's notes or the other parts'
 		const size_t BarIndex = static_cast<size_t>(S.pBar - &Bars[0]);
-		if ((O.Style == BASS_ROOTS || O.Style == BASS_HALF || O.Style == BASS_ROOT_FIFTH) && BarIndex % 4 == 3 && pNext != 0 &&
+		if ((O.Style == BASS_ROOTS || O.Style == BASS_HALF || O.Style == BASS_ROOT_FIFTH) && BarIndex % 4 == 1 && pNext != 0 &&
+			S.Row == S.pBar->Row &&
 			Mod12(pNext->Bass) != Mod12(C.Bass) && S.End == S.pBar->Row + S.pBar->Rows && !Out.empty() && Out.back().Row < S.End - Half &&
 			Length >= 2 * R) {
 			const int Row = S.End - Half;

@@ -7093,8 +7093,10 @@ std::vector<std::string> ProgressionArg(const Json &Args, const char *Name)
 // melody's channel writes a note)
 void ChordRegister(ChordPartOptions &O, const ChannelInfo &Info, const std::vector<NoteInfo> &Melody, int Lifted)
 {
-	int Top = Melody.empty() ? 43 : MiddleOf(Melody, 52) - Lifted - 7;
-	Top = std::max(36, std::min(48, Top));
+	// (written before the melody, under where the tune will sing: from feat-variety the tunes sit around B-3, an octave under
+	// before, so the chords sit lower too, around the first 30's E-3)
+	int Top = Melody.empty() ? 39 : MiddleOf(Melody, 52) - Lifted - 7;
+	Top = std::max(34, std::min(48, Top));
 	if (O.Style == CHORDS_BROKEN && O.Pattern == BROKEN_ROLLING)
 		Top -= 5;
 	else if (O.Style == CHORDS_LUSH)
@@ -26019,6 +26021,7 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 	const int Bar = S.Time.BarOf(N.Row);
 	const int Until = std::max(N.Row + std::max(1, N.Rows), std::min(S.Time.BarEnd(Bar), N.Row + 2 * S.Time.RowsPerBeat));
 	std::vector<bool> With(12, false);	// the classes the other parts sound with it, and its own chord's
+	std::vector<bool> Under(12, false);	// ...those of them a fifth or more under it (a bass)
 	auto Sounds = [&](const NoteInfo &X) {
 		int Arpeggio = 0;
 		for (size_t e = 0; e < X.Effects.size() && Arpeggio == 0; ++e)
@@ -26037,6 +26040,8 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 			if (Theirs[j].Row >= Until || Theirs[j].Row + Theirs[j].Rows <= N.Row || Theirs[j].Volume <= 0)
 				continue;
 			With[static_cast<size_t>(Theirs[j].Pitch % 12)] = true;
+			if (Pitch - Theirs[j].Pitch >= 7)
+				Under[static_cast<size_t>(Theirs[j].Pitch % 12)] = true;
 			Sounds(Theirs[j]);
 		}
 	}
@@ -26045,7 +26050,10 @@ bool ChordedOutsideKey(Session &S, int Channel, const NoteInfo &N, int Pitch, co
 	static const int TRIADS[6][3] = { { 0, 4, 7 }, { 0, 3, 7 }, { 4, 0, 7 }, { 3, 0, 7 }, { 7, 0, 4 }, { 7, 0, 3 } };
 	for (int t = 0; t < 6; ++t) {
 		const int Root = (Pitch % 12 - TRIADS[t][0] + 12) % 12;
-		if (!With[static_cast<size_t>((Root + TRIADS[t][1]) % 12)] || !With[static_cast<size_t>((Root + TRIADS[t][2]) % 12)])
+		// (a third over its root in the bass is the chord too, its fifth left out: from feat-variety, a secondary dominant's
+		// raised third over its root, the voices or a broken chord sounding its fifth elsewhere)
+		const bool Third = (t == 2 || t == 3) && Under[static_cast<size_t>(Root)];
+		if (!Third && (!With[static_cast<size_t>((Root + TRIADS[t][1]) % 12)] || !With[static_cast<size_t>((Root + TRIADS[t][2]) % 12)]))
 			continue;
 		const bool Major = t % 2 == 0;
 		const ChordRoleInKey Role = RoleOfChord(Chord(Root, std::vector<int>({ 0, Major ? 4 : 3, 7 })), K);
@@ -34156,7 +34164,9 @@ std::vector<std::string> WhatNext::ClimbingHooks(int FirstBar, int Variant, int 
 	// (up to a fourth over the tune before it, where the soundtrack's climaxes peak, though that passes where a melody
 	// usually peaks: the Airship's A and B reached E-5, a whole step over that left only F#5 and G-5, which no hook's move
 	// landed on, and the climax was offered a hook under A's top: fix-r6-judges)
-	High = std::min(High, std::max(Written(Info, GUARD_LEAD_TOP), Over + 5));
+	// (and never more than a fifth over it: with the tunes an octave lower since feat-variety, GUARD_LEAD_TOP let a climax
+	// climb a sixth and more over A)
+	High = std::min(High, std::min(Over + 7, std::max(Written(Info, GUARD_LEAD_TOP), Over + 5)));
 	const int Eighth = EighthRows();
 	std::vector<std::vector<int> > Chord, Sounding;
 	Surroundings(S.Time.BarStart(FirstBar), S.Time.BarEnd(FirstBar + 1), Chord, Sounding);
@@ -35057,7 +35067,13 @@ void WhatNext::Colors()
 	const int Total = S.Time.TotalRows();
 	for (size_t i = 0; i < m_Parts.Chords.size(); ++i) {
 		const int c = m_Parts.Chords[i];
-		if (c == m_Melody || !PlaysChordPart(S, c, 0, Total))
+		// (a chord part in one part of the song at the least: since feat-variety B plays its chords in another style, broken
+		// chords' many notes beside A's lush ones)
+		bool Chords = PlaysChordPart(S, c, 0, Total);
+		for (size_t f = 0; f < m_Form.size() && !Chords; ++f)
+			Chords = m_Form[f].Named && !m_Form[f].Empty && PlaysChordPart(S, c, S.Time.BarStart(m_Form[f].FirstBar),
+				std::min(S.Time.BarEnd(m_Form[f].LastBar), Total));
+		if (c == m_Melody || !Chords)
 			continue;
 		const std::vector<NoteInfo> &Notes = S.Notes(c);
 		const std::vector<int> Arps = StickyAt(S.Cells(c), Notes, S.Channel(c).EffectColumns, EFF_ARPEGGIO);
@@ -36906,7 +36922,8 @@ void WhatNext::Renew()
 	bool TipsRead = false;
 	for (size_t i = 1; i < m_Form.size(); ++i) {
 		const FormPart &P = m_Form[i];
-		if (!P.Named || P.Free || P.Empty)
+		// (not the climax, which lifts with its own devices: a lighter bass there took its lift under the review's)
+		if (!P.Named || P.Free || P.Empty || IsClimaxName(P.Name))
 			continue;
 		const int Bars = P.LastBar - P.FirstBar + 1;
 		if (Bars < 4 || !NoteStartsIn(S, Bass, S.Time.BarStart(P.FirstBar), std::min(S.Time.BarEnd(P.LastBar), Total)))
