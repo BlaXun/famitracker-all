@@ -8075,8 +8075,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 	// Lava Forge's driving bass with root and fifth, and the Frozen Lake's A lost its bass, with no more than "in place of the
 	// bass line" said)
 	const bool BassAsked = Arg(Args, "bass_channel") != 0 || Arg(Args, "bass_style") != 0 || Arg(Args, "bass_instrument") != 0;
-	const int KeptBass = !BassAsked && OldBass >= 0 && IsBassChannel(S.Channel(OldBass)) ? OldBass : -1;
-	const int BassChannel = KeptBass >= 0 ? -1 : Pick("bass_channel", IsBassChannel, IsBassChannel, "the triangle or the sawtooth",
+	int KeptBass = !BassAsked && OldBass >= 0 && IsBassChannel(S.Channel(OldBass)) ? OldBass : -1;
+	int BassChannel = KeptBass >= 0 ? -1 : Pick("bass_channel", IsBassChannel, IsBassChannel, "the triangle or the sawtooth",
 		OldBass);
 	if (ChordChannel < 0 && BassChannel < 0)
 		throw Problem(KeptBass >= 0 ? Format("There's no channel for the chords, and the bass line on %s there stays (bass_style "
@@ -8133,6 +8133,29 @@ std::string AddBackingTool(Session &S, const Json &Args)
 		if (Chords.empty())
 			throw Problem("The melody is too short to fit chords to.");
 		SecondaryDominants(Chords, Line, Others, K, R, Spans);
+	}
+	std::string BassMisfit;
+	if (KeptBass >= 0) {
+		// The bass kept only where it plays the new chords: its notes on the beats their chords' tones (a groove's bass under
+		// other chords, or a line written for another progression, is replaced as before, and said so)
+		int OnBeats = 0, Fits = 0;
+		const std::vector<NoteInfo> Old = NotesIn(S.Notes(KeptBass), First, End);
+		for (size_t i = 0; i < Old.size(); ++i) {
+			if ((Old[i].Row - First) % R != 0 || Old[i].Volume <= 0)
+				continue;
+			for (size_t c = 0; c < Chords.size(); ++c)
+				if (Chords[c].Row <= Old[i].Row && Old[i].Row < Chords[c].Row + Chords[c].Rows) {
+					++OnBeats;
+					Fits += Chords[c].C.HasPitchClass(((Old[i].Pitch % 12) + 12) % 12) ? 1 : 0;
+					break;
+				}
+		}
+		if (OnBeats > 0 && Fits * 5 < OnBeats * 4) {
+			BassChannel = KeptBass;
+			Replaced.push_back(KeptBass);
+			KeptBass = -1;
+			BassMisfit = " (its notes didn't fit the new chords)";
+		}
 	}
 	chord_color Color;
 	if (!ParseColor(StringArg(Args, "color", Style == CHORDS_LUSH || Style == CHORDS_VOICES ? "rich" : "plain"), Color))
@@ -8399,8 +8422,8 @@ std::string AddBackingTool(Session &S, const Json &Args)
 			Chords = Chords || Replaced[i] != BassChannel;
 		}
 		if (Chords || Bass)
-			What += Format(" (in place of the %s%s%s that played there)", Chords ? "chords" : "", Chords && Bass ? " and " : "",
-				Bass ? "bass line" : "");
+			What += Format(" (in place of the %s%s%s that played there%s)", Chords ? "chords" : "", Chords && Bass ? " and " : "",
+				Bass ? "bass line" : "", Bass ? BassMisfit.c_str() : "");
 		if (KeptBass >= 0)
 			What += Format("; the bass line on %s there stays as it was (bass_style or bass_channel writes a new one)",
 				S.Channel(KeptBass).FullName().c_str());
@@ -38880,7 +38903,7 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"bVII, V7/V). Chords in a bar share it; \".\" holds the chord before for a share (\"C . . G\": three beats of C, "
 			"one of G); \"%\" repeats a bar. The progression repeats to fill the bars.");
 		AddTool("add_chords_and_bass", "Add chords and a bass line",
-			"Writes chords on a pulse channel (or the VRC6 sawtooth or an N163 channel you name) and a bass line on the triangle or "
+			"Writes chords on a pulse channel (or a named VRC6 sawtooth or N163 channel) and a bass line on the triangle or "
 			"sawtooth: chords fitted to a melody bar by bar "
 			"in its key, or the progression you give (no melody needed then). Choose how they're played; the defaults are the "
 			"plainest (triads held as an arpeggio, root and fifth in the bass), and most songs want more. chord_style: " +
@@ -38890,19 +38913,18 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			"or richer tones that keep each chord's part (\"rich\": add9, maj7 or 6 on I and IV, m7 and m9, add9 on the V) where "
 			"the melody allows. Every style keeps each chord under the melody's lowest note while it sounds (a minor third under "
 			"it) and over the bass. Lush chords are instruments made for each chord's notes (\"Lush maj7\", \"Lush m9\") from a "
-			"preset or one of the song's own pulse sounds, added when first needed. Chords that play in those bars already are "
-			"replaced (other chords for a section); a bass line there stays unless bass_style, bass_channel or bass_instrument "
-			"asks for a new one; else free channels are picked unless named. chord_instrument and bass_instrument give the parts "
-			"your own sounds (else presets). The reply lists the chords by name and as degrees.",
+			"preset or one of the song's own pulse sounds, added when first needed. Chords there already are replaced; a bass "
+			"line there stays if it fits them, unless bass_style, bass_channel or bass_instrument asks for one; else free channels "
+			"are picked. The reply lists the chords by name and as degrees.",
 			Schema()
 				.Add("chords", Chords)
 				.Add("melody_channel", ChannelProp("Channel with the melody. Default: the busiest one."))
-				.Add("chord_channel", ChannelProp("Pulse channel for the chords (or, named here, the VRC6 sawtooth or an N163 "
-					"channel), or \"none\". Default: the one playing chords there already, else a free pulse."))
+				.Add("chord_channel", ChannelProp("Pulse channel for the chords (or a VRC6 sawtooth or N163 channel), or \"none\". "
+					"Default: the one playing chords there already, else a free pulse."))
 				.Add("chord_channels", ChannelListProp("Voiced chords: 2-4 channels, a voice each (VRC7 FM, N163 or pulse channels). "
 					"Default: free FM channels, else N163 ones, else pulses."))
-				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a bass line playing "
-					"there already stays as it is unless bass_style or bass_instrument is given (then it's replaced); else a free one."))
+				.Add("bass_channel", ChannelProp("Triangle or sawtooth for the bass, or \"none\". Default: a bass there that fits "
+					"stays, unless bass_style or bass_instrument is given; else a free one."))
 				.Add("key", Prop("string", "Key, like \"C major\" or \"A minor\". Default: found from the melody."))
 				.Add("color", EnumProp("plain (triads; the default but for lush and voices), sevenths, or rich (the default for lush "
 					"and voices).",
@@ -38940,8 +38962,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			Schema()
 				.Add("groove", EnumProp("The beat (default basic; waltz in bars of three beats).", StyleNames(Grooves())))
 				.Add("intensity", Intensity)
-				.Add("over_ambience", Prop("boolean", "Put the drums over an ambience (add_ambience's wind, rain...) on the noise "
-					"there, in its place (default false: its bars keep it, and the drums play in the others)."))
+				.Add("over_ambience", Prop("boolean", "true: the drums take an ambience's place on the noise (default: its bars keep "
+					"it)."))
 				.Add("fill_every", Prop("integer", "A fill in the last bar of every so many bars, counted from bar 1, or from "
 					"where the loop starts when an intro plays once before it (default 4; 0 for none)."))
 				.Add("crash", Prop("boolean", "A crash where the drums start and after each fill (default true)."))
@@ -39119,9 +39141,9 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"overlap. An echo note a semitone from what sounds with it (or a semitone and octaves, a minor ninth: what check_song "
 		"hears as a clash) is left out or cut short; a major seventh over the bass stays, a chord's color.",
 		Schema()
-			.Add("channel", ChannelProp("The source: the channel whose notes are echoed (the melody, say), which stays as it is."), true)
-			.Add("to_channel", ChannelProp("The target: the channel the echo is written on (its notes there are replaced). Default: a "
-				"free one of the same kind, else another free one."))
+			.Add("channel", ChannelProp("The source, whose notes are echoed."), true)
+			.Add("to_channel", ChannelProp("The target the echo is written on. Default: a free one of the same kind, else another "
+				"free one."))
 			.Add("delay_beats", Prop("number", "How much later, in beats (default 3 rows; a beat is the other common choice)."))
 			.Add("volume", Prop("integer", "Echo volume 1-15 at the original's full loudness (default 6, about 40%), scaled with "
 				"each note's own."))

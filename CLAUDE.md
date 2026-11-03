@@ -3388,7 +3388,9 @@ cases cover them; `TestExport` keeps an intro's second time through.
 Depth round's tool faults (from `fix-depth-bugs`): six composers made the
 depth round's songs and met these. `add_chords_and_bass` keeps a bass
 line already in its bars (`KeptBass`, said in the reply) unless
-`bass_style`, `bass_channel` or `bass_instrument` asks for one (a second
+`bass_style`, `bass_channel` or `bass_instrument` asks for one, or four in
+five of its notes on the beats aren't the new chords' tones (`BassMisfit`:
+a groove's bass under other chords is replaced as before) (a second
 chord part in the Lava Forge's A' had replaced its driving bass with root
 and fifth; `DroneRefit` passes `bass_style` to keep refitting it); a named
 `chord_channel` may be the VRC6 sawtooth or an N163 channel

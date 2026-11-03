@@ -1490,7 +1490,7 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 		Out.FromWords = "From the words: " + Line + (Words.Why.empty() ? std::string(".") : " (" + Words.Why + ").");
 		Out.Kind = Request.Kind.empty() ? Words.Kind : Request.Kind;
 		const std::string Given = Request.KindKept ? "as what_next was given for this track" : "as given";
-		if (!Words.KindWords.empty() && Request.Kind.empty())
+		if (!Words.KindWords.empty() && (Request.Kind.empty() || (Request.KindKept && Request.Kind == Words.Kind)))
 			Out.FromWords += "\n" + KindFromWordsLine(Words);
 		else if (!Words.KindWords.empty() && Request.Kind != Words.Kind)
 			Out.FromWords += "\nKind: " + Request.Kind + ", " + Given + " (the words alone would say " + Words.Kind + "; the kind given "

@@ -2573,7 +2573,9 @@ avoid that, and gives it tools for each layer:
   guide line, the string pad); it never picks them by itself. A bass line
   already there stays as it is unless `bass_style`, `bass_channel` or
   `bass_instrument` asks for a new one (the reply says it stayed), so a
-  second chord part over a section keeps the bass you chose. Broken chords
+  second chord part over a section keeps the bass you chose; a bass whose
+  notes on the beats aren't the new chords' tones (four in five at least)
+  is replaced, and the reply says why. Broken chords
   never sit on the bass's notes or under them: where the melody sits low a
   tone that would goes an octave up. Where the song has a sound of its own
   for the part that nothing plays yet, the reply names it and

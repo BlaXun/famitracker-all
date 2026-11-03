@@ -10848,7 +10848,7 @@ void TestReharmonize()
 		"\"to_bar\": 6, \"key\": \"D major\"}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "chords on 2A03 Pulse 1 and a root_fifth bass line on 2A03 Triangle, bars 5-6, in D major (in place of the "
-		"chords and bass line that played there)");
+		"chords and bass line that played there (its notes didn't fit the new chords))");
 	CHECK(Song.Rows[0][64].Pitch() % 12 == 4 && Song.Rows[0][80].Pitch() % 12 == 9);	// Em9, A7
 	for (int r = 0; r < 128; ++r)
 		CHECK(!Song.Rows[1][r].HasNote() && !Song.Rows[7][r].HasNote());	// no second chord part, no second bass
@@ -10869,7 +10869,8 @@ void TestReharmonize()
 	Result = Run(Fm, "add_chords_and_bass", "{\"chords\": \"| Am7 | D7 |\", \"chord_style\": \"voices\", \"key\": \"C major\", "
 		"\"from_bar\": 3, \"to_bar\": 4}");
 	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3, strummed upward 1 frame apart "
-		"(Gxx) and a root_fifth bass line on 2A03 Triangle, bars 3-4, in C major (in place of the chords and bass line that played there)");
+		"(Gxx)");
+	CHECK_HAS(Result.Text, "bars 3-4, in C major (in place of the chords");
 	for (int r = 0; r < 64; ++r)
 		CHECK(!Fm.Rows[8][r].HasNote());	// FM Channel 4 stays free
 	CHECK(Fm.Rows[5][32].HasNote() && Fm.Rows[6][32].HasNote() && Fm.Rows[7][32].HasNote());
@@ -18516,7 +18517,7 @@ void TestGrowTool()
 	Result = Run(Empty, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"VRC6 Pulse 1\"}");
 	Check(Contains(Result.Text, "There are no chords in bars 1-8 to grow a melody over"), Result.Text.c_str(), __LINE__);
 	CHECK(!Run(Empty, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"VRC6 Pulse 1\", \"chords\": \"| C | Am | F | G |\"}").IsError);
-	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4\"}").Text, "a hook of 4-7 notes, a bar or two (this one has 3)");
+	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4\"}").Text, "a hook of 4-7 notes in all, over a bar or two (this one has 3)");
 	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - - - | A4\"}").Text, "its bar 1 has 9 steps, and a bar here holds 8");
 	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"kind\": \"jazzy\"}").Text, "kind: calm");
 	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"Noise\"}").Text, "not the noise");
@@ -31788,7 +31789,8 @@ void TestAmbience()
 		Copy.Info.TrackName = Copy.Tracks[0].Name = "Lantern Row";
 		CHECK(Run(Copy, "add_ambience", "{\"kind\": \"thunderstorm of doom\"}").IsError);
 		CHECK(!Run(Copy, "add_ambience", "{\"about\": \"rain on the roof\"}").IsError);
-		CHECK(!Run(Copy, "add_drums", "{\"from_bar\": 5, \"to_bar\": 12}").IsError);
+		CHECK(Run(Copy, "add_drums", "{\"from_bar\": 5, \"to_bar\": 12}").IsError);	// (the rain there stays)
+		CHECK(!Run(Copy, "add_drums", "{\"from_bar\": 5, \"to_bar\": 12, \"over_ambience\": true}").IsError);
 		const ToolResult Refused = Run(Copy, "add_ambience", "{\"kind\": \"waves\"}");
 		Check(Refused.IsError && Contains(Refused.Text, "needs it to itself"), Refused.Text.c_str(), __LINE__);
 		CHECK(!Run(Copy, "add_ambience", "{\"kind\": \"waves\", \"from_bar\": 13, \"to_bar\": 40}").IsError);
@@ -32348,8 +32350,9 @@ void TestBackingDepthBugs()
 	{
 		FakeSong Song;
 		PutTune(Song, 4, TUNE, 4);
+		static const char *const LOWS[] = { "C-3", "F-3", "G-3", "C-3" }, HIGHS[] = { "C-4", "F-4", "G-4", "C-4" };	// driving octaves
 		for (int r = 0; r < 64; r += 2)
-			Song.Put(2, r, r % 4 == 0 ? "C-3" : "C-4", r == 0 ? 1 : NO_INSTRUMENT);
+			Song.Put(2, r, (r % 4 == 0 ? LOWS : HIGHS)[r / 16], r == 0 ? 1 : NO_INSTRUMENT);
 		const std::string Before = Notes(Song, 2);
 		ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
 			"\"chord_channel\": \"2A03 Pulse 2\", \"chord_style\": \"lush\"}");
@@ -32364,6 +32367,12 @@ void TestBackingDepthBugs()
 		CHECK_HAS(Result.Text, "a root_fifth bass line on 2A03 Triangle");
 		CHECK_HAS(Result.Text, "bass line that played there");
 		CHECK(Notes(Song, 2) != Before);
+		// A bass that doesn't play the new chords' tones: replaced, and said why
+		FakeSong Other = Song;
+		for (int r = 0; r < 64; r += 2)
+			Other.Put(2, r, "C-3", r == 0 ? 1 : NO_INSTRUMENT);
+		CHECK_HAS(Run(Other, "add_chords_and_bass", "{\"chords\": \"| F | G |\", \"key\": \"C major\", \"chord_channel\": \"2A03 Pulse 2\", "
+			"\"from_bar\": 1, \"to_bar\": 2}").Text, "bass line that played there (its notes didn't fit the new chords)");
 		// Nothing for the chords and the bass kept: said so
 		CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"| C |\", \"key\": \"C major\", \"chord_channel\": \"none\"}").Text,
 			"the bass line on 2A03 Triangle there stays");
@@ -32613,8 +32622,8 @@ void TestSmallDepthBugs()
 	for (size_t i = 0; i < Tools.List().size(); ++i)
 		if (Tools.List()[i].Name == "add_echo")
 			Echo = WriteJson(Tools.List()[i].InputSchema);
-	CHECK_HAS(Echo, "The source: the channel whose notes are echoed");
-	CHECK_HAS(Echo, "The target: the channel the echo is written on");
+	CHECK_HAS(Echo, "The source, whose notes are echoed");
+	CHECK_HAS(Echo, "The target the echo is written on");
 	// A bell that's gone in under a beat: the calm counter-line's notes of a bar cut to a beat
 	ToolResult Counter = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"2A03 Pulse 2\", "
 		"\"style\": \"calm\", \"instrument\": \"bell\"}");
