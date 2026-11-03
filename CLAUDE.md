@@ -3493,6 +3493,49 @@ to where it's heard, a beat at the least. `TestBackingDepthBugs`,
 `what_next` (another branch's): its own add_chords_and_bass calls pass
 `bass_style` wherever they want a new bass.
 
+Seams (from `feat-seams`): the user heard two songs that passed every check
+as off where a part starts: Frozen Lake (variety)'s intro led into A with a
+lone D-4 on bar 4 beat 3 over Pulse 1's broken F#m7 (a semitone over its
+C#, though no note sounds with the C#, so check_song heard no clash) cut a
+beat before A's A-3, and Lava Forge (variety)'s pickup into A (F#3, then
+A-3 scooped to B-3) sat over the intro's C chord, a semitone under its G
+and its C. check_song's `lead_in` (`SeamFindings`, last of
+`ArrangeFindings`, `ARRANGE_LEAD_IN`, `FOUND_LEAD_IN`, severity medium;
+`PROBLEM_LEAD_IN`, title "Lead-ins that stumble", the panel's `WORDS`)
+hears every seam (`FindLeadIns`: each section's start after the first, the
+loop's start the first time where no section starts there, and the loop's
+seam, the song's end into the loop's start as it wraps). A lead-in
+(`LeadIn`) is the melody's notes after the last rest of a beat or more in
+the bar before the downbeat (`Pickup`), else those starting in its last
+`SEAM_WINDOW_BEATS`; a note is heard against the chord the parts beside
+the melody sound in the half bar it starts in (`SeamChordAt`: `HearChords`
+on `ChordPartsBeside`, so a broken chord is its chord; `SeamRub`: not a
+tone of it, a semitone from one they sound). `TroubleOf` says what's worth
+fixing, its numbers measured with `song_file_checks -seams` (`ToolSet::Seams`)
+on the 44 kept songs and `gen4/first30` (comment before the constants): a
+rubbing lead-in note that doesn't step on to the next note by a semitone or
+a tone (`Resolves`, by pitch class: their rubs all do), where the section
+starts on a melody note; a pickup followed by a hole (`Hole`: no part starts
+a note) of `SEAM_GAP_BEATS`, a calm track's `SEAM_CALM_GAP_BEATS` (a gap the
+other parts fill is theirs too: 007 Shopping's 2.25 beats); the downbeat's
+note rubbing its chord for `SEAM_DOWN_BEATS`. Its fix is polish's new touch
+`seams` (`PlanSeams`, `SeamPitch`, `WriteSeamMoves`): each such note moves
+to the nearest tone of its chord that rubs nothing (the chords and every
+part's notes, `RubsAgainstOthers`) on the same side of the downbeat's note,
+never onto it, a scoop on it taken out; the last note holds into the
+downbeat (its release or halt taken out) or to half a beat before it; an
+echo's copies move with it; the downbeat's own note moves only where it
+rubs. Offered where a dry run adds no clash and clears a seam. `seams` is a
+default touch and in `KindPolish`, so `finish_song` and what_next's polish
+give it to every song (it changes nothing where there's no finding), and
+what_next gives the finding's fix as a part's step (`PartFixes`, `StepWhat`
+"Lead the melody into its sections on chord tones"). On the two songs:
+Frozen Lake's D-4 became C#4 held into bar 5, Lava Forge's pickup E-3 C-4
+into G-3; check_song finds no clash added. `TestSeams` covers the finding,
+its JSON and problem kind, the review, what_next, the fix (and a second
+polish with nothing to do), the default touches, an appoggiatura left
+alone, a pickup before a hole (not on a calm track) and a downbeat that
+rubs; `song_file_checks` checks `lead_in` on keep/ and flag/.
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
