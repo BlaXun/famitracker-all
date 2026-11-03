@@ -10063,7 +10063,7 @@ std::vector<MixSpan> MixSpans(Session &S, int Melody, int First, int End, const 
 				bool Chord = false;
 				for (size_t i = 0; i < Here.size() && !Chord; ++i)
 					Chord = SoundsChord(S, Here[i]);
-				const int Kind = Here.size() < 4 ? -1 : !Chord && MovesWithTune(S, Here, Melody) ? 1 : 0;
+				const int Kind = Chord ? 0 : Here.size() < 4 ? -1 : MovesWithTune(S, Here, Melody) ? 1 : 0;
 				BlockStarts.push_back(A);
 				Moves.push_back(Kind);
 				Line = Line || Kind == 1;
@@ -38938,6 +38938,8 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 			Schema()
 				.Add("groove", EnumProp("The beat (default basic; waltz in bars of three beats).", StyleNames(Grooves())))
 				.Add("intensity", Intensity)
+				.Add("over_ambience", Prop("boolean", "Put the drums over an ambience (add_ambience's wind, rain...) on the noise "
+					"there, in its place (default false: its bars keep it, and the drums play in the others)."))
 				.Add("fill_every", Prop("integer", "A fill in the last bar of every so many bars, counted from bar 1, or from "
 					"where the loop starts when an intro plays once before it (default 4; 0 for none)."))
 				.Add("crash", Prop("boolean", "A crash where the drums start and after each fill (default true)."))
@@ -40395,6 +40397,8 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 		m_Host.Log().Add(LOG_ERROR, Name + ": " + FirstLine(Result.Text), LogTimeNow());
 	else if (!Result.IsError && (UndoAfter != UndoBefore || (Beside && !Reads && AssistantCallChanges(Name, Args))))
 		m_Host.Log().Add(LOG_CHANGE, ChangeLabel(Name, Result.Text), LogTimeNow());
+	if (!Result.IsError && !ReadOnly)
+		NameChangedSong(Name, Args, Result, Who);
 	if (UndoAfter == UndoBefore) {
 		if (Result.IsError && !ReadOnly)
 			m_FailedCall = Name;
@@ -40403,7 +40407,6 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 	if (!Result.IsError) {
 		m_Host.LabelUndo(ChangeLabel(Name, Result.Text));
 		m_FailedCall.clear();
-		NameChangedSong(Name, Args, Result, Who);
 		return;
 	}
 	// It failed after changing the song: those changes are taken back, as Ctrl+Z would
@@ -40420,9 +40423,9 @@ void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long Und
 	m_FailedCall = Name;
 }
 
-// A client's change says which song it changed (from fix-depth-bugs): with several agents on one FamiTracker, one ran
-// set_tempo and set_key on another's open song, which nothing in the replies named. "Changed the song:" names it; another
-// reply gets a line. Not JSON, and not the tools that name the song they open
+// A client's call that changes the song says which song (from fix-depth-bugs): with several agents on one FamiTracker, one
+// ran set_tempo and set_key on another's open song, which nothing in the replies named. "Changed the song:" names it; another
+// reply gets a last line "Song: ...". Not JSON, and not the tools that name the song they open
 void ToolSet::NameChangedSong(const std::string &Name, const Json &Args, ToolResult &Result, const Caller &Who)
 {
 	if (!Who.Client || Result.Text.empty() || Result.Text[0] == '{' || Result.Text[0] == '[' || StringArg(Args, "format") == "json" ||
@@ -40440,7 +40443,7 @@ void ToolSet::NameChangedSong(const std::string &Name, const Json &Args, ToolRes
 	if (Result.Text.compare(0, sizeof(CHANGED) - 1, CHANGED) == 0)
 		Result.Text = "Changed the song " + Song + ":" + Result.Text.substr(sizeof(CHANGED) - 1);
 	else
-		Result.Text += "\nThe song changed: " + Song + ".";
+		Result.Text += "\nSong: " + Song + ".";
 }
 
 // write_log: a line in the song's agent log, stamped with this computer's time

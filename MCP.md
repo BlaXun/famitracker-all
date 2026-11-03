@@ -1359,8 +1359,8 @@ before a batch of changes.
 | `set_pan` | Places a channel's notes in some bars between the speakers: left, right, center, a place between, `alternate` (note by note left and right, by `amount`) or `spread` (from left to right across the bars); the note after them plays where it did. It warns when the melody, the bass or the drums go far to one side. See [Stereo](#stereo) (direct changes only, or as a clip; undoable) |
 | `add_chords_and_bass` | Chords fitted to the melody, or a progression you give by name or degree, played in a style under the melody's lowest note and over the bass, with a bass line in a style. See [Arrangements with depth](#arrangements-with-depth) |
 | `make_groove` | A backing to start a track from, for a mood (town, overworld, battle, boss, dungeon, sad, calm, chase, upbeat, shop, underwater, castle, desert, nostalgic): chords, bass and drums, each played as that mood usually is; under a melody written first, the chords go below it and keep their added tones off its notes. Its key becomes the track's key in the same change (as Start from a groove makes it), unless the track has one chosen or notes in another key already, so a melody grown on it after goes by that key |
-| `add_ambience` | A quiet layer of the place's sound on the noise channel, inside the music: `kind` waves, rain, wind, stream, fire or drips (or a word for one; default from `about`, else the track's name), in step with the bars and starting afresh at the loop, about 9 dB under the melody unless `volume` says; the noise must be free of drums in its bars (`from_bar`, `to_bar`), or `around_drums` plays it only where they rest. See [Ambience](#ambience) |
-| `add_drums` | A drum part on the noise channel: a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28). The `lively` groove is for a gentle place, not too upbeat (a stage's beat is `basic` with `kit` samples): soft closed hi-hats on the eighths (4-6, a sixteenth pair now and then, more when busy), an open hi-hat every other bar (7), a soft kick on 1 and the "and" of 2 or 3 (10 and 8), no snare, small fills (a hi-hat roll or soft toms) and a soft splash after; with `kit` samples the kick is sampled. `intensity` light thins the kick and the snare (the kick on 1 and 3, one soft backbeat a bar) and keeps the hi-hats |
+| `add_ambience` | A quiet layer of the place's sound on the noise channel, inside the music: `kind` waves, rain, wind, stream, fire or drips (or a word for one; default from `about`, else the track's name), in step with the bars and starting afresh at the loop, about 9 dB under the melody unless `volume` says; the noise must be free of drums in its bars (`from_bar`, `to_bar`), or `around_drums` plays it only where they rest. `add_drums` over it later keeps its bars (the drums play in the others) unless `over_ambience` is true. See [Ambience](#ambience) |
+| `add_drums` | A drum part on the noise channel (an ambience's bars on it stay, the drums in the others, unless `over_ambience`; other notes it replaces are named by bar): a groove, small changes every other bar, a fill where each phrase ends and a crash after it. Phrases count from bar 1, or from where the loop starts when an intro plays once before it (after a 4-bar intro, a fill every 8 bars ends bars 12, 20 and 28). The `lively` groove is for a gentle place, not too upbeat (a stage's beat is `basic` with `kit` samples): soft closed hi-hats on the eighths (4-6, a sixteenth pair now and then, more when busy), an open hi-hat every other bar (7), a soft kick on 1 and the "and" of 2 or 3 (10 and 8), no snare, small fills (a hi-hat roll or soft toms) and a soft splash after; with `kit` samples the kick is sampled. `intensity` light thins the kick and the snare (the kick on 1 and 3, one soft backbeat a bar) and keeps the hi-hats |
 | `add_harmony` | A second voice following the melody a third (or sixth, fifth, octave) away, on the chords' notes where the melody holds. It follows where each note lands: after `polish`, a scoop counts where it ends, and the voice comes in on its own note rather than copying the scoop's slide; only the effects its channel plays are copied. A note that would rub a semitone (or a semitone and octaves, as `check_song` hears a clash) against another part as they sound, such as a held maj7 pad's seventh, goes to the nearest chord tone that doesn't, or is left out (an octave below keeps doubling the melody). Its thirds and sixths are the key's own, a harmonic minor's too (a sixth under A in D harmonic minor is C#), and a melody note outside the key gets the interval's size that lands in it; the chords it follows are the other parts' as FamiTracker plays them (a `0xy` lasts until its `000`, wherever that is), never the voice's own old notes, so a harmony written again doesn't follow the last one. Over a chord from outside the key (a borrowed bVI or bVII, a secondary dominant) the voice takes the scale that chord sounds in: under Ebadd9 in G major G aeolian's notes, under F G mixolydian's, never an Eb7's Db or an F7's Eb. Of the chords the other parts play, a note outside the key that no part plays isn't the chord's (an E bass under C and E is heard as an E augmented, whose G# nobody plays) |
 | `add_counter_melody` | A line of its own from the chords' thirds and sevenths, holding while the melody moves and moving while it holds, below or above it; over a chord from outside the key (a secondary dominant, a diminished seventh) its passing notes keep off the key's notes that rub against the chord's. It moves at least every bar, mostly by step, never holding one note for bars. `style` calm leaves the melody room to breathe: the line holds a note a bar, rests where the melody does and answers only in rests of two beats or more, briefly (under a melody with no such rest the reply says there was no room to answer); `rests` (fill, the default, answer or leave) chooses that directly |
 | `grow_melody` | Grows a hook (4-7 notes in steps, a bar or two) into a melody over the song's chords, in two or three versions to choose from, each a line of steps with a sentence on its shape: phrases of 2 and 4 bars (the hook, an answer, the hook moved up or down, a run on its opening, a climb to one high point a section, a close), chord tones on the strong beats and steps between them, a breath where each phrase ends, notes tied over bar lines inside a phrase, in the key and the channel's register. `pick` writes one as `write_notes` writes a line, `variant` gives others (the same ones each time), `kind` calm, lively, action or cozy (lively's notes in calm's phrases) shapes them. See [Growing a melody from a hook](#growing-a-melody-from-a-hook) |
@@ -1687,7 +1687,14 @@ small place's short loop where they name one and a town's otherwise, unless
 they say night (night, sleep, dream, lullaby, rest) or something dark
 (haunted, spooky): "A cozy, but run-down wooden hut... A single elderly
 woman is taking care of the place" is cozy in the short loop, and with
-`bars` 40 a form of 40 bars. With `kind` cozy (or calm) on a track whose key
+`bars` 40 a form of 40 bars. A `kind` given to `song_shape` wins over the
+words: it lays out the kind's form where the words' shape belongs to
+another kind (`kind` calm with "a busy festival" gets a night, and the
+reply names the stage the words alone would have laid out), and titles the
+form by its kind ("a mysterious night", not "a calm night"). Without `kind`
+it takes the one `what_next` was last given for the track, so the words'
+kind ("lonely": melancholic) doesn't override a calm the composer chose.
+With `kind` cozy (or calm) on a track whose key
 is minor, `what_next` adds a note: the kind wants a major key, with the
 `set_key` (or, with notes, `transpose` `to_mode` major) call, or keep it
 minor if that's meant; nothing waits on it. On a
@@ -2558,8 +2565,20 @@ avoid that, and gives it tools for each layer:
   pitch and duty sequences kept, playing the chord's notes); `pattern`
   turns their arpeggios down, up and back, leaping (alberti) or spread
   over two octaves
-  (rolling). They need a 2A03, MMC5 or VRC6 pulse or a 5B channel, since
-  VRC7 instruments have no arpeggios.
+  (rolling). They need a 2A03, MMC5 or VRC6 pulse, the VRC6 sawtooth or a
+  5B channel, since VRC7 instruments have no arpeggios. `chord_channel`
+  takes the VRC6 sawtooth and the N163's channels (the VRC6 Plus's soft
+  layer) too when you name it (a saw's stabs, an N163 pad's arpeggio; on the
+  N163 the chords get a sound of their own, the electric piano or, for a
+  guide line, the string pad); it never picks them by itself. A bass line
+  already there stays as it is unless `bass_style`, `bass_channel` or
+  `bass_instrument` asks for a new one (the reply says it stayed), so a
+  second chord part over a section keeps the bass you chose. Broken chords
+  never sit on the bass's notes or under them: where the melody sits low a
+  tone that would goes an octave up. Where the song has a sound of its own
+  for the part that nothing plays yet, the reply names it and
+  `chord_instrument` or `bass_instrument` (else presets). `bass_style` takes
+  its styles in words too ("root and fifth", "walking bass", "oom-pah").
   Or `voices`: the chord's notes on 2-4 channels of their own
   (`chord_channels`, else free FM channels, then N163 ones, then 5B ones,
   then pulses),
@@ -2627,6 +2646,9 @@ avoid that, and gives it tools for each layer:
 - **A second line**: `add_counter_melody` or `add_harmony`, quieter, on a
   free channel. In a calm track the counter-melody takes `style` calm, so
   the melody's rests stay rests but for a short answer in the long ones.
+  On a sound that dies away (a bell, a pluck) its notes end where the
+  sound is heard, a beat at the least, rather than hold on in silence, and
+  the reply says so; a sound that holds keeps the long notes.
 - **Finishing touches**: `polish` (accents, a vibrato that waits, gaps
   between repeated triangle notes, a nudge for notes that click; when asked, fades on held notes, `A0y`
   from halfway through, scoops into held notes after a leap up, falls (a
@@ -3443,7 +3465,15 @@ changes can't move the guess), and the reply names it. `skip` leaves steps
 out (`polish`, `faders`, `mix`, `loop`, `listen`, `export`), and `loudness` and
 `quality` go to the export. It needs direct changes (with `skip` `polish`,
 `mix` and `loop` it changes nothing: it listens and exports), and the export a saved song: until then
-the reply gives the `export_for_game` call to make once it's saved.
+the reply gives the `export_for_game` call to make once it's saved. A
+client's call (Claude Code, a script) saves the finished song in its file at
+the end, as `export_for_game` saves a client's song without a file first, so
+`new_song` and `open_song` can follow; the reply says so.
+
+Every call of a client that changes the song names the song: "Changed the
+song "Town" (Town.ftm): ...", or a last line "Song: "Town" (Town.ftm)."
+(with several agents on one FamiTracker, a `set_tempo` once landed in
+another's open song).
 
 The song's changes are one Ctrl+Z, and the reply is short, a line a step and
 then what to listen for:

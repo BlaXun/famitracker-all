@@ -3385,6 +3385,50 @@ Airship's bleed, which the cleaning takes out, still doesn't).
 `TestTriangleUnderTomFills` (`listen_tests`) and `TestCut`'s whole-song
 cases cover them; `TestExport` keeps an intro's second time through.
 
+Depth round's tool faults (from `fix-depth-bugs`): six composers made the
+depth round's songs and met these. `add_chords_and_bass` keeps a bass
+line already in its bars (`KeptBass`, said in the reply) unless
+`bass_style`, `bass_channel` or `bass_instrument` asks for one (a second
+chord part in the Lava Forge's A' had replaced its driving bass with root
+and fifth; `DroneRefit` passes `bass_style` to keep refitting it); a named
+`chord_channel` may be the VRC6 sawtooth or an N163 channel
+(`IsNamedChordChannel`, `IsNamedLushChordChannel`: lush on the saw too;
+never picked by themselves), the N163's chords on the electric piano or the
+string pad, a sound of their own (`OwnWaveSound`); broken chords never sit
+on the bass's notes or under them (`Least` in `ChordPart`'s broken branch:
+the Mossy Forest's low melody put them on the triangle's D-2); and the
+reply names the song's designed sounds no note plays yet
+(`UnusedSoundsText`: not presets, ambience or lush instruments) with
+`chord_instrument` and `bass_instrument`. `FindStyle` reads styles in words
+("root and fifth", "walking bass"; `FILLERS`), and root_fifth has
+"oom-pah". `add_drums` keeps an ambience's bars on the noise (the cells
+copied back after `DrumChanges`, each stretch struck again with the
+ambience's sound at its first row) unless `over_ambience`, refuses when
+every bar is ambience, and names the bars of other notes it replaces.
+`MixSpans` splits a chord part that harmonizes the tune in some bars (two
+bars at a time with no chord sounding and `MovesWithTune`) into a line
+there (the Clockwork Factory's Pulse 2: chords, then a third under the tune
+in its climax, mixed at 2-4 as chords); polish's accents never judged by
+role. `song_shape`: a `kind` given (or `what_next`'s kept one, `KindKept`)
+wins over the words' shape where their kinds differ, and the form's title
+is the kind's (`KindShapeTitle`: "mysterious night"). A client's change
+names the song (`ToolSet::NameChangedSong`: "Changed the song "X"
+(x.ftm):" or a last line), and `finish_song` saves a client's song at its
+end. `listen` measures a note on a shared pin that the cleaning left off its
+pitch on the render as is too, the nearer heard: the noise's hits compress
+the triangle's steps sample by sample (the pin isn't linear), so taking the
+noise's share out put two of the Clockwork Factory's octave bass notes
+77-137 cents off, reproduced under Wine with the render's stems captured
+(`TestTriangleUnderNoise`, `listen_tests`, with a truly sharp triangle
+still heard). `grow_melody` counts a hook's notes bar by bar in its error,
+`add_echo` says which channel is the source and which the target, and
+`add_counter_melody` cuts notes on a sound that dies away (`HeardFramesOf`)
+to where it's heard, a beat at the least. `TestBackingDepthBugs`,
+`TestDrumsKeepAmbience`, `TestRolesChangeInSong`, `TestShapeKindWins`,
+`TestChangesNameTheSong` and `TestSmallDepthBugs` cover them. For
+`what_next` (another branch's): its own add_chords_and_bass calls pass
+`bass_style` wherever they want a new bass.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
