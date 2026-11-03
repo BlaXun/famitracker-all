@@ -697,9 +697,89 @@ void TestTriangleUnderTomFills()
 	CHECK_EQ(CountKind(ListenToSong(SongOf(Both)), LISTEN_WOBBLE), 1);
 }
 
+// The Clockwork Factory's bass (fix-depth-bugs): the triangle's octave eighths (A-1 and A-2 as it sounds, 0.2 s each) under
+// the noise's hits. The second pin compresses the triangle's steps by the noise's level, sample by sample, so the noise's
+// share taken out of the triangle's render (PinCleaned) left two notes 77-137 cents off, which the render alone holds in
+// tune: listen said "Out of tune: Triangle" and moving the notes an octave up kept it. A note off its pitch measured clean
+// is measured as rendered too, the nearer heard; a triangle that is off stays off
+void TestTriangleUnderNoise()
+{
+	auto Render = [](double Detune, ListenPart &Tri, ListenPart &Noise) {
+		const double Hz[4] = { 55.0, 110.0, 61.74, 123.47 };
+		const double Row = 0.1, Seconds = 12.8;
+		const size_t Count = static_cast<size_t>(Seconds * RATE);
+		Tri = ListenPart();
+		Noise = ListenPart();
+		Tri.Name = "2A03 Triangle";
+		Tri.Smooth = true;
+		Noise.Name = "2A03 Noise";
+		Noise.Pitched = false;
+		Tri.Samples.assign(Count, 0.0f);
+		Noise.Samples.assign(Count, 0.0f);
+		double Phase = 0.0, Clock = 0.0;
+		unsigned int Shift = 1;
+		int Bit = 0;
+		auto Pin = [](double t, double n) { return t + n <= 0.0 ? 0.0 : 159.79 / (1.0 / (t / 8227.0 + n / 12241.0) + 100.0); };
+		for (size_t n = 0; n < Count; ++n) {
+			const double t = static_cast<double>(n) / RATE;
+			const int r = static_cast<int>(t / Row);
+			const double Into = t - r * Row;
+			Phase = std::fmod(Phase + Hz[(r / 2) % 4] * std::pow(2.0, Detune / 1200.0) / RATE, 1.0);
+			const int Step = static_cast<int>(Phase * 32.0);
+			const int Tone = Step < 16 ? 15 - Step : Step - 16;
+			// The noise: its shift register at 4 kHz, a hit on every other row, full and fading over 0.15 s
+			Clock += 4000.0 / RATE;
+			while (Clock >= 1.0) {
+				Clock -= 1.0;
+				const unsigned int Feedback = (Shift ^ (Shift >> 1)) & 1u;
+				Shift = (Shift >> 1) | (Feedback << 14);
+				Bit = static_cast<int>(Shift & 1u);
+			}
+			const double Level = r % 2 == 1 && Into < 0.15 && Bit ? 15.0 * (1.0 - Into / 0.15) : 0.0;
+			Noise.Samples[n] = static_cast<float>(Pin(0.0, Level));
+			Tri.Samples[n] = static_cast<float>(Pin(Tone, Level) - Pin(0.0, Level));
+		}
+		Tri.Pin = Noise.Pin = 2;
+		for (int r = 0; r * Row < Seconds - 2 * Row; r += 2) {
+			ListenNote N;
+			N.Row = r;
+			N.Rows = 2;
+			N.Begin = static_cast<long long>(r * Row * RATE);
+			N.End = static_cast<long long>((r + 2) * Row * RATE);
+			N.Hz = Hz[(r / 2) % 4];
+			Tri.Notes.push_back(N);
+		}
+		for (int r = 1; r * Row < Seconds; r += 2) {
+			ListenNote N;
+			N.Row = r;
+			N.Begin = static_cast<long long>(r * Row * RATE);
+			N.End = N.Begin + static_cast<long long>(Row * RATE);
+			Noise.Notes.push_back(N);
+		}
+	};
+	ListenPart Tri, Noise;
+	Render(0.0, Tri, Noise);
+	int Off = 0;
+	for (size_t i = 0; i < Tri.Notes.size(); ++i)
+		Off += std::fabs(MeasurePitch(Tri.Samples, RATE, Tri.Notes[i].Begin, Tri.Notes[i].End, Tri.Notes[i].Hz).Steady) >= 20.0 ? 1 : 0;
+	CHECK_EQ(Off, 0);	// measured as rendered, every note in tune
+	std::vector<ListenPart> Parts;
+	Parts.push_back(Tri);
+	Parts.push_back(Noise);
+	CHECK_EQ(CountKind(ListenToSong(SongOf(Parts)), LISTEN_TUNING), 0);
+	// A triangle a third of a semitone sharp under the same hits is still heard so
+	Render(35.0, Tri, Noise);
+	Parts.clear();
+	Parts.push_back(Tri);
+	Parts.push_back(Noise);
+	const std::vector<ListenFinding> Sharp = ListenToSong(SongOf(Parts));
+	CHECK_EQ(CountKind(Sharp, LISTEN_TUNING), 1);
+}
+
 int main()
 {
 	std::setvbuf(stdout, 0, _IONBF, 0);
+	TestTriangleUnderNoise();
 	TestTriangleUnderTomFills();
 	TestTriangleBesideSamples();
 	TestWarble();

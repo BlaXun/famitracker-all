@@ -10848,7 +10848,7 @@ void TestReharmonize()
 		"\"to_bar\": 6, \"key\": \"D major\"}");
 	CHECK(!Result.IsError);
 	CHECK_HAS(Result.Text, "chords on 2A03 Pulse 1 and a root_fifth bass line on 2A03 Triangle, bars 5-6, in D major (in place of the "
-		"chords and bass line that played there)");
+		"chords and bass line that played there (its notes didn't fit the new chords))");
 	CHECK(Song.Rows[0][64].Pitch() % 12 == 4 && Song.Rows[0][80].Pitch() % 12 == 9);	// Em9, A7
 	for (int r = 0; r < 128; ++r)
 		CHECK(!Song.Rows[1][r].HasNote() && !Song.Rows[7][r].HasNote());	// no second chord part, no second bass
@@ -10869,7 +10869,8 @@ void TestReharmonize()
 	Result = Run(Fm, "add_chords_and_bass", "{\"chords\": \"| Am7 | D7 |\", \"chord_style\": \"voices\", \"key\": \"C major\", "
 		"\"from_bar\": 3, \"to_bar\": 4}");
 	CHECK_HAS(Result.Text, "voices chords on VRC7 FM Channel 1, VRC7 FM Channel 2 and VRC7 FM Channel 3, strummed upward 1 frame apart "
-		"(Gxx) and a root_fifth bass line on 2A03 Triangle, bars 3-4, in C major (in place of the chords and bass line that played there)");
+		"(Gxx)");
+	CHECK_HAS(Result.Text, "bars 3-4, in C major (in place of the chords");
 	for (int r = 0; r < 64; ++r)
 		CHECK(!Fm.Rows[8][r].HasNote());	// FM Channel 4 stays free
 	CHECK(Fm.Rows[5][32].HasNote() && Fm.Rows[6][32].HasNote() && Fm.Rows[7][32].HasNote());
@@ -18523,7 +18524,7 @@ void TestGrowTool()
 	Result = Run(Empty, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"VRC6 Pulse 1\"}");
 	Check(Contains(Result.Text, "There are no chords in bars 1-8 to grow a melody over"), Result.Text.c_str(), __LINE__);
 	CHECK(!Run(Empty, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"VRC6 Pulse 1\", \"chords\": \"| C | Am | F | G |\"}").IsError);
-	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4\"}").Text, "a hook of 4-7 notes, a bar or two (this one has 3)");
+	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4\"}").Text, "a hook of 4-7 notes in all, over a bar or two (this one has 3)");
 	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - - - | A4\"}").Text, "its bar 1 has 9 steps, and a bar here holds 8");
 	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"kind\": \"jazzy\"}").Text, "kind: calm");
 	CHECK_HAS(Run(Later, "grow_melody", "{\"motif\": \"C4 D4 E4 G4 - - - -\", \"channel\": \"Noise\"}").Text, "not the noise");
@@ -31900,7 +31901,8 @@ void TestAmbience()
 		Copy.Info.TrackName = Copy.Tracks[0].Name = "Lantern Row";
 		CHECK(Run(Copy, "add_ambience", "{\"kind\": \"thunderstorm of doom\"}").IsError);
 		CHECK(!Run(Copy, "add_ambience", "{\"about\": \"rain on the roof\"}").IsError);
-		CHECK(!Run(Copy, "add_drums", "{\"from_bar\": 5, \"to_bar\": 12}").IsError);
+		CHECK(Run(Copy, "add_drums", "{\"from_bar\": 5, \"to_bar\": 12}").IsError);	// (the rain there stays)
+		CHECK(!Run(Copy, "add_drums", "{\"from_bar\": 5, \"to_bar\": 12, \"over_ambience\": true}").IsError);
 		const ToolResult Refused = Run(Copy, "add_ambience", "{\"kind\": \"waves\"}");
 		Check(Refused.IsError && Contains(Refused.Text, "needs it to itself"), Refused.Text.c_str(), __LINE__);
 		CHECK(!Run(Copy, "add_ambience", "{\"kind\": \"waves\", \"from_bar\": 13, \"to_bar\": 40}").IsError);
@@ -32431,6 +32433,331 @@ void TestAllKindsTogether()
 		}
 }
 
+// fix-depth-bugs: what six composers of the depth round met in the tools
+
+// A client's call (Caller::Client), as a composer over the connection makes it
+ToolResult RunClient(FakeSong &Song, const char *Tool, const std::string &Arguments)
+{
+	ToolSet Tools(Song);
+	Caller Who;
+	Who.Client = true;
+	return Tools.Call(Tool, Parse(Arguments), Who);
+}
+
+// A tune on VRC6 Pulse 1 over Bars bars, quarter notes
+void PutTune(FakeSong &Song, int Bars, const char *const *Tune, int Count)
+{
+	Song.Info.DirectChanges = true;
+	for (int Bar = 0; Bar < Bars; ++Bar)
+		for (int b = 0; b < 4; ++b)
+			Song.Put(5, Bar * 16 + b * 4, Tune[(Bar * 4 + b) % Count], Bar == 0 && b == 0 ? 0 : NO_INSTRUMENT, Bar == 0 && b == 0 ? 12 : -1);
+}
+
+// add_chords_and_bass: a bass already there stays unless one is asked for (the Lava Forge's driving bass, the Frozen Lake's A),
+// broken chords keep over the bass where the melody sits low (the Mossy Forest), chords on the VRC6's sawtooth and the N163's
+// channels when named (the Haunted Library, the Market Festival), the song's own designed sounds offered, bass_style in words
+void TestBackingDepthBugs()
+{
+	static const char *const TUNE[] = { "E-4", "G-4", "C-5", "G-4" };
+	{
+		FakeSong Song;
+		PutTune(Song, 4, TUNE, 4);
+		static const char *const LOWS[] = { "C-3", "F-3", "G-3", "C-3" }, *const HIGHS[] = { "C-4", "F-4", "G-4", "C-4" };	// driving octaves
+		for (int r = 0; r < 64; r += 2)
+			Song.Put(2, r, (r % 4 == 0 ? LOWS : HIGHS)[r / 16], r == 0 ? 1 : NO_INSTRUMENT);
+		Song.End(2, 64, NOTE_HALT);
+		const std::string Before = Notes(Song, 2);
+		ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
+			"\"chord_channel\": \"2A03 Pulse 2\", \"chord_style\": \"lush\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "lush chords on 2A03 Pulse 2, bars 1-8, in C major; the bass line on 2A03 Triangle there stays as it was");
+		CHECK(Notes(Song, 2) == Before);
+		CHECK(Song.Rows[1][0].HasNote());
+		// Asked for: replaced, and said
+		Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
+			"\"chord_channel\": \"2A03 Pulse 2\", \"chord_style\": \"lush\", \"bass_style\": \"root and fifth\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "a root_fifth bass line on 2A03 Triangle");
+		CHECK_HAS(Result.Text, "bass line that played there");
+		CHECK(Notes(Song, 2) != Before);
+		// A bass that doesn't play the new chords' tones: replaced, and said why
+		FakeSong Other = Song;
+		for (int r = 0; r < 64; r += 2)
+			Other.Put(2, r, "C-3", r == 0 ? 1 : NO_INSTRUMENT);
+		CHECK_HAS(Run(Other, "add_chords_and_bass", "{\"chords\": \"| F | G |\", \"key\": \"C major\", \"chord_channel\": \"2A03 Pulse 2\", "
+			"\"from_bar\": 1, \"to_bar\": 2}").Text, "bass line that played there (its notes didn't fit the new chords)");
+		// Nothing for the chords and the bass kept: said so
+		CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"| C |\", \"key\": \"C major\", \"chord_channel\": \"none\"}").Text,
+			"the bass line on 2A03 Triangle there stays");
+	}
+	{
+		// The melody low (D-3 to B-3) over a triangle bass: the broken chords on Pulse 1 never on the bass's top note or under it
+		static const char *const LOW[] = { "D-3", "G-3", "B-3", "A-3" };
+		FakeSong Song;
+		PutTune(Song, 4, LOW, 4);
+		const ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| G | Em | C | D |\", \"key\": \"G major\", "
+			"\"chord_channel\": \"2A03 Pulse 1\", \"chord_style\": \"broken\", \"bass_channel\": \"2A03 Triangle\", "
+			"\"bass_style\": \"root_fifth\"}");
+		CHECK(!Result.IsError);
+		for (int Bar = 0; Bar < 4; ++Bar) {
+			int Bass = -1;
+			for (int r = Bar * 16; r < Bar * 16 + 16; ++r)
+				if (Song.Rows[2][static_cast<size_t>(r)].HasNote())
+					Bass = std::max(Bass, Song.Rows[2][static_cast<size_t>(r)].Pitch() - 12);	// as the triangle sounds
+			const int Lowest = LowestIn(Song, 0, Bar * 16, Bar * 16 + 16);
+			Check(Bass >= 0 && Lowest < 1000 && Lowest >= Bass + 2, (Notes(Song, 0, Bar * 16, Bar * 16 + 16) + " over " +
+				Notes(Song, 2, Bar * 16, Bar * 16 + 16)).c_str(), __LINE__);
+		}
+	}
+	{
+		// The sawtooth when named; never picked by itself
+		FakeSong Song;
+		PutTune(Song, 4, TUNE, 4);
+		ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
+			"\"chord_channel\": \"VRC6 Sawtooth\", \"chord_style\": \"stabs\", \"bass_channel\": \"none\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "stabs chords on VRC6 Sawtooth");
+		bool Saw = false;
+		for (int r = 0; r < 64; ++r)
+			Saw = Saw || Song.Rows[7][static_cast<size_t>(r)].HasNote();
+		CHECK(Saw);
+		Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F |\", \"key\": \"C major\", \"chord_channel\": \"VRC6 Sawtooth\", "
+			"\"chord_style\": \"lush\", \"bass_channel\": \"none\", \"from_bar\": 1, \"to_bar\": 2}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "lush chords on VRC6 Sawtooth");
+	}
+	{
+		// The N163's soft layer: arpeggio chords with a sound of its own there; lush chords refused with the styles that work
+		FakeSong Song;
+		PutTune(Song, 4, TUNE, 4);
+		CHECK(!Run(Song, "set_expansion", "{\"chips\": [\"VRC6 Plus\"]}").IsError);
+		ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
+			"\"chord_channel\": \"Soft 2\", \"chord_style\": \"arpeggio\", \"bass_channel\": \"none\"}");
+		Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+		int Soft = -1;
+		for (size_t c = 0; c < Song.Info.Channels.size(); ++c)
+			if (Song.Info.Channels[c].Name == "Soft 2")
+				Soft = static_cast<int>(c);
+		CHECK(Soft >= 0 && Song.Rows[static_cast<size_t>(Soft)][0].HasNote());
+		if (Soft >= 0 && Song.Rows[static_cast<size_t>(Soft)][0].HasNote()) {
+			std::string Chip;
+			for (size_t i = 0; i < Song.Info.Instruments.size(); ++i)
+				if (Song.Info.Instruments[i].Index == Song.Rows[static_cast<size_t>(Soft)][0].Instrument)
+					Chip = Song.Info.Instruments[i].Chip;
+			CHECK_EQ(Chip, std::string("N163"));
+		}
+		CHECK_HAS(Run(Song, "add_chords_and_bass", "{\"chords\": \"| C |\", \"key\": \"C major\", \"chord_channel\": \"Soft 2\", "
+			"\"chord_style\": \"lush\", \"bass_channel\": \"none\"}").Text, "on the N163 choose arpeggio or voices");
+	}
+	{
+		// A sound designed for the chords and not used yet: offered by name
+		FakeSong Song;
+		PutTune(Song, 4, TUNE, 4);
+		Song.AddInstrumentInfo(3, "Band brass", "2A03", false);
+		const ToolResult Result = Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
+			"\"chord_channel\": \"2A03 Pulse 1\", \"chord_style\": \"stabs\", \"bass_channel\": \"none\"}");
+		CHECK(!Result.IsError);
+		CHECK_HAS(Result.Text, "chord_instrument gives them one of your own sounds instead, like \"Band brass\" (03)");
+		CHECK_LACKS(Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", "
+			"\"chord_channel\": \"2A03 Pulse 1\", \"chord_style\": \"stabs\", \"bass_channel\": \"none\", \"chord_instrument\": "
+			"\"Band brass\"}").Text, "chord_instrument gives");
+	}
+	// bass_style said in words
+	CHECK_EQ(FindStyle(BassStyles(), "root and fifth"), static_cast<int>(BASS_ROOT_FIFTH));
+	CHECK_EQ(FindStyle(BassStyles(), "walking bass"), static_cast<int>(BASS_WALKING));
+	CHECK_EQ(FindStyle(BassStyles(), "oom-pah"), static_cast<int>(BASS_ROOT_FIFTH));
+	CHECK_EQ(FindStyle(BassStyles(), "the bass"), -1);
+}
+
+// add_drums keeps the ambience in its bars (the Frozen Lake's wind), says which notes of the noise it replaced (the
+// Clockwork Factory's clanks), and over_ambience puts the drums in the ambience's place
+void TestDrumsKeepAmbience()
+{
+	static const char *const TUNE[] = { "E-4", "G-4", "C-5", "G-4" };
+	FakeSong Song;
+	PutTune(Song, 8, TUNE, 4);
+	ToolResult Result = Run(Song, "add_ambience", "{\"kind\": \"wind\", \"from_bar\": 1, \"to_bar\": 2}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	const std::string Wind = Notes(Song, 3, 0, 32);
+	CHECK(!Wind.empty());
+	Result = Run(Song, "add_drums", "{\"from_bar\": 1, \"to_bar\": 4}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "The ambience on 2A03 Noise stays in bars 1-2");
+	CHECK(Notes(Song, 3, 0, 32) == Wind);
+	CHECK(Song.Rows[3][32].HasNote());
+	// Over the ambience alone: refused, nothing changed
+	Result = Run(Song, "add_drums", "{\"from_bar\": 1, \"to_bar\": 2}");
+	CHECK(Result.IsError);
+	CHECK_HAS(Result.Text, "over_ambience");
+	CHECK(Notes(Song, 3, 0, 32) == Wind);
+	// Drums over drums: the bars named
+	Result = Run(Song, "add_drums", "{\"from_bar\": 3, \"to_bar\": 4, \"groove\": \"four_on_floor\"}");
+	CHECK_HAS(Result.Text, "2A03 Noise's own notes in bars 3-4");
+	// Asked: the drums in the ambience's place
+	Result = Run(Song, "add_drums", "{\"from_bar\": 1, \"to_bar\": 2, \"over_ambience\": true}");
+	CHECK(!Result.IsError);
+	CHECK(Notes(Song, 3, 0, 32) != Wind);
+	CHECK_HAS(Result.Text, "bars 1-2");
+}
+
+// mix judges a chord part that harmonizes the tune in some bars as a line there (the Clockwork Factory's Pulse 2: chords
+// in its climax's first bars, a third under the tune in the next, which the mix had set at volumes 2-4 as chords)
+void TestRolesChangeInSong()
+{
+	FakeSong Song;
+	Song.Info.DirectChanges = true;
+	static const char *const TUNE[] = { "E-4", "G-4", "A-4", "G-4", "F-4", "E-4", "D-4", "E-4" };
+	static const char *const THIRD[] = { "C-4", "E-4", "F-4", "E-4", "D-4", "C-4", "B-3", "C-4" };
+	for (int Bar = 0; Bar < 8; ++Bar) {
+		for (int b = 0; b < 4; ++b) {
+			const int Row = Bar * 16 + b * 4;
+			Song.Put(0, Row, TUNE[(Bar * 4 + b) % 8], Row == 0 ? 2 : NO_INSTRUMENT, Row == 0 ? 12 : -1);
+			if (Bar % 4 >= 2)
+				Song.Put(1, Row, THIRD[(Bar * 4 + b) % 8], Row == 32 ? 2 : NO_INSTRUMENT, Row == 32 ? 12 : -1);
+			if (Bar % 4 == 2 && b == 0)
+				Song.Rows[1][static_cast<size_t>(Row)].Effect[0] = EFF_ARPEGGIO;	// (000: the chords' 047 ends)
+		}
+		if (Bar % 4 < 2) {
+			Song.Put(1, Bar * 16, "C-3", Bar == 0 ? 2 : NO_INSTRUMENT, 12);
+			Song.Rows[1][static_cast<size_t>(Bar * 16)].Effect[0] = EFF_ARPEGGIO;
+			Song.Rows[1][static_cast<size_t>(Bar * 16)].Param[0] = 0x47;
+		}
+		Song.Put(2, Bar * 16, Bar % 2 == 0 ? "C-3" : "G-2", Bar == 0 ? 1 : NO_INSTRUMENT);
+	}
+	FakeSong Lively = Song;
+	const ToolResult Result = Run(Song, "mix", "{\"melody_channel\": \"2A03 Pulse 1\"}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	auto VolumeAt = [&](int Row) {
+		int Volume = 15;
+		for (int r = 0; r <= Row; ++r)
+			if (Song.Rows[1][static_cast<size_t>(r)].Volume < NO_VOLUME)
+				Volume = Song.Rows[1][static_cast<size_t>(r)].Volume;
+		return Volume;
+	};
+	const int Chords = VolumeAt(0), Harmony = VolumeAt(32), Tune = Song.Rows[0][0].Volume;
+	std::printf("Roles in one channel: chords at %d, the harmony at %d, the tune at %d\n%s\n", Chords, Harmony, Tune, Result.Text.c_str());
+	Check(Harmony > Chords && Harmony >= 6, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "2A03 Pulse 2 (a second line, bars 3-4)");
+	// The lively mix, the stage's: the harmony set as a line, not crushed with the chords
+	const ToolResult Band = Run(Lively, "mix", "{\"melody_channel\": \"2A03 Pulse 1\", \"style\": \"lively\"}");
+	Check(!Band.IsError, Band.Text.c_str(), __LINE__);
+	int LiveChords = 15, LiveHarmony = 15;
+	for (int r = 0; r < 64; ++r) {
+		const Cell &C = Lively.Rows[1][static_cast<size_t>(r)];
+		if (C.Volume < NO_VOLUME && r < 32)
+			LiveChords = C.Volume;
+		if (C.Volume < NO_VOLUME && r >= 32 && r < 36)
+			LiveHarmony = C.Volume;
+	}
+	std::printf("Lively: chords at %d, the harmony at %d\n%s\n", LiveChords, LiveHarmony, Band.Text.c_str());
+	Check(LiveHarmony >= 5, Band.Text.c_str(), __LINE__);
+	CHECK_HAS(Band.Text, "2A03 Pulse 2 (a second line, bars 3-4)");
+}
+
+// song_shape: a kind given wins over the words (the Haunted Library's mysterious, laid out as "the calm night"), as does the
+// kind what_next was given for the track (the Frozen Lake's calm, where the words said melancholic)
+void TestShapeKindWins()
+{
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		const ToolResult Result = Run(Song, "song_shape", "{\"about\": \"a haunted library at midnight: candles flicker, eerie and "
+			"curious\", \"kind\": \"mysterious\"}");
+		Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+		CHECK_HAS(Result.Text, "laid out a mysterious night");
+		CHECK_LACKS(Result.Text, "calm night");
+	}
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		const ToolResult Result = Run(Song, "song_shape", "{\"about\": \"a busy festival market with lanterns\", \"kind\": \"calm\"}");
+		Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+		CHECK_HAS(Result.Text, "laid out a calm night");
+		CHECK_HAS(Result.Text, "the kind's form; the words alone would lay out the town");
+	}
+	{
+		FakeSong Song;
+		Song.Info.DirectChanges = true;
+		Song.KeepKind(Song.Info.Track, "calm");
+		const ToolResult Result = Run(Song, "song_shape", "{\"shape\": \"night\", \"about\": \"A frozen lake at dusk, still, lonely "
+			"but beautiful\"}");
+		Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+		CHECK_HAS(Result.Text, "Kind: calm, as what_next was given for this track (the words alone would say melancholic");
+		CHECK_LACKS(Result.Text, "Pass kind \"melancholic\"");
+	}
+}
+
+// A client's change names the song (the Market Festival's composer changed another's open song with set_tempo and set_key),
+// and finish_song saves a client's song (the Frozen Lake's, left unsaved, so new_song refused)
+void TestChangesNameTheSong()
+{
+	FakeSong Song;
+	static const char *const TUNE[] = { "E-4", "G-4", "C-5", "G-4" };
+	PutTune(Song, 8, TUNE, 4);
+	ToolResult Result = RunClient(Song, "set_tempo", "{\"bpm\": 120}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "\nSong: \"Test song\" (test.ftm).");
+	Result = RunClient(Song, "transpose", "{\"semitones\": 2, \"channels\": [\"VRC6 Pulse 1\"]}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "Changed the song \"Test song\" (test.ftm): up 2 semitones");
+	// Not FamiTracker's own windows, nor a call that changes nothing
+	CHECK_LACKS(Run(Song, "transpose", "{\"semitones\": -2, \"channels\": [\"VRC6 Pulse 1\"]}").Text, "\"Test song\"");
+	CHECK_LACKS(RunClient(Song, "get_song", "{}").Text, "\nSong: ");
+	// finish_song saves a client's song
+	Song.Info.Modified = true;
+	Song.Saved.clear();
+	Result = RunClient(Song, "finish_song", "{\"kind\": \"calm\", \"skip\": [\"listen\", \"export\"]}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "Saved: the finished song is in its file, test.ftm");
+	CHECK(Song.Saved == "test.ftm" && !Song.Info.Modified);
+	// FamiTracker's own windows save themselves
+	Song.Info.Modified = true;
+	Song.Saved.clear();
+	Result = Run(Song, "finish_song", "{\"kind\": \"calm\", \"skip\": [\"listen\", \"export\"]}");
+	CHECK(Song.Saved.empty());
+}
+
+// grow_melody's count of a hook's notes says each bar's, add_echo says which channel is which, and add_counter_melody on a
+// sound that dies away cuts its long notes to where it's heard (the Mossy Forest's bell)
+void TestSmallDepthBugs()
+{
+	FakeSong Song;
+	static const char *const TUNE[] = { "E-4", "G-4", "C-5", "G-4" };
+	PutTune(Song, 8, TUNE, 4);
+	CHECK(!Run(Song, "add_chords_and_bass", "{\"chords\": \"| C | F | G | C |\", \"key\": \"C major\", \"chord_channel\": "
+		"\"2A03 Pulse 1\", \"bass_channel\": \"2A03 Triangle\"}").IsError);
+	const ToolResult Grow = Run(Song, "grow_melody", "{\"motif\": \"E4 G4 A4 B4 C5 B4 A4 G4 | E4 D4 C4 D4 E4 - - -\", \"channel\": "
+		"\"2A03 Pulse 2\", \"from_bar\": 1, \"to_bar\": 8}");
+	CHECK(Grow.IsError);
+	CHECK_HAS(Grow.Text, "(this one has 13: 8 in its first bar and 5 in its second bar)");
+	ToolSet Tools(Song);
+	std::string Echo;
+	for (size_t i = 0; i < Tools.List().size(); ++i)
+		if (Tools.List()[i].Name == "add_echo")
+			Echo = WriteJson(Tools.List()[i].InputSchema);
+	CHECK_HAS(Echo, "Channel to echo (the source).");
+	CHECK_HAS(Echo, "Channel the echo goes on (the target).");
+	// A bell that's gone in under a beat: the calm counter-line's notes of a bar cut to a beat
+	ToolResult Counter = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"2A03 Pulse 2\", "
+		"\"style\": \"calm\", \"instrument\": \"bell\"}");
+	Check(!Counter.IsError, Counter.Text.c_str(), __LINE__);
+	CHECK_HAS(Counter.Text, "dies away within");
+	int Longest = 0, Start = -1;
+	for (int r = 0; r < 128; ++r) {
+		const Cell &C = Song.Rows[1][static_cast<size_t>(r)];
+		if (C.HasNote() || C.IsEnd()) {
+			if (Start >= 0)
+				Longest = std::max(Longest, r - Start);
+			Start = C.HasNote() ? r : -1;
+		}
+	}
+	Check(Longest > 0 && Longest <= 8, Notes(Song, 1).c_str(), __LINE__);
+	// A sound that holds keeps its long notes
+	Counter = Run(Song, "add_counter_melody", "{\"melody_channel\": \"VRC6 Pulse 1\", \"channel\": \"2A03 Pulse 2\", \"style\": "
+		"\"calm\", \"instrument\": \"soft lead\"}");
+	CHECK_LACKS(Counter.Text, "dies away within");
+}
+
 // API_TESTS=TestA,TestB runs those tests alone (all of them when unset)
 bool TestWanted(const char *Name)
 {
@@ -32750,6 +33077,12 @@ int main()
 	RUN(TestSfxEar);
 	RUN(TestSfxEarWritten);
 	RUN(TestDevelopment);
+	RUN(TestBackingDepthBugs);
+	RUN(TestDrumsKeepAmbience);
+	RUN(TestRolesChangeInSong);
+	RUN(TestShapeKindWins);
+	RUN(TestChangesNameTheSong);
+	RUN(TestSmallDepthBugs);
 	RUN(TestAllKindsTogether);
 	std::printf("%d checks, %d failed\n", g_Checks, g_Failures);
 	return g_Failures == 0 ? 0 : 1;

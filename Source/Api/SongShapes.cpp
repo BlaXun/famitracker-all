@@ -455,6 +455,17 @@ const SongShape &ShapeForKind(const std::string &Kind)
 	return pShape != 0 ? *pShape : SongShapes()[0];
 }
 
+std::string KindShapeTitle(const SongShape &Shape, const std::string &Kind)
+{
+	const std::string Word = Lower(Trimmed(Kind));
+	const std::string Title = Shape.Title;
+	const size_t Space = Title.find(' ');
+	if (Word.empty() || Word == "general" || Word == Lower(Shape.Kind) || Space == std::string::npos ||
+		Lower(Title.substr(0, Space)) != Lower(Shape.Kind))
+		return Title;
+	return std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(Word[0])))) + Word.substr(1) + Title.substr(Space);
+}
+
 const SongShape &ShapeForKind(const std::string &Kind, const std::string &TrackName)
 {
 	const SongShape &Own = ShapeForKind(Kind);
@@ -1453,6 +1464,9 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 			return false;
 		}
 	}
+	else if (!Trimmed(Request.Kind).empty() && Trimmed(Request.Parts).empty() &&
+		(Words.pShape == 0 || Words.pShape->Kind != ShapeForKind(Request.Kind).Kind))
+		pBase = &ShapeForKind(Request.Kind, Request.TrackName);	// a kind given wins over the words' shape (from fix-depth-bugs)
 	else if (Words.pShape != 0)
 		pBase = Words.pShape;
 	else {
@@ -1467,14 +1481,20 @@ bool MakeSongShape(const ShapeRequest &Request, ShapeChoice &Out, std::string &E
 	}
 	Out.pBase = pBase;
 	if (!Trimmed(Request.About).empty()) {
-		std::string Line = Trimmed(Request.Shape).empty() ? "the " + Lower(pBase->Title) + (Words.pShape != 0 ? std::string() :
-			std::string(" (no word for a shape, so the general one)")) : "the " + Lower(pBase->Title) + " asked for";
+		// (the shape's title as its kind's: a mysterious kind on the night's form is a "mysterious night", not a "calm night")
+		const std::string Title = Lower(KindShapeTitle(*pBase, Request.Kind));
+		const bool KindsShape = Trimmed(Request.Shape).empty() && !Trimmed(Request.Kind).empty() && pBase != Words.pShape;
+		std::string Line = Trimmed(Request.Shape).empty() ? "the " + Title + (KindsShape ? " (the kind's form" +
+			(Words.pShape != 0 ? "; the words alone would lay out the " + Lower(Words.pShape->Title) : std::string()) + ")" :
+			Words.pShape != 0 ? std::string() : std::string(" (no word for a shape, so the general one)")) : "the " + Title + " asked for";
 		Out.FromWords = "From the words: " + Line + (Words.Why.empty() ? std::string(".") : " (" + Words.Why + ").");
 		Out.Kind = Request.Kind.empty() ? Words.Kind : Request.Kind;
-		if (!Words.KindWords.empty() && Request.Kind.empty())
+		const std::string Given = Request.KindKept ? "as what_next was given for this track" : "as given";
+		if (!Words.KindWords.empty() && (Request.Kind.empty() || (Request.KindKept && Request.Kind == Words.Kind)))
 			Out.FromWords += "\n" + KindFromWordsLine(Words);
 		else if (!Words.KindWords.empty() && Request.Kind != Words.Kind)
-			Out.FromWords += "\nKind: " + Request.Kind + ", as given (the words alone would say " + Words.Kind + ").";
+			Out.FromWords += "\nKind: " + Request.Kind + ", " + Given + " (the words alone would say " + Words.Kind + "; the kind given "
+				"wins, so pass kind \"" + Request.Kind + "\" to get_recipe, what_next and finish_song).";
 	}
 	const std::string &Title = pBase->Title;
 	FormList Form;
