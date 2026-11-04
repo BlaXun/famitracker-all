@@ -345,10 +345,10 @@ const std::vector<CoreToolText> &CoreTexts()
 			{ "channels", "Only these channels." },
 			{ "mute", "Not these channels." } } },
 		{ "stop", "Stops playback.", {} },
-		{ "save_song", "Saves the song to its file, or a copy (copy_name). A song never saved goes into FamiTracker's Songs "
-			"folder.", {
-			{ "copy_name", "File name for a copy (default: save the song itself)." },
-			{ "name", "A song with no file yet: its name." } } },
+		{ "save_song", "Saves the song to its file, or a copy (copy_name). A song never saved goes into the Songs folder.", {
+			{ "copy_name", "A copy's file name." },
+			{ "name", "A new file's name." },
+			{ "new_file", "Into the Songs folder." } } },
 		{ "new_song", "Starts a new song in place of the open one, as File > New does; saved at once into the Songs folder "
 			"under its name. Refuses while the open song has unsaved changes (save_song first). Then ask what_next.", {
 			{ "name", "The song's name, like \"Town theme\"." },

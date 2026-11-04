@@ -40991,15 +40991,13 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Saves the song to its file, or a copy next to it (copy_name) so the user can compare versions. A song that has no file "
 		"yet (never saved) goes into FamiTracker's Songs folder, in a folder of its own named after it (name, else the track's "
 		"name), numbered when the name is taken, never over a file; it then is that file, so later saves and export_for_game's "
-		"files go there. It never opens a dialog: a file that can't be written (read-only, in use) is an error that says why, "
-		"and new_file saves the song there as a new file instead.",
+		"files go there. It never opens a dialog: a file it can't write (read-only, in use) is an error that says why.",
 		Schema()
 			.Add("copy_name", Prop("string", "File name for a copy, like \"Town theme darker\". Default: save the song itself."))
-			.Add("name", Prop("string", "For a song with no file yet (or with new_file): its name, like \"Town theme\" (default: the "
+			.Add("name", Prop("string", "For a song with no file yet (or new_file): its name, like \"Town theme\" (default: the "
 				"track's name, else \"Untitled\")."))
-			.Add("new_file", Prop("boolean", "true: save the song as a new file in FamiTracker's Songs folder under name, as File > "
-				"Save As would, for a song whose own file can't be written (read-only, in use); its old file stays as it was. "
-				"Default false.")),
+			.Add("new_file", Prop("boolean", "true: save any song into the Songs folder as a new file, as File > Save As would (its "
+				"old file stays as it was), for a song whose own file can't be written. Default false.")),
 		false);
 
 	{
