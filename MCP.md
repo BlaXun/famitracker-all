@@ -229,6 +229,20 @@ gives a client that call (with the track's name) where it would otherwise ask
 you to save. FamiTracker's own File > Export for games and its What next panel
 still ask you to save first.
 
+No call ever opens a window in FamiTracker, since nobody may be at the
+computer to close it (a local model working through the night): saving
+writes the file directly, and a file that can't be written (read-only, in
+use by another program, its folder gone, a full disk) is an error that says
+why, with the calls that keep the changes: `save_song` with `new_file` true
+saves the song as a new file in the Songs folder (under `name`, else its
+track's name), where it's saved from then on, and `copy_name` saves a copy
+next to it. `finish_song` says "Not saved" with the same. Anything else
+FamiTracker would have shown in a message box during a call (a file it
+can't open, say) isn't shown: its words end the reply and go into the agent
+log. A request that comes while another is still answered hears 503 with
+how long that one has taken (a render can take a minute); a window that
+call opened anyway is closed.
+
 Asked over the network, the reply says how to get each file to the person,
 three ways, for clients that can do different things:
 
@@ -1443,7 +1457,7 @@ before a batch of changes.
 | `look_at_song` | A picture of the notes for Claude to look at: a piano roll of up to 32 bars, each channel in its own color, drums in a strip below, arpeggio chords as faint bars, where the song loops, rows that never play hatched, and an L or an R on notes panned to a side; the reply names the chords heard bar by bar |
 | `play`, `stop` | Plays bars for you: over and over (`loop`) to listen closely, and with only some channels (`channels`) or without some (`mute`), to hear a part alone or the rest without it. Your own mutes come back when it stops (whole frames loop without a gap; other bars start again a moment after they end) |
 | `undo` | Ctrl+Z, and says what it undid: the call that made the change ("write_notes: 12 notes on VRC6 Pulse 1, bars 1-4") or an edit made in FamiTracker. A call that fails leaves nothing of its own to undo (what it had changed by then is taken back, and Ctrl+Y doesn't bring it back), so undo after it undoes the change before it, and says so (direct changes only) |
-| `save_song` | Saves the song, or a copy next to it to compare versions. A song never saved goes into the Songs folder next to FamiTracker.exe, in a folder of its own named `name` (else after its track), numbered when the name is taken; it then is that file. See [Files between the computers](#files-between-the-computers) |
+| `save_song` | Saves the song, or a copy next to it to compare versions. A song never saved goes into the Songs folder next to FamiTracker.exe, in a folder of its own named `name` (else after its track), numbered when the name is taken; it then is that file. `new_file` true does that for a song with a file too (as File > Save As, its old file left as it was), for one whose file can't be written. It never opens a dialog: a file it can't write is an error that says why. See [Files between the computers](#files-between-the-computers) |
 | `new_song` | Starts a new song in place of the open one, as File > New does (the profile's template: its chip, tempo and sounds), with no dialog; `expansion` picks its chips as `set_expansion` takes them, and `name` is its title and its track's name. Asked over MCP, it's saved at once into the Songs folder under that name. Refuses, changing nothing, while the open song has changes that aren't saved. See [A new song, and back to an old one](#a-new-song-and-back-to-an-old-one) |
 | `create_backup`, `list_backups`, `restore_backup` | A backup of the song as it is (changes not saved yet too) with a label, in a Backups folder beside its file; the backups listed, the newest first; one opened in the song's place by number or label, after a backup of the song as it is, the song keeping its own file. See [Backups: going back in one step](#backups-going-back-in-one-step) |
 | `open_song` | Opens another song by name: one in the Songs folder or among FamiTracker's recent files (`list` names them, the newest first); from this computer, `path` opens any `.ftm` file. Refuses while the open song has changes that aren't saved |

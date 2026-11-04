@@ -30,7 +30,7 @@
 //   opened...), answers its safe default unseen (CFamiTrackerApp::DoMessageBox): OK, No to a yes-or-no question, Cancel
 //   where there is one, Abort;
 // - any other dialog or message box the UI thread makes meanwhile (a window of the dialog class #32770 that isn't a
-//   child: ::MessageBox, a CDialog's DoModal, a file dialog) is closed as Escape closes it (No where there's no Cancel)
+//   child: ::MessageBox, a CDialog's DoModal, a file dialog) is closed with Cancel (else No, else a message box's OK)
 //   as soon as it activates (a CBT hook), and by a timer every half second while it's open, and by Dismiss, which the
 //   connection calls when another request comes while the call still waits;
 // what each would have said is kept (Note) for the call's reply (TakeNotes). Scopes nest as one; only the thread that

@@ -85,9 +85,14 @@ void CloseDialog(made_t &Made)
 			Text;
 		CQuietUi::Note(Said);
 	}
+	// Cancel where there is one; else No; else OK, a message box's only button (Escape's own answer there)
 	int Command = IDCANCEL;
-	if (GetDlgItem(Made.hWnd, IDCANCEL) == NULL && GetDlgItem(Made.hWnd, IDNO) != NULL)
-		Command = IDNO;
+	if (GetDlgItem(Made.hWnd, IDCANCEL) == NULL) {
+		if (GetDlgItem(Made.hWnd, IDNO) != NULL)
+			Command = IDNO;
+		else if (GetDlgItem(Made.hWnd, IDOK) != NULL)
+			Command = IDOK;
+	}
 	PostMessage(Made.hWnd, WM_COMMAND, MAKEWPARAM(Command, BN_CLICKED), 0);
 }
 

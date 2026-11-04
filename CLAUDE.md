@@ -3536,6 +3536,34 @@ its JSON and problem kind, the review, what_next, the fix (and a second
 polish with nothing to do), the default touches, an appoggiatura left
 alone, a pickup before a hole (not on a calm track) and a downbeat that
 rubs; `song_file_checks` checks `lead_in` on keep/ and flag/.
+No dialog from a call (from `fix-no-dialog`): under Wine a local model's
+`finish_song` on a song whose `.ftm` was read-only made MFC's File > Save
+(`CDocument::DoFileSave`) open File > Save As, then the document's "Could not
+save file" box, and every request after it heard 503 until someone clicked.
+`CMcpLink::Save` now writes with `OnSaveDocument` (a copy too; `SaveNew`,
+`SaveBackup`'s `SaveCopy` as before), after `WriteBlocker` says what stands
+in the way (the folder gone, read-only, another program holding it, access
+denied), and `CouldntWrite` gives the reason; the tools add
+`SaveFailedAdvice` (save_song's new `new_file`, which saves any song into the
+Songs folder as Save As would, `SaveNew` no longer refusing a song with a
+file, and `copy_name`), and `finish_song` says "Not saved". `Source/QuietUi.cpp`
+(`CQuietUi`, held in `CMcpLink::Answer` around every request, in the host's
+save, open and new functions, and in the Ask panel's calls through
+`RunTool`'s `Quiet`; not the other panels, whose user is there) keeps windows
+shut on the UI thread: `CFamiTrackerApp::DoMessageBox` answers every
+`AfxMessageBox` its safe default unseen (OK, No, Cancel, Abort), and a CBT
+hook notes every top-level `#32770` window made meanwhile (`::MessageBox`, a
+`DoModal`, a file dialog) and closes it as it activates, on a thread timer and
+on `Dismiss` (Cancel, else No, else OK). What they said is kept
+(`TakeNotes`): the save functions put it in their reason, and
+`SongHost::TakeUnshownMessages` gives the rest to `ToolSet::AfterCall`, which
+ends a text reply with it and logs it. A request while another is answered
+gets `BusyResponse` from the window (503, how long the other has taken)
+after `Dismiss`; answering it alongside would run the tools reentrantly, so a
+call stuck in a window that isn't a dialog still holds the connection.
+`TestSaveWithoutDialog` covers the portable part (FakeSong's `SaveFailure`,
+`SaveNewFailure` and `Unshown`).
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the
