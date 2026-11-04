@@ -903,7 +903,7 @@ public:
 		if (m_bStopping || m_bBusy || pExchange == NULL || m_pMain == NULL)
 			return 0;	// the client hears that FamiTracker is busy
 		m_bBusy = true;
-		m_iBusySince = GetTickCount64();
+		m_iBusySince = std::max<DWORD>(1, GetTickCount());
 		CQuietUi Quiet;		// no window may open while a request is answered: nobody may be there to close it
 		try {
 			ftapi::McpConfig Config;
@@ -953,7 +953,7 @@ public:
 	{
 		if (m_iBusySince == 0)
 			return BusyText("FamiTracker is busy with a call of one of its own windows; try again in a moment.");
-		const ULONGLONG Seconds = (GetTickCount64() - m_iBusySince) / 1000;
+		const DWORD Seconds = (GetTickCount() - m_iBusySince) / 1000;
 		char Text[400];
 		_snprintf_s(Text, sizeof(Text), _TRUNCATE, "FamiTracker is still answering an earlier request (for %u s)%s; try again in a "
 			"moment. A long one (finish_song, listen, measure_mix, export_for_game) renders the song and can take a minute.",
@@ -2648,7 +2648,8 @@ public:
 		return true;
 	}
 
-	// save_song and export_for_game for a client, with a song that has no file yet: into a folder of its own in the Songs
+	// save_song and export_for_game for a client, with a song that has no file yet (or save_song's new_file, for one whose
+	// file can't be written, as File > Save As: its old file stays as it was): into a folder of its own in the Songs
 	// folder next to FamiTracker.exe, under the first name this computer's code page can make, numbered when a folder of
 	// that name is there (CreateDirectory makes it or says it's there: never over a file). The song then is that file, as
 	// File > Save As leaves it: later saves go there, and the window's title and the recent files name it
@@ -3204,7 +3205,7 @@ private:
 	DWORD m_iAddressesTime;					// when they were looked up
 	bool m_bAddressesRead;
 	bool m_bBusy;		// answering a request (a message box inside one could let another in)
-	ULONGLONG m_iBusySince;	// when it began (GetTickCount64)
+	DWORD m_iBusySince;	// when it began (GetTickCount, 0 while none is answered)
 	bool m_bStopping;
 	bool m_bOwnDialog;	// working for a dialog of FamiTracker's (Export for games, Sound effect from your voice),
 						// which may change the song
