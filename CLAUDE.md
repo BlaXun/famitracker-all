@@ -3565,6 +3565,27 @@ call stuck in a window that isn't a dialog still holds the connection.
 `TestSaveWithoutDialog` covers the portable part (FakeSong's `SaveFailure`,
 `SaveNewFailure` and `Unshown`).
 
+Songsmith (from `feat-song-harness`): `tools/songsmith/` is a harness, in
+Python's standard library only, that lets the user's local model (an
+OpenAI-compatible server, llama.cpp with `--jinja`) compose songs through
+the MCP connection overnight, with a web page to queue and follow them
+(`songsmith.py serve`, a systemd user service on the EVO X3; README.md
+there). A job runs eight phases (`phases.py`: plan, start, sounds, hook,
+parts, development, checks, finish, the wiki's one-shot prompt), each a
+short agent loop (`runner.py`) with only that phase's tools, the wiki pages
+`AGENTS.md`'s reading order names (`wiki.py`, read fresh for every job; the
+model's own `wiki_search` and `wiki_read`) and a short state note; the
+harness keeps `new_song`, `save_song` and the backups (`HARNESS_ONLY`),
+backs up before each phase, saves after it, and resumes a stopped job from
+its phase's backup. Gates (`gates.py`, `yardstick.py`) read `check_song`'s
+JSON (a high or medium finding with a `fix` fails), `review_arrangement`'s
+score, `measure_mix` and `get_song`/`read_notes` steps, so their wording
+matters to it too: `parse_song` in `song.py` reads `get_song`'s lines and
+`ToolReply.files` export's resource links. It files song logs and verdicts
+into the wiki as `AGENTS.md` says. Its tests (`tests/`, a scripted model and
+a fake MCP server, run in CI's Linux job) and `tests/smoke_real.py` (one
+song through a real FamiTracker) cover it.
+
 ## What this repository is
 
 An archive, not an ordinary project. It holds every public release of the

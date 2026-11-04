@@ -25,7 +25,8 @@ PHASES = [
      "pages": ["kind", "Sound traps in short", "flavour", "verdicts"],
      "gates": ["song"], "wants": ["sounds"]},
     {"id": "hook", "title": "Hook and melody",
-     "tools": READ + ["grow_melody", "write_notes", "transpose", "copy_bars", "vary_part", "check_song", "undo"],
+     "tools": READ + ["grow_melody", "write_notes", "add_chords_and_bass", "transpose", "copy_bars", "vary_part",
+                      "check_song", "undo"],
      "pages": ["cookbook", "Hooks - motif, repeat, answer", "Craft moves#1", "Craft moves#6", "Craft moves#11",
                "verdicts"],
      "gates": ["song", "check_song"], "wants": ["notes"]},
@@ -169,8 +170,10 @@ def task(phase, job, extra=""):
             "1. Write your own hook: a 2-bar motif as a line of steps, 4-7 notes a bar (a token an eighth, - holds, "
             ". rests, | between bars), its middle around B3 written, high points in octave 4. The cookbook's hooks "
             "are patterns: change the key and some pitches; never copy a kept song's tune.\n"
-            "2. grow_melody with that motif on the lead's channel over the first main section (A), kind %s; pick "
-            "the version you would hum (grow_melody's pick).\n"
+            "2. grow_melody with that motif on the lead's channel over the first main section (A), kind %s. It grows "
+            "over chords: give it your plan's progression for those bars as chords (like \"| C | Am | F | G |\", "
+            "one or two from outside the key), or lay A's chords first with add_chords_and_bass with chords. Look "
+            "at the versions, then call it again with pick for the one you would hum.\n"
             "3. Every other section of the melody: the hook returns at section starts, the bars between vary their "
             "rhythm; B gets its own rhythm (its own motif to grow_melody, or write_notes in steps), the climax a "
             "higher peak; the intro a pickup in its last bar that holds a chord tone into the downbeat; a break "

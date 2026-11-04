@@ -1,0 +1,16 @@
+[Unit]
+Description=Songsmith: NES songs composed overnight by a local model in FamiTracker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/songsmith/songsmith.py serve --data %h/.local/share/songsmith
+Restart=on-failure
+RestartSec=15
+# On stop the running song is saved and resumes at its phase next time; a model call can take a while to come back
+TimeoutStopSec=150
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

@@ -169,14 +169,23 @@ class RunTests(HarnessCase):
         self.assertTrue(any("busy" in e["text"] for e in waits))
         self.assertTrue(any("HTTP 503" in e["text"] for e in waits))
 
-    def test_down_for_good_fails_and_retries(self):
+    def test_down_for_good_pauses_the_queue(self):
         self.ft.stop()
         self.config.update({"limits": {"wait_minutes": 0.05}})
         job = self.run_job()
-        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["status"], "waiting")
         self.assertIn("can't be reached", job["error"])
-        self.store.control(job["id"], "retry")
-        self.assertEqual(self.store.get(job["id"])["status"], "waiting")
+        self.assertTrue(self.store.paused())
+        self.assertIn("can't be reached", self.store.message())
+        self.store.set_paused(False)
+        self.assertEqual(self.store.message(), "")
+
+    def test_wiki_missing_pauses(self):
+        self.config.update({"wiki_path": os.path.join(self.tmp, "nowhere")})
+        job = self.run_job()
+        self.assertEqual(job["status"], "waiting")
+        self.assertTrue(self.store.paused())
+        self.assertNotIn("new_song", self.ft.names())
 
     def test_pause_and_resume(self):
         """paused during phase 3, the job waits at phase 3; a new harness from disk resumes it from its backup"""
@@ -240,8 +249,9 @@ class RunTests(HarnessCase):
         self.model.delay = 2.0
         self.config.update({"model": {"timeout_seconds": 0.5}, "limits": {"wait_minutes": 0.2}})
         job = self.run_job()
-        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["status"], "waiting")
         self.assertIn("model", job["error"])
+        self.assertTrue(self.store.paused())
 
     def test_queue_order(self):
         a = self.store.add(dict(FORM, name="Songsmith test A"))[0]

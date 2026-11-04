@@ -345,7 +345,11 @@ class ScriptedModel:
         users = [x for x in messages if x["role"] == "user"]
         fixing = "found what to fix" in users[0]["content"]
         plan = phase == "plan" and not fixing
-        script = self.fix_calls if fixing else self.calls.get(phase, [])
+        if fixing and self.fix_calls == "follow":     # the calls the gates' findings give, in turn
+            script = [(m.group(1), json.loads(m.group(2))) for m in
+                      re.finditer(r"(?:Fix: |, then )(\w+) (\{.*?\})(?=, then |\n|$)", users[0]["content"])]
+        else:
+            script = self.fix_calls if fixing else self.calls.get(phase, [])
         done = sum(1 for x in messages if x["role"] == "assistant")
         if plan:
             return {"role": "assistant", "content": PLAN}

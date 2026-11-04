@@ -17,8 +17,8 @@ from .song import parse_song
 from .wiki import Wiki
 
 
-class PhaseTimeUp(Exception):
-    pass
+class SetupProblem(Exception):
+    """something every job needs is missing (the wiki): the queue pauses rather than failing job after job"""
 
 
 class Runner:
@@ -106,11 +106,16 @@ class Runner:
                 job["resume"] = True
                 store.event(job, "job", "Paused at phase %d; it resumes there." % (job["phase"] + 1))
             ctx.leave_saved()
-        except (AuthError, Unreachable) as error:
-            job["status"] = "failed"
+        except (AuthError, Unreachable, SetupProblem) as error:
+            # FamiTracker, the model or the wiki can't be had: every job would fail alike, so the job waits and the
+            # queue pauses until the user resumes it
+            job["status"] = "waiting"
             job["error"] = str(error)
-            job["resume"] = True
-            store.event(job, "error", "Failed: %s. Retry starts again at phase %d." % (error, job["phase"] + 1))
+            job["resume"] = job.get("song") is not None
+            store.event(job, "error", "Stopped: %s. The queue is paused; resume it once that's fixed (the job goes "
+                                      "on at phase %d)." % (error, job["phase"] + 1))
+            store.set_paused(True, "Paused by Songsmith: %s" % error)
+            ctx.leave_saved()
         except Exception as error:     # a bug or an answer nobody foresaw: the job fails, the queue goes on
             job["status"] = "failed"
             job["error"] = "%s: %s" % (type(error).__name__, error)
@@ -156,7 +161,7 @@ class JobContext:
         job = self.job
         self.wiki = Wiki(self.settings["wiki_path"])     # fresh for every job: the user keeps changing it
         if not self.wiki.exists():
-            raise RuntimeError("The wiki isn't at %s (Settings: wiki path)." % self.settings["wiki_path"])
+            raise SetupProblem("The wiki isn't at %s (Settings: wiki path)." % self.settings["wiki_path"])
         check = self.wiki.check([job["kind"]])
         for warning in check["warnings"]:
             self.store.note(job, "Wiki: " + warning)
@@ -283,7 +288,8 @@ class JobContext:
             self.store.save(job)
             failed = [r for r in results if not r["ok"]]
             for r in results:
-                self.log("gate", "%s %s: %s" % ("passed" if r["ok"] else "FAILED", r["name"], r["summary"]),
+                self.log("gate", "%s %s: %s" % ("skipped" if r.get("skipped") else "passed" if r["ok"] else "FAILED",
+                                                r["name"], r["summary"]),
                          {"ok": r["ok"], "name": r["name"], "detail": r["detail"][:3000]})
             if not failed or rec["attempts"] >= retries or self.job_late():
                 break
@@ -306,6 +312,9 @@ class JobContext:
             self.store.note(job, note)
         if phase["id"] == "plan":
             job["plan"] = job.get("plan_draft") or summary
+            reply = self.mcp.call("write_log", {"category": "plan", "text": job["plan"][:6000]})
+            if reply.is_error:
+                self.store.note(job, "write_log of the plan: " + reply.text[:200])
         self.save()
         rec["status"] = "done" if not failed else "done with notes"
         rec["seconds"] = round(time.time() - started)

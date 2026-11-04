@@ -26,7 +26,8 @@ def gate_lines(job):
         if not attempts:
             continue
         last = attempts[-1]
-        marks = ", ".join("%s %s" % (r["name"], "ok" if r["ok"] else "FAILED") for r in last)
+        marks = ", ".join("%s %s" % (r["name"], "skipped" if r.get("skipped") else "ok" if r["ok"] else "FAILED")
+                          for r in last)
         out.append("| %s | %s | %d | %s | %s |" % (rec["title"], rec.get("status", ""), len(attempts), marks,
                                                     "; ".join(r["summary"] for r in last).replace("|", "/")))
     return out

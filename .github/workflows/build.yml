@@ -178,6 +178,10 @@ jobs:
       - name: Test
         run: ctest --test-dir build/transcribe --output-on-failure
 
+      # Songsmith, the harness for composing with a local model (tools/songsmith, Python's standard library only)
+      - name: Songsmith tests
+        run: cd tools/songsmith/tests && python3 -m unittest discover -s . -v
+
       # The Claude Code connection's core: JSON, HTTP, MCP and the tools (Source/Api)
       - name: Claude Code connection tests
         run: |

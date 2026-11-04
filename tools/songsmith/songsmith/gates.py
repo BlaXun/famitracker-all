@@ -59,6 +59,9 @@ def review(mcp, kind, settings):
 def measure_mix(mcp, kind, settings):
     """the mix's sanity: the loudness in a sane range and no part (but a bass) well over the melody"""
     reply = mcp.call("measure_mix", {"format": "short"})
+    if reply.is_error and "Unknown tool" in reply.text:
+        return gate("measure_mix", True, "measure_mix isn't in FamiTracker's small set of tools: not measured",
+                    skipped=True)
     if reply.is_error:
         reply = mcp.call("measure_mix", {})
     if reply.is_error:

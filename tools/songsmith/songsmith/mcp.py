@@ -20,7 +20,7 @@ class ToolReply:
         self.seconds = seconds
 
     def files(self):
-        """the OGG files the reply names: resource links first, then names in its text"""
+        """the OGG files the reply links: its resource links (2025-06-18), then /files/ links in its text"""
         names = []
         for item in self.content:
             uri = item.get("uri") or (item.get("resource") or {}).get("uri") or ""
@@ -28,10 +28,6 @@ class ToolReply:
                 names.append(urllib.parse.unquote(uri[len("famitracker://files/"):]))
         for match in re.finditer(r"/files/([^\s?\"')]+\.ogg)", self.text):
             names.append(urllib.parse.unquote(match.group(1)))
-        for match in re.finditer(r"([^\\/:*?\"<>|\n]+\.ogg)", self.text):
-            name = match.group(1).strip().strip("\"'(")
-            if name and "/" not in name:
-                names.append(name)
         out = []
         for name in names:
             name = name.split("\\")[-1].strip()

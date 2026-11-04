@@ -144,10 +144,14 @@ class Store:
             self.save_queue()
             return True
 
-    def set_paused(self, paused):
+    def set_paused(self, paused, message=""):
         with self.lock:
             self.queue["paused"] = bool(paused)
+            self.queue["message"] = message if paused else ""
             self.save_queue()
+
+    def message(self):
+        return self.queue.get("message", "")
 
     def paused(self):
         return self.queue["paused"]

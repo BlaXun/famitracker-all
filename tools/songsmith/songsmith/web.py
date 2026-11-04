@@ -68,7 +68,7 @@ class App:
 
     def state(self):
         current = self.runner.current if self.runner else None
-        return {"paused": self.store.paused(), "jobs": self.store.listing(),
+        return {"paused": self.store.paused(), "message": self.store.message(), "jobs": self.store.listing(),
                 "current": current["id"] if current else None, "kinds": KINDS, "flavours": FLAVOURS,
                 "chips": list(CHIPS), "lengths": list(LENGTHS), "phases": [p["title"] for p in PHASES],
                 "templates": self.templates(), "time": time.time()}
