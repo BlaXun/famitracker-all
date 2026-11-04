@@ -3536,6 +3536,7 @@ its JSON and problem kind, the review, what_next, the fix (and a second
 polish with nothing to do), the default touches, an appoggiatura left
 alone, a pickup before a hole (not on a calm track) and a downbeat that
 rubs; `song_file_checks` checks `lead_in` on keep/ and flag/.
+
 No dialog from a call (from `fix-no-dialog`): under Wine a local model's
 `finish_song` on a song whose `.ftm` was read-only made MFC's File > Save
 (`CDocument::DoFileSave`) open File > Save As, then the document's "Could not
