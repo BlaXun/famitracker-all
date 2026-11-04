@@ -470,9 +470,13 @@ public:
 	// Forgets the changes undone last, so redo (Ctrl+Y) can't bring them back: what a call that failed had changed, taken
 	// back with Undo, would otherwise come back half-finished. Nothing for a host without a redo history
 	virtual void ForgetRedo() {}
-	// Saves the song, or a copy of it next to it (CopyName: a file name)
+	// Saves the song, or a copy of it next to it (CopyName: a file name), straight into the file: never through a dialog
+	// (File > Save As's, where the file can't be written) or a message box, which nobody may be there to close. False
+	// with the reason in Message, which names the file and why it couldn't be written ("FamiTracker couldn't write
+	// Town.ftm: the file is read-only."); the song keeps its changes to save
 	virtual bool Save(const std::string &CopyName, std::string &Message) = 0;
-	// Saves a song that has no file yet (SongInfo::FileName empty), for a client that can't use File > Save As: into the
+	// Saves a song that has no file yet (SongInfo::FileName empty), or one whose file it leaves as it was (save_song's
+	// new_file, as File > Save As), for a client that can't use File > Save As: into the
 	// Songs folder next to FamiTracker.exe (Documents\FamiTracker songs where FamiTracker's folder can't be written), in a
 	// folder of its own named as the file, under the first of Names this computer can make (each a plain file name without
 	// ".ftm", the last the plainest), as "Name 2", "Name 3"... (NumberedSongName) when a folder of that name is there:
@@ -485,6 +489,10 @@ public:
 		Message = "This FamiTracker can't save a song that has no file yet.";
 		return false;
 	}
+	// What FamiTracker would have shown in message boxes or dialogs during the call just made, which weren't shown, since
+	// nobody may be there to close them (a call of the connection: QuietUi.h in FamiTracker), each on a line of its own;
+	// then forgotten. ToolSet::Call adds them to the call's reply and the agent log
+	virtual void TakeUnshownMessages(std::vector<std::string> &Messages) { Messages.clear(); }
 	// The files next to the song a client may fetch (IsExportFile in Network.h: the OGG files export_for_game saves), the
 	// newest first, at most MAX_LISTED_EXPORTS; none when the song has no file yet. False with the reason when
 	// the folder can't be read

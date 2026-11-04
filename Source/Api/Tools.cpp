@@ -26671,6 +26671,9 @@ std::string SaveIntoSongs(Session &S, const std::string &Name)
 	return Path;
 }
 
+std::string SongFileBase(const std::string &File);
+std::string SaveFailedAdvice(const Session &S);
+
 // The file's name at the end of a path: "C:\Songs\Town\Town.ftm" -> "Town.ftm"
 std::string PathFileName(const std::string &Path)
 {
@@ -28175,9 +28178,14 @@ std::string FinishSongTool(Session &S, const Json &Args, const Caller &Who, std:
 		// next new_song refused), as export_for_game saves a client's song without a file first
 		Session Now(S.Host());
 		std::string Message;
-		if (Who.Client && Now.Song.Modified && !Now.Song.FileName.empty() && S.Host().Save(std::string(), Message))
-			Text += "\nSaved: the finished song is in its file, " + Now.Song.FileName + " (finish_song saves a client's song, so "
-				"new_song and open_song can follow).";
+		if (Who.Client && Now.Song.Modified && !Now.Song.FileName.empty()) {
+			if (S.Host().Save(std::string(), Message))
+				Text += "\nSaved: the finished song is in its file, " + Now.Song.FileName + " (finish_song saves a client's song, so "
+					"new_song and open_song can follow).";
+			else
+				Text += "\nNot saved: " + (Message.empty() ? std::string("the song couldn't be saved.") : Message) + " " +
+					SaveFailedAdvice(Now);
+		}
 		else if (Changed && Now.Song.Modified && !Now.Song.FileName.empty())
 			Text += " save_song keeps them in the song's file.";
 	}
@@ -31216,8 +31224,25 @@ std::string UndoTool(Session &S, const Json &)
 	return Message.empty() ? "Undid the last change." : Message;
 }
 
+// After the song's file couldn't be written (from fix-no-dialog: a read-only file made FamiTracker open File > Save As and
+// a message box, which held the connection overnight with nobody there): the song keeps its changes, and how to keep them
+std::string SaveFailedAdvice(const Session &S)
+{
+	const std::string Base = SongFileBase(S.Song.FileName.empty() ? NewSongName(S) : S.Song.FileName) + " 2";
+	Json Copy = Json::MakeObject();
+	Copy.Set("copy_name", Base);
+	Json New = Json::MakeObject();
+	New.Set("new_file", true);
+	New.Set("name", Base);
+	return "The song is still open in FamiTracker with its changes; nothing was lost. To keep them: " +
+		GuardCall("save_song", New) + " saves it as a new file in FamiTracker's Songs folder (a folder of its own), where it's saved from "
+		"then on, or " + GuardCall("save_song", Copy) + " saves a copy next to it if that folder can be written; or ask the user "
+		"to make " + (S.Song.FileName.empty() ? std::string("the file") : S.Song.FileName) + " writable.";
+}
+
 // save_song. Who: a client over MCP (Caller::Client) can't use File > Save As, so a song without a file goes into the Songs
-// folder, under name or its track's name; FamiTracker's own windows keep asking for File > Save As
+// folder, under name or its track's name; FamiTracker's own windows keep asking for File > Save As. new_file saves any song
+// there as a new file, as File > Save As would (its old file stays as it was)
 std::string SaveTool(Session &S, const Json &Args, const Caller &Who)
 {
 	const std::string Copy = StringArg(Args, "copy_name");
@@ -31225,6 +31250,17 @@ std::string SaveTool(Session &S, const Json &Args, const Caller &Who)
 		throw Problem("copy_name should be a plain file name, without folders.");
 	const bool Named = !Trim(StringArg(Args, "name")).empty();
 	const std::string Name = Named ? GivenSongName(StringArg(Args, "name")) : std::string();
+	if (BoolArg(Args, "new_file", false)) {
+		if (!Copy.empty())
+			throw Problem("new_file saves the song itself as a new file, and copy_name a copy next to it: give one of them.");
+		std::string Why;
+		if (!S.Host().CanChange(Why))
+			throw Problem(Why);
+		const std::string Old = S.Song.FileName;
+		return "Saved the song as a new file, " + SaveIntoSongs(S, Named ? Name : NewSongName(S)) + ", in a folder of its own in "
+			"FamiTracker's Songs folder (next to FamiTracker.exe). From now on save_song saves it there, and export_for_game "
+			"puts its files next to it." + (Old.empty() ? std::string() : " Its old file, " + Old + ", stays as it was last saved.");
+	}
 	if (S.Song.FileName.empty() && (Named || Who.Client)) {
 		if (!Copy.empty())
 			throw Problem("The song has no file yet, so there's no folder for a copy: save_song without copy_name saves the song itself "
@@ -31240,11 +31276,12 @@ std::string SaveTool(Session &S, const Json &Args, const Caller &Who)
 		const size_t Dot = S.Song.FileName.rfind('.');
 		if (Lowercase(Name) != Lowercase(S.Song.FileName.substr(0, Dot)))
 			throw Problem("The song has a file already, " + S.Song.FileName + ", and save_song saves it there (name is for a song "
-				"without a file); copy_name saves a copy next to it under another name.");
+				"without a file, or with new_file true, which saves it as a new file in FamiTracker's Songs folder); copy_name "
+				"saves a copy next to it under another name.");
 	}
 	std::string Message;
 	if (!S.Host().Save(Copy, Message))
-		throw Problem(Message.empty() ? "The song couldn't be saved." : Message);
+		throw Problem((Message.empty() ? std::string("The song couldn't be saved.") : Message) + " " + SaveFailedAdvice(S));
 	return Message;
 }
 
@@ -40954,11 +40991,15 @@ ToolSet::ToolSet(SongHost &Host) : m_Host(Host)
 		"Saves the song to its file, or a copy next to it (copy_name) so the user can compare versions. A song that has no file "
 		"yet (never saved) goes into FamiTracker's Songs folder, in a folder of its own named after it (name, else the track's "
 		"name), numbered when the name is taken, never over a file; it then is that file, so later saves and export_for_game's "
-		"files go there.",
+		"files go there. It never opens a dialog: a file that can't be written (read-only, in use) is an error that says why, "
+		"and new_file saves the song there as a new file instead.",
 		Schema()
 			.Add("copy_name", Prop("string", "File name for a copy, like \"Town theme darker\". Default: save the song itself."))
-			.Add("name", Prop("string", "For a song with no file yet: its name, like \"Town theme\" (default: the track's name, else "
-				"\"Untitled\").")),
+			.Add("name", Prop("string", "For a song with no file yet (or with new_file): its name, like \"Town theme\" (default: the "
+				"track's name, else \"Untitled\")."))
+			.Add("new_file", Prop("boolean", "true: save the song as a new file in FamiTracker's Songs folder under name, as File > "
+				"Save As would, for a song whose own file can't be written (read-only, in use); its old file stays as it was. "
+				"Default false.")),
 		false);
 
 	{
@@ -41261,6 +41302,23 @@ static std::string FirstLine(const std::string &Text)
 
 void ToolSet::AfterCall(const std::string &Name, const Json &Args, long long UndoBefore, ToolResult &Result, const Caller &Who)
 {
+	{
+		// What FamiTracker would have shown in message boxes during the call (from fix-no-dialog: none is shown while the
+		// connection's call runs, since nobody may be there to close it): in the reply, unless it's JSON, and in the log
+		std::vector<std::string> Unshown;
+		m_Host.TakeUnshownMessages(Unshown);
+		std::string Said;
+		for (size_t i = 0; i < Unshown.size(); ++i)
+			if (!Trim(Unshown[i]).empty())
+				Said += (Said.empty() ? "\"" : "; \"") + Trim(Unshown[i]) + "\"";
+		if (!Said.empty()) {
+			const bool JsonReply = !Result.Text.empty() && (Result.Text[0] == '{' || Result.Text[0] == '[');
+			if (!JsonReply && StringArg(Args, "format") != "json")
+				Result.Text += "\n\nFamiTracker wanted to show a message, which it didn't, since nobody may be there to close it: " +
+					Said + ".";
+			m_Host.Log().Add(LOG_ERROR, Name + ": FamiTracker's message, not shown: " + Said, LogTimeNow());
+		}
+	}
 	const long long UndoAfter = m_Host.UndoSerial();
 	if (Name == "undo") {
 		if (!Result.IsError)

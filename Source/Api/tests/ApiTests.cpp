@@ -1391,12 +1391,23 @@ public:
 
 	// As CMcpLink saves a song without a file: under the first name of Names this computer can make, in a folder of its own
 	// in the Songs folder, numbered when one of that name is there; the files next to the song are then the new folder's
+	// A save that fails as CMcpLink's does where the file can't be written (fix-no-dialog), and what FamiTracker would have
+	// shown in message boxes during the call (CQuietUi's notes)
+	std::string SaveFailure, SaveNewFailure;
+	std::vector<std::string> Unshown;
+
+	void TakeUnshownMessages(std::vector<std::string> &Messages) override
+	{
+		Messages.swap(Unshown);
+		Unshown.clear();
+	}
+
 	bool SaveNew(const std::vector<std::string> &Names, std::string &Path, std::string &Message) override
 	{
 		if (!CanChange(Message))
 			return false;
-		if (!Info.FileName.empty()) {
-			Message = "The song has a file already.";
+		if (!SaveNewFailure.empty()) {
+			Message = SaveNewFailure;
 			return false;
 		}
 		for (size_t i = 0; i < Names.size(); ++i) {
@@ -1836,6 +1847,10 @@ public:
 
 	bool Save(const std::string &CopyName, std::string &Message) override
 	{
+		if (!SaveFailure.empty()) {
+			Message = SaveFailure;
+			return false;
+		}
 		if (Info.FileName.empty()) {
 			Message = "The song hasn't been saved yet. Ask the user to save it (File > Save As) so it has a place.";	// as CMcpLink
 			return false;
@@ -32868,6 +32883,63 @@ void TestChangesNameTheSong()
 	CHECK(Song.Saved.empty());
 }
 
+// No dialog from a call (fix-no-dialog): a local model's finish_song on a song whose file was read-only made FamiTracker
+// open File > Save As, then "Could not save file", and every request after it heard "busy" until someone clicked. Now a
+// save that can't write its file is an error with the reason and the calls that keep the changes; finish_song says it;
+// save_song's new_file saves the song as a new file in the Songs folder; and what FamiTracker would have shown in a message
+// box during a call is in the reply and the agent log
+void TestSaveWithoutDialog()
+{
+	FakeSong Song;
+	static const char *const TUNE[] = { "E-4", "G-4", "C-5", "G-4" };
+	PutTune(Song, 8, TUNE, 4);
+	ToolSet Tools(Song);
+	Song.Info.Modified = true;
+	Song.SaveFailure = "FamiTracker couldn't write test.ftm: the file is read-only.";
+	ToolResult Result = RunClient(Song, "save_song", "{}");
+	CHECK(Result.IsError && Song.Info.Modified);
+	CHECK_HAS(Result.Text, "FamiTracker couldn't write test.ftm: the file is read-only. The song is still open in FamiTracker "
+		"with its changes; nothing was lost.");
+	CHECK_HAS(Result.Text, "save_song {\"new_file\":true,\"name\":\"test 2\"} saves it as a new file in FamiTracker's Songs folder");
+	CHECK_HAS(Result.Text, "save_song {\"copy_name\":\"test 2\"} saves a copy next to it");
+	CHECK(Tools.UnknownArguments("save_song", Parse("{\"new_file\": true, \"name\": \"test 2\"}")).empty());
+	CHECK(Tools.UnknownArguments("save_song", Parse("{\"copy_name\": \"test 2\"}")).empty());
+	// finish_song finishes and says the song wasn't saved, and why
+	Result = RunClient(Song, "finish_song", "{\"kind\": \"calm\", \"skip\": [\"listen\", \"export\"]}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "\nNot saved: FamiTracker couldn't write test.ftm: the file is read-only. The song is still open");
+	CHECK_LACKS(Result.Text, "Saved: the finished song");
+	CHECK(Song.Info.Modified);
+	// new_file: a new file in the Songs folder, the old one left as it was
+	CHECK(RunClient(Song, "save_song", "{\"new_file\": true, \"copy_name\": \"x\"}").IsError);
+	Result = RunClient(Song, "save_song", "{\"new_file\": true, \"name\": \"test 2\"}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK_HAS(Result.Text, "Saved the song as a new file, C:\\Games\\FamiTracker\\Songs\\test 2\\test 2.ftm");
+	CHECK_HAS(Result.Text, "Its old file, test.ftm, stays as it was last saved.");
+	CHECK(Song.Info.FileName == "test 2.ftm" && !Song.Info.Modified);
+	// Without a name: the track's
+	FakeSong Other;
+	Other.Info.TrackName = "Harbor";
+	Result = RunClient(Other, "save_song", "{\"new_file\": true}");
+	Check(!Result.IsError, Result.Text.c_str(), __LINE__);
+	CHECK(Other.Info.FileName == "Harbor.ftm");
+	// A message box FamiTracker didn't show: in the reply and the log, not in JSON
+	Song.Unshown.push_back("Could not save file. Access is denied.");
+	Result = RunClient(Song, "get_song", "{}");
+	CHECK_HAS(Result.Text, "FamiTracker wanted to show a message, which it didn't, since nobody may be there to close it: "
+		"\"Could not save file. Access is denied.\".");
+	bool Logged = false;
+	for (size_t i = 0; i < Song.Log().Entries().size(); ++i)
+		Logged = Logged || Contains(Song.Log().Entries()[i].Text, "not shown: \"Could not save file. Access is denied.\"");
+	CHECK(Logged);
+	Song.Unshown.push_back("Unknown file block!");
+	Result = RunClient(Song, "check_song", "{\"format\": \"json\"}");
+	CHECK_LACKS(Result.Text, "FamiTracker wanted to show");
+	CHECK(Song.Unshown.empty());
+	Result = RunClient(Song, "get_song", "{}");
+	CHECK_LACKS(Result.Text, "FamiTracker wanted to show");
+}
+
 // grow_melody's count of a hook's notes says each bar's, add_echo says which channel is which, and add_counter_melody on a
 // sound that dies away cuts its long notes to where it's heard (the Mossy Forest's bell)
 void TestSmallDepthBugs()
@@ -33172,6 +33244,7 @@ int main()
 	RUN(TestFirstSongSmall);
 	RUN(TestFirstStepsMistakes);
 	RUN(TestSaveIntoSongs);
+	RUN(TestSaveWithoutDialog);
 	RUN(TestExportResources);
 	RUN(TestBridgeResources);
 	RUN(TestShapeTownWords);

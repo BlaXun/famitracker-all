@@ -73,6 +73,7 @@
 #include "McpSocket.h"
 #include "McpConnection.h"
 #include "VoiceEffectDlg.h"
+#include "QuietUi.h"
 #include "version.h"
 
 // The API's copies of FamiTracker's values must match
@@ -136,6 +137,81 @@ CString Ansi(const std::string &Text)
 	std::vector<char> Out(static_cast<size_t>(Bytes));
 	WideCharToMultiByte(CP_ACP, 0, &Buffer[0], -1, &Out[0], Bytes, "?", NULL);
 	return CString(&Out[0]);
+}
+
+// Saving without a dialog (from fix-no-dialog): MFC's File > Save opens File > Save As where the file can't be written (a
+// read-only file, a folder gone), and the document's save shows "Could not save file" in a message box: with a local model
+// working through the night, nobody closed them and every request after it heard "busy". The tools write the file
+// themselves (OnSaveDocument, SaveCopy), say why first where they can, and keep the document's messages (CQuietUi)
+
+// Windows' own words for an error, without the full stop: "Access is denied"
+CString SystemMessage(DWORD Error)
+{
+	LPTSTR pText = NULL;
+	FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, Error,
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPTSTR>(&pText), 0, NULL);
+	CString Text = pText != NULL ? CString(pText) : CString();
+	if (pText != NULL)
+		LocalFree(pText);
+	Text.Trim();
+	Text.TrimRight(_T('.'));
+	if (Text.IsEmpty())
+		Text.Format(_T("Windows error %u"), static_cast<unsigned int>(Error));
+	return Text;
+}
+
+// What keeps FamiTracker from writing Path, looked at before it tries; "" when nothing seems to
+CString WriteBlocker(const CString &Path)
+{
+	const int Slash = Path.ReverseFind(_T('\\'));
+	if (Slash > 0) {
+		const CString Folder = Path.Left(Slash);
+		const DWORD Attributes = GetFileAttributes(Folder);
+		if (Attributes == INVALID_FILE_ATTRIBUTES || (Attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+			return _T("its folder, ") + Folder + _T(", isn't there any more");
+	}
+	const DWORD Attributes = GetFileAttributes(Path);
+	if (Attributes == INVALID_FILE_ATTRIBUTES)
+		return CString();	// a file to make
+	if ((Attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+		return _T("a folder has that name");
+	if ((Attributes & FILE_ATTRIBUTE_READONLY) != 0)
+		return _T("the file is read-only");
+	// Opened to write and closed again, unchanged: another program holding it, or Windows' permissions
+	const HANDLE hFile = CreateFile(Path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		const DWORD Error = GetLastError();
+		if (Error == ERROR_SHARING_VIOLATION || Error == ERROR_LOCK_VIOLATION)
+			return _T("another program has it open");
+		if (Error == ERROR_ACCESS_DENIED)
+			return _T("Windows doesn't let FamiTracker write it (access denied)");
+		return SystemMessage(Error);
+	}
+	CloseHandle(hFile);
+	return CString();
+}
+
+// The messages a quiet scope kept, as one text: "Could not save file: Access is denied."
+std::string QuietNotesText()
+{
+	std::vector<CString> Notes;
+	CQuietUi::TakeNotes(Notes);
+	std::string Text;
+	for (size_t i = 0; i < Notes.size(); ++i)
+		Text += (Text.empty() ? "" : " ") + Utf8(Notes[i]);
+	return Text;
+}
+
+// "FamiTracker couldn't write Town.ftm (C:\Songs\Town.ftm): the file is read-only."
+std::string CouldntWrite(const CString &Path, const CString &Why, const std::string &Said)
+{
+	std::string Reason = Utf8(Why);
+	if (Reason.empty() && !Said.empty())
+		Reason = "FamiTracker said \"" + Said + "\"";
+	if (Reason.empty())
+		Reason = "the file couldn't be written (is the disk full?)";
+	return "FamiTracker couldn't write " + Utf8(Path.Mid(Path.ReverseFind(_T('\\')) + 1)) + " (" + Utf8(Path) + "): " + Reason + ".";
 }
 
 // Sections' names between the API (UTF-8) and the module (the ANSI code page)
@@ -684,7 +760,7 @@ struct mcp_settings_t {
 class CMcpLink : public ftapi::SongHost, public CVoiceEffectMaker
 {
 public:
-	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_iAddressesTime(0), m_bAddressesRead(false), m_bBusy(false),
+	CMcpLink() : m_pMain(NULL), m_hWindow(NULL), m_Tools(*this), m_iAddressesTime(0), m_bAddressesRead(false), m_bBusy(false), m_iBusySince(0),
 		m_bStopping(false), m_bOwnDialog(false), m_bByHand(false), m_pProgress(NULL), m_iPlayFirst(0),
 		m_iPlayEnd(0), m_bPlayStarted(false), m_iPlayTicks(0), m_bPlayLoop(false), m_iPlayPart(0), m_iReturnTrack(-1)
 	{
@@ -816,9 +892,19 @@ public:
 
 	LRESULT Answer(mcp_exchange_t *pExchange)
 	{
+		if (m_bBusy && !m_bStopping && pExchange != NULL && m_pMain != NULL) {
+			// Another request while one is answered: the one before may wait in a window it opened, which nobody may be
+			// there to close (from fix-no-dialog). The quiet scope closes any it made (CQuietUi::Dismiss, also on its timer),
+			// and this one hears what holds FamiTracker, rather than a bare "busy"
+			const int Closed = CQuietUi::Dismiss();
+			*pExchange->pResponse = BusyResponse(Closed);
+			return 1;
+		}
 		if (m_bStopping || m_bBusy || pExchange == NULL || m_pMain == NULL)
 			return 0;	// the client hears that FamiTracker is busy
 		m_bBusy = true;
+		m_iBusySince = GetTickCount64();
+		CQuietUi Quiet;		// no window may open while a request is answered: nobody may be there to close it
 		try {
 			ftapi::McpConfig Config;
 			Config.Port = m_Server.GetPort();
@@ -842,7 +928,48 @@ public:
 			*pExchange->pResponse = Failed;
 		}
 		m_bBusy = false;
+		m_iBusySince = 0;
 		return 1;
+	}
+
+	// What a request hears while another is answered: 503, as the listener's own "busy", with how long the other has taken
+	static ftapi::HttpResponse BusyText(const std::string &Text)
+	{
+		ftapi::Json Error = ftapi::Json::MakeObject();
+		Error.Set("code", -32000);
+		Error.Set("message", Text);
+		ftapi::Json Message = ftapi::Json::MakeObject();
+		Message.Set("jsonrpc", "2.0");
+		Message.Set("id", ftapi::Json());
+		Message.Set("error", Error);
+		ftapi::HttpResponse Response;
+		Response.Status = 503;
+		Response.ContentType = "application/json";
+		Response.Body = ftapi::WriteJson(Message);
+		return Response;
+	}
+
+	ftapi::HttpResponse BusyResponse(int Closed) const
+	{
+		if (m_iBusySince == 0)
+			return BusyText("FamiTracker is busy with a call of one of its own windows; try again in a moment.");
+		const ULONGLONG Seconds = (GetTickCount64() - m_iBusySince) / 1000;
+		char Text[400];
+		_snprintf_s(Text, sizeof(Text), _TRUNCATE, "FamiTracker is still answering an earlier request (for %u s)%s; try again in a "
+			"moment. A long one (finish_song, listen, measure_mix, export_for_game) renders the song and can take a minute.",
+			static_cast<unsigned int>(Seconds), Closed > 0 ? ", which had opened a window that nobody may be there to close: it was "
+			"closed, so the request ends soon" : "");
+		return BusyText(Text);
+	}
+
+	// SongHost: the document's messages FamiTracker kept unseen during the call (CQuietUi)
+	void TakeUnshownMessages(std::vector<std::string> &Messages)
+	{
+		Messages.clear();
+		std::vector<CString> Notes;
+		CQuietUi::TakeNotes(Notes);
+		for (size_t i = 0; i < Notes.size(); ++i)
+			Messages.push_back(Utf8(Notes[i]));
 	}
 
 	// Stops playback after the asked bars, or plays them again (a loop), and
@@ -1815,7 +1942,8 @@ public:
 
 	// A tool for a window of FamiTracker's (the problems panel runs check_song, and a finding's fix): what it changes
 	// goes into the song, one Ctrl+Z, whatever the Claude Code setting says, since the user asked for it there
-	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply, bool FromDialog, bool Core = false)
+	bool RunForWindow(const std::string &Name, const std::string &Arguments, std::string &Reply, bool FromDialog, bool Core = false,
+		bool Quiet = false)
 	{
 		if (m_bBusy) {
 			Reply = "FamiTracker is busy with Claude Code; try again in a moment.";
@@ -1834,7 +1962,12 @@ public:
 		ftapi::Caller Who;
 		Who.Core = Core;
 		try {
-			Result = m_Tools.Call(Name, Args, Who);
+			if (Quiet) {
+				CQuietUi Scope;		// the Ask panel's model may work with nobody watching
+				Result = m_Tools.Call(Name, Args, Who);
+			}
+			else
+				Result = m_Tools.Call(Name, Args, Who);
 		}
 		catch (...) {
 			Result.Text = "FamiTracker couldn't do that.";
@@ -2475,9 +2608,16 @@ public:
 			return false;
 		}
 		if (CopyName.empty()) {
-			m_pMain->SendMessage(WM_COMMAND, ID_FILE_SAVE);
-			if (pDoc->IsModified()) {
-				Message = "The song couldn't be saved.";
+			// Straight into its file, as File > Save writes it, but never File > Save As's dialog, which MFC opens for a
+			// file it can't write (from fix-no-dialog), nor a message box
+			const CString Why = WriteBlocker(Path);
+			if (!Why.IsEmpty()) {
+				Message = CouldntWrite(Path, Why, std::string());
+				return false;
+			}
+			CQuietUi Quiet;
+			if (!pDoc->OnSaveDocument(Path) || pDoc->IsModified()) {
+				Message = CouldntWrite(Path, CString(), QuietNotesText());
 				return false;
 			}
 			Message = "Saved the song (" + Utf8(Path.Mid(Path.ReverseFind(_T('\\')) + 1)) + ").";
@@ -2492,8 +2632,15 @@ public:
 			return false;
 		}
 		const BOOL Modified = pDoc->IsModified();
+		const CString Why = WriteBlocker(Copy);
+		if (!Why.IsEmpty()) {
+			Message = CouldntWrite(Copy, Why, std::string());
+			return false;
+		}
+		CQuietUi Quiet;
 		if (!pDoc->OnSaveDocument(Copy)) {
-			Message = "The copy couldn't be saved.";
+			pDoc->SetModifiedFlag(Modified);
+			Message = CouldntWrite(Copy, CString(), QuietNotesText());
 			return false;
 		}
 		pDoc->SetModifiedFlag(Modified);	// the song itself still has what it had unsaved
@@ -2510,10 +2657,7 @@ public:
 		if (!CanChange(Message))
 			return false;
 		CFamiTrackerDoc *pDoc = Doc();
-		if (!pDoc->GetPathName().IsEmpty()) {
-			Message = "The song has a file already.";
-			return false;
-		}
+		const BOOL Modified = pDoc->IsModified();	// a song with a file (new_file) keeps its own if this fails
 		const CString Songs = SongsFolder(true);
 		if (Songs.IsEmpty()) {
 			Message = "FamiTracker found no folder for its songs.";
@@ -2536,10 +2680,12 @@ public:
 					Message = "Couldn't make the folder " + Utf8(Folder) + ".";
 					return false;
 				}
+				CQuietUi Quiet;
 				if (!pDoc->OnSaveDocument(File)) {
 					DeleteFile(File);
 					RemoveDirectory(Folder);
-					Message = "The song couldn't be saved as " + Utf8(File) + ".";
+					pDoc->SetModifiedFlag(Modified);
+					Message = CouldntWrite(File, CString(), QuietNotesText());
 					return false;
 				}
 				pDoc->SetPathName(File);
@@ -2618,10 +2764,12 @@ public:
 		if (theApp.IsPlaying())
 			theApp.StopPlayerAndWait();
 		const unsigned int Before = pDoc->GetSongSerial();
+		CQuietUi Quiet;		// asks nothing (the song has no changes to lose): a question would get Cancel
 		m_pMain->SendMessage(WM_COMMAND, ID_FILE_NEW);
 		pDoc = Doc();
 		if (pDoc == NULL || pDoc->GetSongSerial() == Before || !pDoc->IsFileLoaded()) {
-			Error = "FamiTracker didn't start a new song.";
+			const std::string Said = QuietNotesText();
+			Error = "FamiTracker didn't start a new song" + (Said.empty() ? std::string() : ": it said \"" + Said + "\"") + ".";
 			return false;
 		}
 		if (New.SetChips && (pDoc->GetExpansionChip() != Flags || Plus)) {
@@ -2760,10 +2908,12 @@ public:
 		Stop();
 		if (theApp.IsPlaying())
 			theApp.StopPlayerAndWait();
+		CQuietUi Quiet;		// a file that still can't be opened says so here, not in a message box
 		CDocument *pOpened = theApp.OpenDocumentFile(File);
 		pDoc = Doc();
 		if (pOpened == NULL || pDoc == NULL || !pDoc->IsFileLoaded() || pDoc->GetPathName().CompareNoCase(File) != 0) {
-			Error = "FamiTracker couldn't open " + Path + ".";
+			const std::string Said = QuietNotesText();
+			Error = "FamiTracker couldn't open " + Path + (Said.empty() ? std::string() : ": it said \"" + Said + "\"") + ".";
 			return false;
 		}
 		return true;
@@ -2815,9 +2965,12 @@ public:
 			Error = "There's already a file called " + Name + " in the Backups folder.";
 			return false;
 		}
+		CQuietUi Quiet;
 		if (!pDoc->SaveCopy(Full)) {
 			DeleteFile(Full);
-			Error = "The backup couldn't be saved in " + Utf8(BackupsFolder(false)) + " (can that folder be written?).";
+			const std::string Said = QuietNotesText();
+			Error = "The backup couldn't be saved in " + Utf8(BackupsFolder(false)) + " (can that folder be written?)" +
+				(Said.empty() ? std::string() : ": FamiTracker said \"" + Said + "\"") + ".";
 			return false;
 		}
 		Path = Utf8(Full);
@@ -2913,12 +3066,14 @@ public:
 			theApp.StopPlayerAndWait();
 		const BOOL Modified = pDoc->IsModified();
 		pDoc->SetModifiedFlag(FALSE);	// so opening asks nothing
+		CQuietUi Quiet;
 		CDocument *pOpened = theApp.OpenDocumentFile(Full, FALSE);
 		pDoc = Doc();
 		if (pOpened == NULL || pDoc == NULL || !pDoc->IsFileLoaded() || pDoc->GetPathName().CompareNoCase(Full) != 0) {
 			if (pDoc != NULL && pDoc->GetPathName().CompareNoCase(Song) == 0)
 				pDoc->SetModifiedFlag(Modified);
-			Error = "FamiTracker couldn't open the backup " + Name + ".";
+			const std::string Said = QuietNotesText();
+			Error = "FamiTracker couldn't open the backup " + Name + (Said.empty() ? std::string() : ": it said \"" + Said + "\"") + ".";
 			return false;
 		}
 		pDoc->TakeBackPath(Song);
@@ -3049,6 +3204,7 @@ private:
 	DWORD m_iAddressesTime;					// when they were looked up
 	bool m_bAddressesRead;
 	bool m_bBusy;		// answering a request (a message box inside one could let another in)
+	ULONGLONG m_iBusySince;	// when it began (GetTickCount64)
 	bool m_bStopping;
 	bool m_bOwnDialog;	// working for a dialog of FamiTracker's (Export for games, Sound effect from your voice),
 						// which may change the song
@@ -3540,9 +3696,10 @@ void CMcpConnection::ShowVoiceEffect()
 	ShowVoiceEffectDialog(&m_pImpl->Link, AfxGetMainWnd());
 }
 
-bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog, bool Core)
+bool CMcpConnection::RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog, bool Core,
+	bool Quiet)
 {
-	return m_pImpl->Link.RunForWindow(pName, Arguments, Reply, FromDialog, Core);
+	return m_pImpl->Link.RunForWindow(pName, Arguments, Reply, FromDialog, Core, Quiet);
 }
 
 void CMcpConnection::ToolList(std::vector<ftapi::ToolInfo> &Out) const

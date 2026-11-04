@@ -35,6 +35,7 @@
 #include "ChannelMap.h"
 #include "CustomExporters.h"
 #include "CommandLineExport.h"
+#include "QuietUi.h"
 
 #ifdef EXPORT_TEST
 #include "ExportTest/ExportTest.h"
@@ -740,6 +741,15 @@ void CFamiTrackerApp::OnFileOpen()
 
 	if (pFrameWnd)
 		pFrameWnd->SetMessageText(IDS_LOADING_DONE);
+}
+
+// A message box nobody may be there to close (a call of the Claude Code connection runs) isn't shown: its safe default,
+// its text kept for the call's reply
+int CFamiTrackerApp::DoMessageBox(LPCTSTR lpszPrompt, UINT nType, UINT nIDPrompt)
+{
+	if (CQuietUi::IsOn())
+		return CQuietUi::Answer(lpszPrompt, nType);
+	return CWinApp::DoMessageBox(lpszPrompt, nType, nIDPrompt);
 }
 
 BOOL CFamiTrackerApp::DoPromptFileName(CString& fileName, CString& filePath, UINT nIDSTitle, DWORD lFlags, BOOL bOpenFileDialog, CDocTemplate* pTemplate)

@@ -56,7 +56,8 @@ public:
 	// failed, or FamiTracker is busy answering Claude Code. FromDialog: for a dialog of FamiTracker's that's open
 	// (Edit > Start from a groove), which a change would otherwise wait for.
 	// Core: as the small set of tools answers (/mcp/core: short replies that name only its tools), for View > Ask
-	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog = false, bool Core = false);
+	bool RunTool(const char *pName, const std::string &Arguments, std::string &Reply, bool FromDialog = false, bool Core = false,
+		bool Quiet = false);
 	// Every tool as /mcp lists them (Api/Tools.h), for View > Ask's model
 	void ToolList(std::vector<ftapi::ToolInfo> &Out) const;
 	bool IsBusy() const;				// answering Claude Code right now (RunTool would refuse)

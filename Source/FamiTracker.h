@@ -170,6 +170,8 @@ private:
 public:
 	virtual BOOL InitInstance();
 	virtual int ExitInstance();	
+	// Every AfxMessageBox: shown, or while a call of the Claude Code connection runs answered unseen (QuietUi.h)
+	virtual int DoMessageBox(LPCTSTR lpszPrompt, UINT nType, UINT nIDPrompt);
 
 	// Implementation
 	DECLARE_MESSAGE_MAP()

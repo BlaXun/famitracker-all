@@ -1199,10 +1199,10 @@ struct CAskPanelWnd::Impl {
 			return false;
 		}
 		if (!Changes)
-			return pTools->RunTool(Name.c_str(), Arguments, Reply, false, Settings.SmallSet);
+			return pTools->RunTool(Name.c_str(), Arguments, Reply, false, Settings.SmallSet, true);	// no window: the model may work alone
 		const long long Before = pMain->GetActionSerial();
 		pMain->BeginActionGroup();
-		const bool Done = pTools->RunTool(Name.c_str(), Arguments, Reply, false, Settings.SmallSet);
+		const bool Done = pTools->RunTool(Name.c_str(), Arguments, Reply, false, Settings.SmallSet, true);
 		pMain->EndActionGroup();
 		const bool Undoable = pMain->GetActionSerial() != Before;
 		if (!Done) {

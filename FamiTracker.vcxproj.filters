@@ -1383,6 +1383,9 @@
     <ClCompile Include="Source\McpSocket.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\QuietUi.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\McpConnection.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1537,6 +1540,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpSocket.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\QuietUi.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\McpConnection.h">
