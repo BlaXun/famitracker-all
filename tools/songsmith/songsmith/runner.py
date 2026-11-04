@@ -33,10 +33,9 @@ class Runner:
         self.current = None     # the job running now
 
     # ---- clients
-    def make_mcp(self, settings, job, patience):
+    def make_mcp(self, settings, core, patience):
         f = settings["famitracker"]
-        return McpClient(f["url"], f["token"], core=not job["options"].get("full_tools"),
-                         timeout=f["timeout_seconds"], patience=patience)
+        return McpClient(f["url"], f["token"], core=core, timeout=f["timeout_seconds"], patience=patience)
 
     def make_model(self, settings, patience):
         m = settings["model"]
@@ -152,6 +151,8 @@ class JobContext:
         self.model = None
         self.wiki = None
         self.tools = {}
+        self.all_tools = {}
+        self.model_mcp = None
 
     def log(self, kind, text, data=None):
         self.store.event(self.job, kind, text, data)
@@ -166,10 +167,16 @@ class JobContext:
         for warning in check["warnings"]:
             self.store.note(job, "Wiki: " + warning)
         self.log("wiki", "Wiki read: %d pages at %s." % (check["pages"], check["path"]))
-        self.mcp = self.runner.mcp_factory(self.settings, job, self.patience)
+        # the harness's own calls (gates, saves, backups) always go to /mcp, every tool; the model's to the set the
+        # job asks for (/mcp/core, the small set for local models, unless "full tool set" is ticked)
+        self.mcp = self.runner.mcp_factory(self.settings, False, self.patience)
+        core = not job["options"].get("full_tools")
+        self.model_mcp = self.runner.mcp_factory(self.settings, True, self.patience) if core else self.mcp
         self.model = self.runner.model_factory(self.settings, self.patience)
-        self.tools = {t["name"]: t for t in self.mcp.list_tools()}
-        self.log("connect", "FamiTracker: %d tools on %s." % (len(self.tools), self.mcp.route))
+        self.all_tools = {t["name"]: t for t in self.mcp.list_tools()}
+        self.tools = {t["name"]: t for t in self.model_mcp.list_tools()} if core else self.all_tools
+        self.log("connect", "FamiTracker: the model gets %d tools on %s; the harness's checks use %s." % (
+            len(self.tools), self.model_mcp.route, self.mcp.route))
         if job.get("song") is None:
             self.new_song()
         else:
@@ -386,7 +393,7 @@ class JobContext:
             for calls in r["fixes"][:6]:
                 for call in calls:
                     tool = call.get("tool")
-                    if not tool or tool in ph.HARNESS_ONLY or tool not in self.tools:
+                    if not tool or tool in ph.HARNESS_ONLY or tool not in self.all_tools:
                         continue
                     reply = self.mcp.call(tool, call.get("arguments") or {})
                     done = True
@@ -506,7 +513,7 @@ class JobContext:
                 return ("Error: %s isn't offered in this phase (the harness does saving, backups and songs itself). "
                         "Tools here: %s." % (name, ", ".join(sorted(allowed))))
             return "Error: no tool %s. Tools here: %s." % (name, ", ".join(sorted(allowed)))
-        reply = self.mcp.call(name, args)
+        reply = self.model_mcp.call(name, args)
         if name in ("finish_song", "export_for_game"):
             self.keep_files(reply)
             self.job["final"][name] = reply.text[-3000:]

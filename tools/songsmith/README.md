@@ -35,10 +35,10 @@ and a line in `log.md`. The verdict box on a song's page files your words into `
 a row at the top of `Verdicts.md` and `verdict:` in the song log, with a line in `log.md`. No other page is ever
 written.
 
-**Gates.** After each phase Songsmith checks the song itself through FamiTracker: `check_song` (format json) must
+**Gates.** After each phase Songsmith checks the song itself through FamiTracker (always on `/mcp`, every tool,
+whichever set the model works with): `check_song` (format json) must
 have no finding worth fixing (high or medium) that still has a fix; `review_arrangement` must score at least the bar
-(8 by default); `measure_mix` must be sane (the loudness in range, no part but the bass well over the melody; on the
-full tool set only); the yardstick rows it can count from `get_song` and `read_notes` (parts at once, instruments,
+(8 by default); `measure_mix` must be sane (the loudness in range, no part but the bass well over the melody); the yardstick rows it can count from `get_song` and `read_notes` (parts at once, instruments,
 the melody's rhythms, how often its rhythm repeats, the hook's return, its register, the bass's rhythms, channels
 changing per 8 bars, the band in the last two bars, the noise in a soft song) must be under in at most 3 rows. When a
 gate fails, the model gets the findings with their calls and tries again (2 times by default); after that Songsmith

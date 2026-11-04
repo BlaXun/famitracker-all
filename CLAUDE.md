@@ -3577,7 +3577,8 @@ short agent loop (`runner.py`) with only that phase's tools, the wiki pages
 model's own `wiki_search` and `wiki_read`) and a short state note; the
 harness keeps `new_song`, `save_song` and the backups (`HARNESS_ONLY`),
 backs up before each phase, saves after it, and resumes a stopped job from
-its phase's backup. Gates (`gates.py`, `yardstick.py`) read `check_song`'s
+its phase's backup. Gates (`gates.py`, `yardstick.py`; always on `/mcp`,
+whatever set the model gets) read `check_song`'s
 JSON (a high or medium finding with a `fix` fails), `review_arrangement`'s
 score, `measure_mix` and `get_song`/`read_notes` steps, so their wording
 matters to it too: `parse_song` in `song.py` reads `get_song`'s lines and

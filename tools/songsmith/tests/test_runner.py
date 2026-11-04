@@ -26,6 +26,9 @@ class RunTests(HarnessCase):
         self.assertEqual(sum(1 for n in names if n == "create_backup"), len(PHASES))
         self.assertGreaterEqual(sum(1 for n in names if n == "save_song"), len(PHASES))
         self.assertIn("finish_song", names)
+        self.assertIn("measure_mix", names)         # the harness's gates use /mcp, though the model has /mcp/core
+        tools = {t["function"]["name"] for b in self.model.requests for t in b["tools"]}
+        self.assertNotIn("measure_mix", tools)
         self.assertFalse(self.ft.dirty)        # nothing left unsaved in FamiTracker
         # the OGG came through /files/ into the job's folder
         folder = self.store.job_dir(job["id"])
