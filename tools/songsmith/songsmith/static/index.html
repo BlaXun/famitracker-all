@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Songsmith</title>
+<style>
+:root {
+  --bg: #f6f4ef; --card: #ffffff; --text: #23211d; --muted: #6d6a62; --line: #e3dfd6;
+  --accent: #3d6fd8; --accent-text: #ffffff; --ok: #1f8a4c; --bad: #c4372f; --warn: #b7791f; --run: #3d6fd8;
+  --chip: #efece5; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --bg: #17181b; --card: #212328; --text: #ebe9e4; --muted: #9c9a94; --line: #33363d;
+    --accent: #7aa2ff; --accent-text: #10131a; --ok: #4cc382; --bad: #ff7a70; --warn: #e8b04a; --run: #7aa2ff;
+    --chip: #2b2e34; --shadow: none;
+  }
+}
+:root.dark {
+  --bg: #17181b; --card: #212328; --text: #ebe9e4; --muted: #9c9a94; --line: #33363d;
+  --accent: #7aa2ff; --accent-text: #10131a; --ok: #4cc382; --bad: #ff7a70; --warn: #e8b04a; --run: #7aa2ff;
+  --chip: #2b2e34; --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+header h1 span { color: var(--muted); font-weight: 400; font-size: 14px; }
+nav { margin-left: auto; display: flex; gap: 4px; }
+nav a { color: var(--text); text-decoration: none; padding: 6px 10px; border-radius: 8px; }
+nav a.on { background: var(--chip); font-weight: 600; }
+main { max-width: 1060px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+.cols { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; align-items: start; }
+@media (max-width: 820px) { .cols { grid-template-columns: 1fr; } nav a { padding: 6px 8px; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
+.card h2 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.card h2 .right { margin-left: auto; font-weight: 400; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 3px; }
+input[type=text], input[type=number], input[type=password], select, textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+textarea { min-height: 78px; resize: vertical; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; }
+.checks label { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--text); font-size: 14px; }
+button, .button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--text); padding: 7px 12px; border-radius: 8px; cursor: pointer; text-decoration: none; display: inline-block; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.small { padding: 3px 8px; font-size: 13px; }
+button:disabled { opacity: .5; cursor: default; }
+.bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.presets button { padding: 3px 9px; font-size: 13px; border-radius: 999px; }
+.job { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.job:first-child { border-top: 0; }
+.job a.title { color: var(--text); font-weight: 600; text-decoration: none; }
+.job .meta { color: var(--muted); font-size: 13px; }
+.job .acts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+.pill.running { background: var(--run); color: var(--accent-text); }
+.pill.done { background: var(--ok); color: #fff; }
+.pill.failed { background: var(--bad); color: #fff; }
+.pill.waiting { background: var(--chip); color: var(--text); }
+.progress { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin-top: 4px; grid-column: 1 / -1; }
+.progress div { height: 100%; background: var(--run); }
+.steps { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 2px; }
+.steps span { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+.steps span.done { background: color-mix(in srgb, var(--ok) 25%, var(--chip)); color: var(--text); }
+.steps span.warn { background: color-mix(in srgb, var(--warn) 30%, var(--chip)); color: var(--text); }
+.steps span.now { background: var(--run); color: var(--accent-text); }
+.log { max-height: 520px; overflow: auto; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.log div { padding: 5px 9px; border-bottom: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; }
+.log .k { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-right: 6px; }
+.log .model { border-left: 3px solid var(--accent); }
+.log .call { color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.log .result { color: var(--muted); font-size: 12px; max-height: 7.5em; overflow: hidden; cursor: pointer; }
+.log .result.open { max-height: none; }
+.log .gate.ok { border-left: 3px solid var(--ok); }
+.log .gate.bad, .log .error { border-left: 3px solid var(--bad); }
+.log .phase { background: var(--chip); font-weight: 600; }
+.gates td, .gates th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: top; }
+.gates { border-collapse: collapse; width: 100%; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+pre { white-space: pre-wrap; font-size: 13px; background: var(--bg); padding: 10px; border-radius: 8px; border: 1px solid var(--line); max-height: 480px; overflow: auto; }
+audio { width: 100%; margin: 6px 0; }
+.empty { color: var(--muted); padding: 12px 0; }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.on { opacity: .92; }
+.test div { margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Songsmith <span>songs for the game, overnight</span></h1>
+  <nav>
+    <a href="#/" id="nav-queue">Queue</a>
+    <a href="#/settings" id="nav-settings">Settings</a>
+    <a href="#" id="theme" title="Light or dark">&#9680;</a>
+  </nav>
+</header>
+<main id="view"></main>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+let S = null, form = null, timer = null, eventsAfter = 0, shownJob = null;
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2600); }
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+function ago(t) { if (!t) return ""; const s = Math.round(Date.now() / 1000 - t); if (s < 60) return "just now"; if (s < 3600) return Math.round(s / 60) + " min ago"; if (s < 86400) return Math.round(s / 3600) + " h ago"; return new Date(t * 1000).toLocaleDateString(); }
+function dur(s) { s = Math.round(s || 0); return s >= 3600 ? Math.floor(s / 3600) + "h " + Math.floor(s / 60 % 60) + "m" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
+
+// ---- theme
+(function () { const t = localStorage.getItem("theme"); if (t) document.documentElement.classList.add(t); })();
+$("#theme").onclick = e => { e.preventDefault(); const r = document.documentElement; const dark = r.classList.contains("dark") || (!r.classList.contains("light") && matchMedia("(prefers-color-scheme: dark)").matches); r.classList.remove("dark", "light"); r.classList.add(dark ? "light" : "dark"); localStorage.setItem("theme", dark ? "light" : "dark"); };
+
+// ---- routes
+window.addEventListener("hashchange", route);
+async function route() {
+  clearInterval(timer); shownJob = null;
+  const h = location.hash.replace(/^#/, "") || "/";
+  $("#nav-queue").classList.toggle("on", !h.startsWith("/settings"));
+  $("#nav-settings").classList.toggle("on", h.startsWith("/settings"));
+  S = await api("/api/state");
+  if (h.startsWith("/job/")) return jobView(h.slice(5));
+  if (h.startsWith("/settings")) return settingsView();
+  queueView();
+}
+
+// ---- the queue and the form
+function blankForm() { return {name: "", about: "", kind: "lively", flavour: "", chip: "VRC6", length: "normal", tempo: "", versions: 1, priority: 0, options: {ambience: false, drums: true, swing: false, intro: true, full_tools: false}}; }
+function queueView() {
+  form = form || JSON.parse(localStorage.getItem("form") || "null") || blankForm();
+  $("#view").innerHTML = `<div class="cols">
+    <section class="card" id="add"><h2>Add a song</h2>
+      <div class="presets" id="presets"></div>
+      <label for="f-name">Name</label><input type="text" id="f-name" placeholder="Corner Shop" maxlength="60">
+      <label for="f-about">The map: what the place is, what happens, how it feels</label>
+      <textarea id="f-about" placeholder="A small shop in the village where a friendly keeper sells odds and ends..."></textarea>
+      <div class="row"><div><label for="f-kind">Kind</label><select id="f-kind">${S.kinds.map(k => `<option>${k}</option>`).join("")}</select></div>
+        <div><label for="f-flavour">Flavour</label><select id="f-flavour"><option value="">none</option>${S.flavours.map(k => `<option>${k}</option>`).join("")}</select></div></div>
+      <div class="row"><div><label for="f-chip">Chip</label><select id="f-chip">${S.chips.map(k => `<option>${k}</option>`).join("")}</select></div>
+        <div><label for="f-length">Length</label><select id="f-length">${S.lengths.map(k => `<option>${k}</option>`).join("")}</select></div></div>
+      <div class="row3"><div><label for="f-tempo">Tempo hint</label><input type="text" id="f-tempo" placeholder="e.g. 100 BPM"></div>
+        <div><label for="f-versions">Versions</label><input type="number" id="f-versions" min="1" max="8"></div>
+        <div><label for="f-priority">Priority</label><select id="f-priority"><option value="1">high</option><option value="0">normal</option><option value="-1">low</option></select></div></div>
+      <div class="checks">
+        <label><input type="checkbox" data-opt="intro"> intro</label>
+        <label><input type="checkbox" data-opt="drums"> drums</label>
+        <label><input type="checkbox" data-opt="ambience"> ambience</label>
+        <label><input type="checkbox" data-opt="swing"> swing</label>
+        <label title="All of FamiTracker's tools (/mcp) instead of the small set for local models (/mcp/core)"><input type="checkbox" data-opt="full_tools"> full tool set</label>
+      </div>
+      <div class="bar"><button class="primary" id="f-add">Add to queue</button><button id="f-clear">Clear</button><button id="f-save" title="Keep these fields as a template">Save as template</button></div>
+    </section>
+    <section class="card"><h2>Queue <span class="right" id="qbar"></span></h2><div id="jobs"></div></section>
+  </div>`;
+  fillForm();
+  $("#presets").innerHTML = S.templates.map((t, i) => `<button data-t="${i}" title="${esc(t.about)}">${esc(t.label)}</button>`).join("");
+  $("#presets").onclick = e => { const i = e.target.dataset.t; if (i === undefined) return; const t = S.templates[i]; form = Object.assign(blankForm(), JSON.parse(JSON.stringify(t))); form.options = Object.assign(blankForm().options, t.options || {}); delete form.label; fillForm(); toast("Filled from “" + t.label + "”"); };
+  $("#add").addEventListener("input", readForm); $("#add").addEventListener("change", readForm);
+  $("#f-add").onclick = async () => { readForm(); try { const r = await api("/api/jobs", form); toast(r.jobs.length > 1 ? r.jobs.length + " versions queued" : "Queued"); form.name = ""; fillForm(); refresh(); } catch (e) { toast(e.message); } };
+  $("#f-clear").onclick = () => { form = blankForm(); fillForm(); };
+  $("#f-save").onclick = async () => { readForm(); const label = prompt("Template name", form.name || "My template"); if (!label) return; const r = await api("/api/templates", Object.assign({}, form, {label})); S.templates = r.templates; queueView(); toast("Template saved"); };
+  refresh(); timer = setInterval(refresh, 3000);
+}
+function fillForm() {
+  $("#f-name").value = form.name || ""; $("#f-about").value = form.about || ""; $("#f-kind").value = form.kind || "lively";
+  $("#f-flavour").value = form.flavour || ""; $("#f-chip").value = form.chip || "VRC6"; $("#f-length").value = form.length || "normal";
+  $("#f-tempo").value = form.tempo || ""; $("#f-versions").value = form.versions || 1; $("#f-priority").value = String(form.priority || 0);
+  document.querySelectorAll("[data-opt]").forEach(c => c.checked = !!(form.options || {})[c.dataset.opt]);
+  localStorage.setItem("form", JSON.stringify(form));
+}
+function readForm() {
+  form = {name: $("#f-name").value, about: $("#f-about").value, kind: $("#f-kind").value, flavour: $("#f-flavour").value, chip: $("#f-chip").value,
+    length: $("#f-length").value, tempo: $("#f-tempo").value, versions: parseInt($("#f-versions").value) || 1, priority: parseInt($("#f-priority").value) || 0, options: {}};
+  document.querySelectorAll("[data-opt]").forEach(c => form.options[c.dataset.opt] = c.checked);
+  localStorage.setItem("form", JSON.stringify(form));
+}
+function statusPill(j) {
+  if (j.status === "running") return `<span class="pill running">phase ${j.phase + 1}/${j.phases} ${esc(j.phase_name)}</span>`;
+  if (j.status === "waiting" && j.phase > 0) return `<span class="pill waiting">waiting, at phase ${j.phase + 1}</span>`;
+  return `<span class="pill ${esc(j.status)}">${esc(j.status)}</span>`;
+}
+async function refresh() {
+  try { S = await api("/api/state"); } catch (e) { return; }
+  const q = $("#qbar"); if (!q) return;
+  const waiting = S.jobs.filter(j => j.status === "waiting").length;
+  q.innerHTML = `<span class="muted">${waiting} waiting</span> ` + (S.paused ? `<span class="pill failed">paused</span> <button class="small primary" data-q="resume">Resume</button>` : `<button class="small" data-q="pause">Pause queue</button>`);
+  q.onclick = async e => { const a = e.target.dataset.q; if (!a) return; await api("/api/queue/" + a, {}); refresh(); };
+  const list = $("#jobs");
+  if (!S.jobs.length) { list.innerHTML = `<div class="empty">No songs yet. Fill in the form or pick a template, and Songsmith works through them one by one.</div>`; return; }
+  list.innerHTML = S.jobs.map(j => {
+    const acts = [];
+    if (j.status === "waiting") acts.push(`<button class="small" data-a="up" title="Earlier">&#8593;</button><button class="small" data-a="down" title="Later">&#8595;</button><button class="small" data-a="skip">Skip</button>`);
+    if (j.status === "running") acts.push(`<button class="small" data-a="skip" title="Stop it after the current step">Stop</button>`);
+    if (["failed", "skipped", "cancelled"].includes(j.status)) acts.push(`<button class="small" data-a="retry" title="From its last phase">Retry</button>`);
+    if (j.status !== "running") acts.push(`<button class="small" data-a="remove" title="Take it off the list (its song stays in FamiTracker's Songs folder)">&#10005;</button>`);
+    const pct = j.status === "done" ? 100 : Math.round(100 * j.phase / j.phases);
+    return `<div class="job" data-id="${esc(j.id)}">
+      <div><a class="title" href="#/job/${esc(j.id)}">${esc(j.title)}</a> ${statusPill(j)}${j.priority > 0 ? ' <span class="pill">high</span>' : ""}
+      <div class="meta">${esc(j.kind)}${j.flavour ? ", " + esc(j.flavour) : ""} &middot; ${esc(j.chip)} &middot; ${j.status === "done" ? "done " + ago(j.ended) + " in " + dur(j.seconds) : "added " + ago(j.created)}${j.gates_failed ? ` &middot; <span class="bad">${j.gates_failed} gate(s) not met</span>` : ""}${j.error ? ` &middot; <span class="bad">${esc(j.error.slice(0, 120))}</span>` : ""}</div></div>
+      <div class="acts">${acts.join("")}</div>
+      ${j.status === "running" || (j.status === "waiting" && j.phase) ? `<div class="progress"><div style="width:${pct}%"></div></div>` : ""}
+    </div>`;
+  }).join("");
+  list.onclick = async e => {
+    const a = e.target.dataset.a; if (!a) return; const id = e.target.closest(".job").dataset.id;
+    if (a === "remove" && !confirm("Take this song off the list?")) return;
+    try { await api(`/api/jobs/${id}/${a}`, {}); refresh(); } catch (err) { toast(err.message); }
+  };
+}
+
+// ---- a job
+async function jobView(id) {
+  let j;
+  try { j = await api("/api/jobs/" + id); } catch (e) { $("#view").innerHTML = `<div class="card">${esc(e.message)}</div>`; return; }
+  shownJob = id; eventsAfter = 0;
+  $("#view").innerHTML = `<section class="card"><h2 id="j-title"></h2><div id="j-head"></div><div class="steps" id="j-steps"></div><div class="bar" id="j-acts"></div></section>
+    <div class="cols"><div style="display:grid;gap:16px">
+      <section class="card" id="j-listen"><h2>Listen</h2><div id="j-audio"></div>
+        <label for="v-words">Your verdict (filed word for word into the wiki's Verdicts)</label><textarea id="v-words" placeholder="What did you hear? Your words go into Verdicts.md and raw/verdicts/Verdicts verbatim.md as they are."></textarea>
+        <div class="bar"><button class="primary" id="v-file">File verdict</button><span id="v-done" class="muted"></span></div></section>
+      <section class="card"><h2>Gates</h2><div id="j-gates"></div></section>
+      <section class="card"><h2>The song</h2><div id="j-info"></div></section>
+    </div>
+    <section class="card"><h2>Live <span class="right"><label style="display:inline;margin:0"><input type="checkbox" id="j-results"> tool replies</label></span></h2><div class="log" id="j-log"></div></section></div>
+    <section class="card"><h2>Report <span class="right"><a class="button small" href="/api/jobs/${esc(id)}/files/report.md" target="_blank">report.md</a> <a class="button small" href="/api/jobs/${esc(id)}/files/report.json" target="_blank">report.json</a></span></h2><pre id="j-report">The report appears when the job ends.</pre></section>`;
+  $("#v-file").onclick = async () => { try { const r = await api(`/api/jobs/${id}/verdict`, {words: $("#v-words").value}); $("#v-done").textContent = "Filed: " + r.filed.join(", "); $("#v-words").value = ""; } catch (e) { toast(e.message); } };
+  $("#j-results").onchange = () => document.querySelectorAll(".log .result").forEach(d => d.hidden = !$("#j-results").checked);
+  showJob(j); pollEvents(id);
+  timer = setInterval(async () => { if (shownJob !== id) return; try { showJob(await api("/api/jobs/" + id)); } catch (e) {} pollEvents(id); }, 2500);
+}
+function showJob(j) {
+  $("#j-title").innerHTML = esc(j.title) + " " + statusPill(Object.assign({}, j, {phases: S.phases.length, phase_name: S.phases[j.phase] || "Done"}));
+  const o = j.options || {};
+  $("#j-head").innerHTML = `<div class="meta muted">${esc(j.kind)}${j.flavour ? ", " + esc(j.flavour) : ""} &middot; ${esc(j.chip)} &middot; ${esc(j.length)}${j.tempo ? " &middot; " + esc(j.tempo) : ""} &middot; ${Object.keys(o).filter(k => o[k]).map(k => k.replace("_", " ")).join(", ") || "no options"}${j.versions > 1 ? ` &middot; version ${j.version} of ${j.versions}` : ""}</div><p>${esc(j.about || "")}</p>`;
+  $("#j-steps").innerHTML = S.phases.map((p, i) => { const r = (j.phases || [])[i]; let c = ""; if (r && r.status === "done") c = "done"; if (r && /notes|skipped/.test(r.status)) c = "warn"; if (j.status === "running" && i === j.phase) c = "now"; return `<span class="${c}">${i + 1} ${esc(p)}</span>`; }).join("");
+  const acts = [];
+  if (j.status === "running") acts.push(`<button data-a="skip">Stop after this step</button>`);
+  if (["failed", "skipped", "cancelled"].includes(j.status)) acts.push(`<button data-a="retry">Retry from phase ${j.phase + 1}</button>`);
+  if (j.status !== "running") acts.push(`<button data-a="restart">Make it again from the start</button>`);
+  acts.push(`<button data-a="like">Add another like this</button>`);
+  $("#j-acts").innerHTML = acts.join("") + (j.error ? ` <span class="bad">${esc(j.error)}</span>` : "");
+  $("#j-acts").onclick = async e => {
+    const a = e.target.dataset.a; if (!a) return;
+    if (a === "like") { form = {name: j.base_title || j.title, about: j.about, kind: j.kind, flavour: j.flavour, chip: j.chip, length: j.length, tempo: j.tempo, versions: 1, priority: j.priority, options: Object.assign({}, j.options)}; localStorage.setItem("form", JSON.stringify(form)); location.hash = "#/"; toast("The form is filled: change the name and add it"); return; }
+    if (a === "restart" && !confirm("Make a new song for this job from the start?")) return;
+    try { await api(`/api/jobs/${j.id}/${a}`, {}); showJob(await api("/api/jobs/" + j.id)); } catch (err) { toast(err.message); }
+  };
+  const files = j.ogg_files || [];
+  $("#j-audio").innerHTML = files.length ? files.map(f => `<div class="muted">${esc(f)}</div><audio controls preload="none" src="/api/jobs/${esc(j.id)}/files/${encodeURIComponent(f)}"></audio>`).join("") : `<div class="empty">The OGG comes with the finish.</div>`;
+  if (!$("#j-audio").dataset.filled && files.length) $("#j-audio").dataset.filled = "1";
+  const rows = [];
+  (j.phases || []).forEach(p => { const last = (p.gates || []).slice(-1)[0] || []; last.forEach(g => rows.push(`<tr><td>${esc(p.title)}</td><td class="${g.ok ? "ok" : "bad"}">${g.ok ? "&#10003;" : "&#10007;"} ${esc(g.name)}</td><td>${esc(g.summary)}${(p.gates || []).length > 1 ? ` <span class="muted">(${p.gates.length} tries)</span>` : ""}</td></tr>`)); });
+  $("#j-gates").innerHTML = rows.length ? `<table class="gates"><tr><th>Phase</th><th>Gate</th><th>Result</th></tr>${rows.join("")}</table>` : `<div class="empty">No gates run yet.</div>`;
+  const u = j.usage || {}, song = j.song || {};
+  $("#j-info").innerHTML = `<div>${song.file ? "File: Songs/" + esc(song.name) + "/" + esc(song.file) : "No song yet."}</div>
+    <div class="muted">${u.prompt || 0} + ${u.completion || 0} tokens, ${u.calls || 0} model calls, ${u.tool_calls || 0} tool calls, ${dur(j.seconds)}</div>
+    ${j.song_log ? `<div class="muted">Song log: ${esc(j.song_log)}</div>` : ""}
+    ${(j.verdicts || []).map(v => `<div>Verdict ${esc(v.date)}: &ldquo;${esc(v.words)}&rdquo;</div>`).join("")}
+    ${(j.notes || []).length ? `<label>Notes</label>` + j.notes.slice(-6).map(n => `<div class="muted">&middot; ${esc(n)}</div>`).join("") : ""}`;
+  if (["done", "failed", "skipped", "cancelled"].includes(j.status)) fetch(`/api/jobs/${j.id}/files/report.md`).then(r => r.ok ? r.text() : "").then(t => { if (t) $("#j-report").textContent = t; });
+}
+async function pollEvents(id) {
+  let r; try { r = await api(`/api/jobs/${id}/events?after=${eventsAfter}`); } catch (e) { return; }
+  const log = $("#j-log"); if (!log || !r.events.length) return;
+  const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  const show = $("#j-results").checked;
+  for (const e of r.events) {
+    eventsAfter = e.n + 1;
+    const d = document.createElement("div");
+    let cls = e.kind;
+    if (e.kind === "gate") cls += e.data && e.data.ok ? " ok" : " bad";
+    d.className = cls;
+    if (e.kind === "result") d.hidden = !show;
+    const time = new Date(e.t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+    d.innerHTML = `<span class="k">${time} ${esc(e.kind)}</span>` + esc(e.text);
+    if (e.kind === "result") d.onclick = () => d.classList.toggle("open");
+    if (e.kind === "gate" && e.data && e.data.detail && !e.data.ok) d.title = e.data.detail;
+    log.appendChild(d);
+  }
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+
+// ---- settings
+async function settingsView() {
+  const c = await api("/api/settings");
+  const field = (id, label, value, type = "text", extra = "") => `<div><label for="${id}">${label}</label><input type="${type}" id="${id}" value="${esc(value)}" ${extra}></div>`;
+  $("#view").innerHTML = `<div class="cols">
+    <section class="card"><h2>Connections</h2>
+      ${field("s-murl", "Model server (OpenAI-compatible)", c.model.base_url)}
+      ${field("s-mname", "Model name", c.model.name)}
+      ${field("s-mkey", "API key (none for llama.cpp)", "", "password", `placeholder="${c.model.api_key_set ? "set; leave empty to keep it" : "none"}"`)}
+      ${field("s-furl", "FamiTracker address (File > Connect Claude Code)", c.famitracker.url)}
+      ${field("s-ftok", "Access code", "", "password", `placeholder="${c.famitracker.token_set ? "set; leave empty to keep it" : "paste it from FamiTracker's dialog"}"`)}
+      ${field("s-wiki", "Wiki folder", c.wiki_path)}
+      <div class="checks"><label><input type="checkbox" id="s-logs" ${c.file_song_logs ? "checked" : ""}> file a song log into the wiki after each song</label></div>
+      <label for="s-unsaved">When FamiTracker has another song open with unsaved changes</label>
+      <select id="s-unsaved"><option value="save">save it, then go on</option><option value="wait">wait until it's saved</option></select>
+      <div class="bar"><button class="primary" id="s-save">Save</button><button id="s-test">Test connections</button></div>
+      <div class="test" id="s-result"></div>
+    </section>
+    <section class="card"><h2>Gates and limits</h2>
+      <div class="row">${field("s-score", "Review score at least (of 10)", c.gates.review_score, "number", 'step="0.5"')}${field("s-yard", "Yardstick rows under, at most", c.gates.yardstick_max_misses, "number")}</div>
+      <div class="row">${field("s-over", "No part over the melody by more than (dB)", c.gates.mix_max_over_db, "number", 'step="0.5"')}${field("s-retries", "Retries when a gate fails", c.limits.retries, "number")}</div>
+      <div class="row">${field("s-llo", "Loudness at least (LUFS)", c.gates.loudness_low, "number")}${field("s-lhi", "Loudness at most (LUFS)", c.gates.loudness_high, "number")}</div>
+      <div class="checks"><label><input type="checkbox" id="s-auto" ${c.gates.auto_fix ? "checked" : ""}> after the retries, make check_song's fixes myself</label></div>
+      <div class="row">${field("s-turns", "Model turns per phase", c.limits.max_turns_per_phase, "number")}${field("s-pmin", "Minutes per phase", c.limits.phase_minutes, "number")}</div>
+      <div class="row">${field("s-jh", "Hours per song", c.limits.job_hours, "number", 'step="0.5"')}${field("s-wait", "Wait for a server that's down (minutes)", c.limits.wait_minutes, "number")}</div>
+      <div class="row">${field("s-mt", "Model call timeout (s)", c.model.timeout_seconds, "number")}${field("s-ft", "Tool call timeout (s)", c.famitracker.timeout_seconds, "number")}</div>
+      <div class="row">${field("s-ctx", "Context budget (characters)", c.limits.context_chars, "number")}${field("s-trc", "Tool reply cut at (characters)", c.limits.tool_result_chars, "number")}</div>
+    </section></div>`;
+  $("#s-unsaved").value = c.unsaved_song || "save";
+  const read = () => ({
+    model: {base_url: $("#s-murl").value.trim(), name: $("#s-mname").value.trim(), api_key: $("#s-mkey").value, timeout_seconds: +$("#s-mt").value},
+    famitracker: {url: $("#s-furl").value.trim(), token: $("#s-ftok").value.trim(), timeout_seconds: +$("#s-ft").value},
+    wiki_path: $("#s-wiki").value.trim(), file_song_logs: $("#s-logs").checked, unsaved_song: $("#s-unsaved").value,
+    gates: {review_score: +$("#s-score").value, yardstick_max_misses: +$("#s-yard").value, mix_max_over_db: +$("#s-over").value, loudness_low: +$("#s-llo").value, loudness_high: +$("#s-lhi").value, auto_fix: $("#s-auto").checked},
+    limits: {retries: +$("#s-retries").value, max_turns_per_phase: +$("#s-turns").value, phase_minutes: +$("#s-pmin").value, job_hours: +$("#s-jh").value, wait_minutes: +$("#s-wait").value, context_chars: +$("#s-ctx").value, tool_result_chars: +$("#s-trc").value}});
+  $("#s-save").onclick = async () => { try { await api("/api/settings", read()); toast("Saved"); settingsView(); } catch (e) { toast(e.message); } };
+  $("#s-test").onclick = async () => {
+    $("#s-result").innerHTML = `<div class="muted">Testing...</div>`;
+    try {
+      const r = await api("/api/test", read());
+      const line = (n, x) => `<div><b class="${x.ok ? "ok" : "bad"}">${x.ok ? "&#10003;" : "&#10007;"} ${n}</b> ${esc(x.text)}</div>`;
+      let html = line("Model", r.model) + line("FamiTracker", r.famitracker) + line("Wiki", r.wiki);
+      (r.wiki.warnings || []).forEach(w => html += `<div class="bad">&middot; ${esc(w)}</div>`);
+      if (r.wiki.examples && r.wiki.examples.length) html += `<div class="muted">Examples found: ${r.wiki.examples.map(esc).join(", ")}</div>`;
+      $("#s-result").innerHTML = html;
+    } catch (e) { $("#s-result").innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
+  };
+}
+route();
+</script>
+</body>
+</html>
