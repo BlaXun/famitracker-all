@@ -25,6 +25,7 @@
 #include "../Ambience.h"
 #include "../Arrange.h"
 #include "../Backups.h"
+#include "../StudyInbox.h"
 #include "../Bridge.h"
 #include "../BridgeSocket.h"
 #include "../ChannelMix.h"
@@ -32992,6 +32993,85 @@ bool TestWanted(const char *Name)
 }
 #define RUN(f) do { if (TestWanted(#f)) f(); } while (0)
 
+// The study folder (feat-study-folder): a file dropped in "To study" is studied into the library as study_nsf and
+// study_module study it, known again by its content, then moved to Done or Failed
+void TestStudyInbox()
+{
+	CHECK(StudyFileKind("Castlevania III.NSF") == STUDY_FILE_NSF && StudyFileKind("a.nsfe") == STUDY_FILE_NSF &&
+		StudyFileKind("town.xm") == STUDY_FILE_MODULE && StudyFileKind("x.IT") == STUDY_FILE_MODULE &&
+		StudyFileKind("y.mid") == STUDY_FILE_MODULE && StudyFileKind("z.ftm") == STUDY_FILE_FTM &&
+		StudyFileKind("notes.txt") == STUDY_FILE_NONE && StudyFileKind("nsf") == STUDY_FILE_NONE);
+	CHECK(StudyContentKey("abc") == StudyContentKey("abc") && StudyContentKey("abc") != StudyContentKey("abd") &&
+		StudyContentKey("").size() == 16);
+	// the log: keys of files studied, not of those that failed
+	const std::string Log = StudyLogLine("2026-11-05 19:40", "a.nsf", "3 tracks studied: a-01", StudyContentKey("A")) + "\n" +
+		StudyLogLine("2026-11-05 19:41", "b.xm", "failed: No track could be studied", StudyContentKey("B")) + "\n" +
+		StudyLogLine("2026-11-05 19:42", "c.mod", "studied: c-mod", StudyContentKey("C")) + "\n";
+	CHECK(StudiedKeys(Log) == std::vector<std::string>({ StudyContentKey("A"), StudyContentKey("C") }));
+	CHECK_HAS(StudyLogLine("now", "x\ny.nsf", "studied", ""), "x y.nsf: studied");
+	// a free name in Done
+	std::vector<std::string> Taken = { "song.nsf", "song (2).nsf" };
+	auto IsTaken = [&](const std::string &N) { return std::find(Taken.begin(), Taken.end(), N) != Taken.end(); };
+	CHECK_EQ(FreeStudyName("song.nsf", IsTaken), std::string("song (3).nsf"));
+	CHECK_EQ(FreeStudyName("other.nsf", IsTaken), std::string("other.nsf"));
+	// ready once it stopped growing: seen twice alike
+	const std::vector<StudyFolderEntry> Before = { StudyFolderEntry("a.nsf", 100, 5), StudyFolderEntry("b.xm", 50, 5) };
+	const std::vector<StudyFolderEntry> Now = { StudyFolderEntry("a.nsf", 100, 5), StudyFolderEntry("b.xm", 80, 6),
+		StudyFolderEntry("c.mod", 10, 7) };
+	CHECK(StudyFilesReady(Now, Before) == std::vector<std::string>({ "a.nsf" }));
+
+	// studied into a library
+	std::map<std::string, std::string> Library;
+	StudyLibrary Lib;
+	Lib.Read = [&](const std::string &Name, std::string &Bytes) {
+		if (!Library.count(Name))
+			return false;
+		Bytes = Library[Name];
+		return true;
+	};
+	Lib.Save = [&](const std::string &Name, const std::string &Bytes, std::string &) { Library[Name] = Bytes; return true; };
+	const std::string NsfPath = "api_tests_inbox.nsf";
+	WriteTestNsf(NsfPath);
+	std::vector<std::string> Doing;
+	StudyFileResult R = StudyFileIntoLibrary(NsfPath, "api_tests_inbox.nsf", "C:\\FT\\To study\\Done\\api_tests_inbox.nsf",
+		"2026-11-05", Lib, [&](const std::string &What) { Doing.push_back(What); return true; });
+	CHECK(R.Ok && R.Error.empty());
+	CHECK(R.Ids == std::vector<std::string>({ "tester-song-01" }));
+	CHECK_HAS(R.What, "1 track studied: tester-song-01");
+	CHECK(!Doing.empty());
+	Reference Kept;
+	std::string Error;
+	CHECK(ReadReferenceFile(Library["tester-song-01.json"], Kept, Error));
+	CHECK(Kept.Title == "Lava Run" && Kept.Source == "C:\\FT\\To study\\Done\\api_tests_inbox.nsf");
+	// studied again: the user's tag and notes stay
+	Kept.Tags.push_back("favourite");
+	Kept.Notes = "the user's note";
+	Library["tester-song-01.json"] = ReferenceFile(Kept);
+	R = StudyFileIntoLibrary(NsfPath, "api_tests_inbox.nsf", "x", "2026-11-06", Lib);
+	CHECK(R.Ok && ReadReferenceFile(Library["tester-song-01.json"], Kept, Error));
+	CHECK(std::find(Kept.Tags.begin(), Kept.Tags.end(), "favourite") != Kept.Tags.end() && Kept.Notes == "the user's note");
+	// stopped
+	R = StudyFileIntoLibrary(NsfPath, "api_tests_inbox.nsf", "x", "2026-11-06", Lib, [](const std::string &) { return false; });
+	CHECK(!R.Ok && R.Error == "stopped");
+	// a tracker module
+	WriteTestMod("api_tests_inbox.mod");
+	R = StudyFileIntoLibrary("api_tests_inbox.mod", "api_tests_inbox.mod", "x", "2026-11-05", Lib);
+	CHECK(R.Ok && R.Ids == std::vector<std::string>({ "test-song-mod" }) && Library.count("test-song-mod.json") == 1);
+	// what isn't studied, and what can't be read
+	R = StudyFileIntoLibrary("api_tests_inbox.mod", "readme.txt", "x", "2026-11-05", Lib);
+	CHECK(!R.Ok);
+	CHECK_HAS(R.Error, "FamiTracker doesn't study .txt files");
+	R = StudyFileIntoLibrary("api_tests_inbox.mod", "wrong.nsf", "x", "2026-11-05", Lib);
+	CHECK(!R.Ok);
+	CHECK_HAS(R.Error, "Not an NSF FamiTracker can read");
+	R = StudyFileIntoLibrary("no_such_file.xm", "no_such_file.xm", "x", "2026-11-05", Lib);
+	CHECK(!R.Ok);
+	CHECK_HAS(R.Error, "Not a module FamiTracker can read");
+	std::remove(NsfPath.c_str());
+	std::remove("api_tests_inbox.m3u");
+	std::remove("api_tests_inbox.mod");
+}
+
 int main()
 {
 	RUN(TestJson);
@@ -33137,6 +33217,7 @@ int main()
 	RUN(TestShortLoudness);
 	RUN(TestCueJudging);
 	RUN(TestStudyTagsAgain);
+	RUN(TestStudyInbox);
 	RUN(TestPhoneRoute);
 	RUN(TestSoftReferenceWaves);
 	RUN(TestSoftReferenceTool);

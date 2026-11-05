@@ -1344,6 +1344,9 @@
     <ClCompile Include="Source\Api\Backups.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Api\StudyInbox.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClCompile Include="Source\Api\Png.cpp">
       <Filter>Claude Code (MCP)</Filter>
     </ClCompile>
@@ -1501,6 +1504,9 @@
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Backups.h">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Api\StudyInbox.h">
       <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClInclude Include="Source\Api\Png.h">
@@ -2007,8 +2013,14 @@
     <ClCompile Include="Source\PhoneLink.cpp">
       <Filter>Recorder</Filter>
     </ClCompile>
+    <ClCompile Include="Source\StudyWatcher.cpp">
+      <Filter>Claude Code (MCP)</Filter>
+    </ClCompile>
     <ClInclude Include="Source\PhoneLink.h">
       <Filter>Recorder</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\StudyWatcher.h">
+      <Filter>Claude Code (MCP)</Filter>
     </ClInclude>
     <ClCompile Include="Source\PhoneDlg.cpp">
       <Filter>Recorder</Filter>

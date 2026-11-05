@@ -1000,6 +1000,7 @@
 #define IDC_BACKUPS_FOLDER              2745
 #define IDC_BACKUPS_RESULT              2746
 #define ID_FILE_BACKUPS                 38220
+#define ID_FILE_STUDYFOLDER             38221
 
 // Next default values for new objects
 // 

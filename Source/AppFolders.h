@@ -33,6 +33,8 @@
 //   (where they were before) move into it.
 // - Inbox: files sent from another computer over the Claude Code connection
 //   (send_file), for the tools that read files (study_nsf, study_module...).
+// - To study: files dropped in to be studied into the reference library
+//   (StudyWatcher.h), with Done and Failed folders in it.
 // - Songs: songs a client of the Claude Code connection saved that had no
 //   file yet (save_song, export_for_game), each in a folder of its own with
 //   the files exported next to it, since a client can't use File > Save As.
@@ -50,3 +52,4 @@ CString ReferencesFolder(bool Create);
 CString RecordingsFolder(bool Create);
 CString InboxFolder(bool Create);
 CString SongsFolder(bool Create);
+CString StudyFolder(bool Create);

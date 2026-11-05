@@ -580,6 +580,7 @@
     <ClCompile Include="Source\Api\AssistantSocket.cpp" />
     <ClCompile Include="Source\Api\AgentLog.cpp" />
     <ClCompile Include="Source\Api\Backups.cpp" />
+    <ClCompile Include="Source\Api\StudyInbox.cpp" />
     <ClCompile Include="Source\Api\DpcmKit.cpp" />
     <ClCompile Include="Source\Api\References.cpp" />
     <ClCompile Include="Source\Api\StyleGuide.cpp" />
@@ -636,6 +637,7 @@
     <ClInclude Include="Source\Api\AssistantSocket.h" />
     <ClInclude Include="Source\Api\AgentLog.h" />
     <ClInclude Include="Source\Api\Backups.h" />
+    <ClInclude Include="Source\Api\StudyInbox.h" />
     <ClInclude Include="Source\Api\DpcmKit.h" />
     <ClInclude Include="Source\Api\References.h" />
     <ClInclude Include="Source\Api\Png.h" />
@@ -749,7 +751,9 @@
     <ClCompile Include="Source\Api\PhoneTakes.cpp" />
     <ClInclude Include="Source\Api\PhoneTakes.h" />
     <ClCompile Include="Source\PhoneLink.cpp" />
+    <ClCompile Include="Source\StudyWatcher.cpp" />
     <ClInclude Include="Source\PhoneLink.h" />
+    <ClInclude Include="Source\StudyWatcher.h" />
     <ClCompile Include="Source\PhoneDlg.cpp" />
     <ClInclude Include="Source\PhoneDlg.h" />
     <ClCompile Include="Source\GlossaryDlg.cpp" />

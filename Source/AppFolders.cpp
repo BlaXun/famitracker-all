@@ -122,3 +122,8 @@ CString SongsFolder(bool Create)
 {
 	return FolderBeside(_T("Songs"), NULL, 0, _T("FamiTracker songs"), _T("*"), Create);
 }
+
+CString StudyFolder(bool Create)
+{
+	return FolderBeside(_T("To study"), NULL, 0, _T("FamiTracker to study"), _T("*"), Create);
+}

@@ -404,6 +404,8 @@ public:
 	afx_msg void OnFileConnectClaude();
 	afx_msg void OnFileExportForGames();
 	afx_msg void OnFileBackups();
+	afx_msg void OnFileStudyFolder();
+	afx_msg LRESULT OnStudyNews(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnEditVoiceEffect();
 	afx_msg void OnEditRecordPhone();
 	afx_msg void OnInstrumentLibrary();

@@ -107,6 +107,7 @@ BEGIN
         MENUITEM "Export for &games (OGG)...",  ID_FILE_EXPORTFORGAMES
         MENUITEM SEPARATOR
         MENUITEM "&Import NSF (game music)...", ID_FILE_IMPORTNSF
+        MENUITEM "Open the &study folder",       ID_FILE_STUDYFOLDER
         MENUITEM "Import text...",              ID_FILE_IMPORTTEXT
         MENUITEM "Export text...",              ID_FILE_EXPORTTEXT
         MENUITEM SEPARATOR
@@ -551,6 +552,7 @@ BEGIN
     ID_FILE_SAVE            "Save the active document\nSave"
     ID_FILE_SAVE_AS         "Save the active document with a new name\nSave As"
     ID_FILE_BACKUPS         "Keep a backup of the song as it is, or go back to one\nBackups"
+    ID_FILE_STUDYFOLDER     "Open the folder whose files FamiTracker studies into the reference library (NSF, FTM, MOD, S3M, XM, IT, MIDI)\nStudy folder"
 END
 
 STRINGTABLE 

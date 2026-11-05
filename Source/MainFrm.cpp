@@ -58,6 +58,8 @@
 #include "SongShapeDlg.h"
 #include "BackupsDlg.h"
 #include "PhoneLink.h"
+#include "StudyWatcher.h"
+#include "AppFolders.h"
 #include "GlossaryDlg.h"
 #include "GlossaryHear.h"
 #include "GlossaryTips.h"
@@ -258,6 +260,8 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND(ID_FILE_CONNECTCLAUDE, OnFileConnectClaude)
 	ON_COMMAND(ID_FILE_EXPORTFORGAMES, OnFileExportForGames)
 	ON_COMMAND(ID_FILE_BACKUPS, OnFileBackups)
+	ON_COMMAND(ID_FILE_STUDYFOLDER, OnFileStudyFolder)
+	ON_MESSAGE(WM_STUDY_NEWS, OnStudyNews)
 	ON_COMMAND(ID_EDIT_VOICEEFFECT, OnEditVoiceEffect)
 	ON_COMMAND(ID_EDIT_RECORDPHONE, OnEditRecordPhone)
 	ON_COMMAND(ID_INSTRUMENT_LIBRARY, OnInstrumentLibrary)
@@ -547,6 +551,9 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	// The glossary's explanations in place, and the glossary itself again if it was open (GlossaryTips.h)
 	StartGlossaryHelp(this);
+
+	// Files dropped into the study folder are studied into the reference library (StudyWatcher.h)
+	StartStudyWatcher(m_hWnd);
 
 	return 0;
 }
@@ -1901,6 +1908,30 @@ void CMainFrame::OnFileExportForGames()
 void CMainFrame::OnFileBackups()
 {
 	ShowBackups(this);	// BackupsDlg.h
+}
+
+// File > Open the study folder: the files dropped there are studied into the reference library (StudyWatcher.h)
+void CMainFrame::OnFileStudyFolder()
+{
+	const CString Folder = StudyFolder(true);
+	if (Folder.IsEmpty()) {
+		AfxMessageBox(_T("FamiTracker couldn't make its study folder."), MB_ICONWARNING);
+		return;
+	}
+	StartStudyWatcher(m_hWnd);		// made at start; this makes sure
+	ShellExecute(m_hWnd, _T("open"), Folder, NULL, NULL, SW_SHOWNORMAL);
+	SetMessageText(_T("Drop NSF, FTM, MOD, S3M, XM, IT or MIDI files into the study folder: FamiTracker studies them into the ")
+		_T("reference library and moves them into Done."));
+}
+
+LRESULT CMainFrame::OnStudyNews(WPARAM wParam, LPARAM lParam)
+{
+	CString *pText = reinterpret_cast<CString*>(lParam);
+	if (pText != NULL) {
+		SetMessageText(*pText);
+		delete pText;
+	}
+	return 0;
 }
 
 void CMainFrame::OnEditVoiceEffect()
@@ -3428,6 +3459,7 @@ void CMainFrame::OnDestroy()
 	if (m_pMcpConnection != NULL)
 		m_pMcpConnection->Stop();	// no more requests from Claude Code
 	ClosePhoneTakes();				// nor from the phone page (PhoneLink.h)
+	StopStudyWatcher();				// the study folder stops at its next track (StudyWatcher.h)
 	StopGlossaryHelp();				// the glossary keeps its place, its example stops (GlossaryTips.h)
 	if (m_pSoundPreview != NULL)
 		m_pSoundPreview->Close();	// a sound playing stops

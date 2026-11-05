@@ -2006,6 +2006,21 @@ characters) say so, and `play`, `compare_versions` and `check_song` no longer
 say "you can't hear": they play for the user's ears and point to `listen`.
 `TestListenSaysItHears` covers the texts.
 
+The study folder (from `feat-study-folder`): files dropped into "To study" next to FamiTracker.exe
+(`StudyFolder` in `Source/AppFolders.cpp`, with Done and Failed in it) are studied into the reference library while
+FamiTracker runs, as `study_nsf` and `study_module` study them: every music track of an NSF (all its tracks when none
+sounds like music), every track of a FamiTracker module, a tracker module or MIDI file as one piece, each study keeping
+the user's tags and notes of an earlier one. `Source/Api/StudyInbox.cpp` (portable) has the logic:
+`StudyFileKind`, `StudyFileIntoLibrary` (a `StudyLibrary`'s Read and Save, a Progress that can stop it, the
+references' source set to where the file lands in Done, so `references restudy` finds it), `StudyFilesReady` (a file
+listed twice a poll apart with the same size and time), `StudyContentKey` and the log's lines (`StudyLogLine`,
+`StudiedKeys`: a file whose content was studied before goes to Done without studying it again) and
+`FreeStudyName`. `Source/StudyWatcher.cpp` is the Windows side: a thread of its own (below normal priority, polling
+every 2 s, started at the end of `CMainFrame::OnCreate` and stopped in `OnDestroy` at the next track) that moves each
+file into Done, or into Failed with "<file>.txt" saying why, appends to "Study log.txt" and tells the status bar
+(`WM_STUDY_NEWS`, a `CString*` the main window deletes). File > Open the study folder (`ID_FILE_STUDYFOLDER` 38221)
+opens it. `TestStudyInbox` in `Source/Api/tests/ApiTests.cpp` covers the portable part.
+
 Backups (from `feat-tool-issues`, GitHub issue #4): `create_backup`,
 `list_backups` and `restore_backup` (`CreateBackupTool`, `ListBackupsTool`,
 `RestoreBackupTool` before the reference library in `Tools.cpp`;
