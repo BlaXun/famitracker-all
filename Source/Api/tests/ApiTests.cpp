@@ -13512,6 +13512,11 @@ void TestFindSound()
 	Result = Run(Song, "find_sound", "{\"from\": \"song\"}");
 	CHECK_HAS(Result.Text, "3 sounds from this song:");
 	CHECK_HAS(Result.Text, "It's the song's instrument 01: write_notes and set_instrument use it by name.");
+	CHECK(!Run(Song, "design_instrument", "{\"name\": \"Pedal drone\", \"kind\": \"bass\", \"channel\": \"Triangle\"}").IsError);
+	Result = Run(Song, "find_sound", "{\"query\": \"pedal drone\", \"from\": \"song\"}");
+	CHECK_HAS(Result.Text, "- Pedal drone (");
+	CHECK_HAS(Result.Text, "; a 2A03 sound for any of its channels, not played in this track yet). ");
+	CHECK_LACKS(Result.Text, "plays on Pulse 1");
 	Result = Run(Song, "find_sound", "{\"kind\": \"drums\", \"from\": \"presets\"}");
 	CHECK_HAS(Result.Text, "- Snare (drums; ready-made; plays on Noise)");
 	CHECK_LACKS(Result.Text, "Soft lead");

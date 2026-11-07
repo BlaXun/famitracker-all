@@ -32858,8 +32858,12 @@ std::string FindSoundTool(Session &S, const Json &Args)
 		Plural(static_cast<int>(Found.size()), "sound", "sounds").c_str(), Asked.c_str(), Q.Words.empty() ? "" : ", best first");
 	for (size_t i = 0; i < Found.size() && i < static_cast<size_t>(MAX_LISTED); ++i) {
 		const SoundEntry &E = All[Found[i]];
-		Out += "- " + E.Name + " (" + E.Kind + "; " + E.Origin + "; plays on " + E.ChannelName + ")" + (E.Words.empty() ? "" : ": " +
-			E.Words) + ". " + HowToAdd(S.Song, E, Channel) + ".";
+		// The song's own sound that no note plays yet plays on any channel of its chip, not on the one listed first (a model
+		// read "plays on Pulse 1" for a triangle's pedal drone and thought it made on the wrong channel)
+		const bool Unplayed = E.Source == SOURCE_SONG && E.Words == "not played in this track";
+		Out += "- " + E.Name + " (" + E.Kind + "; " + E.Origin + (Unplayed ? "; a " + E.Chip + " sound for any of its channels, "
+			"not played in this track yet)" : "; plays on " + E.ChannelName + ")" + (E.Words.empty() ? "" : ": " + E.Words)) +
+			". " + HowToAdd(S.Song, E, Channel) + ".";
 		if (E.InSong >= 0 && E.Make != MAKE_NONE && E.AddsChip.empty())
 			Out += Format(" The song has it already, as instrument %02X.", E.InSong);
 		if (SoundVanishes(E.Heard))
