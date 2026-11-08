@@ -30289,7 +30289,10 @@ void TestLaterKinds()
 		{ "an abandoned home in the rain", "melancholic" }, { "grief and loneliness", "melancholic" },
 		{ "A cozy, but run-down wooden hut", "cozy" }, { "a dusty old house", "cozy" }, { "a worn road through the fields",
 		"adventure" }, { "a lonely cave", "melancholic" }, { "a vast, empty void", "atmospheric" },
-		{ "an eerie silence in the deep", "atmospheric" }, { "an eerie cave", "mysterious" }, { "alien ruins", "mysterious" } };
+		{ "an eerie silence in the deep", "atmospheric" }, { "an eerie cave", "mysterious" }, { "alien ruins", "mysterious" },
+		// Every description is of a game's place: "game" picks no kind (it made a mountain's freedom playful)
+		{ "They are now on one of the highest mountains in the game. A sense of freedom and adventure!", "adventure" },
+		{ "a toy shop in the game", "playful" } };
 	for (const Named &N : WORDS) {
 		const ShapeWords W = ReadShapeWords(N.Words);
 		Check(W.Kind == N.Kind, (std::string(N.Words) + ": " + W.Kind + " (" + W.Why + ")").c_str(), __LINE__);

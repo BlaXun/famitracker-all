@@ -1248,12 +1248,12 @@ const KindWordRow KIND_WORDS[] = {
 		0, "night town", true, 0, 0 },
 	{ "floating", "floating", "float floats floating floaty afloat sky skies cloud clouds underwater drift drifting waiting wait "
 		"dock docks pier lagoon dawn", 0, 0, "night town", true, 0, 0 },
-	{ "playful", "playful", "playful minigame minigames game games toy toys silly funny clown clowns goofy cheeky circus prank "
+	{ "playful", "playful", "playful minigame minigames toy toys silly funny clown clowns goofy cheeky circus prank "
 		"jester", 0, 0, "small town", false, 0, 0 },
 	{ "cozy", "a warm place, cozy", "cozy cosy homey homely warm warmth friendly hut cabin cottage shop store inn tavern bakery cafe "
 		"teahouse house kitchen hearth fireplace indoors indoor granny grandma grandmother grandpa elderly shopkeeper", 0,
 		"shop store inn tavern cafe house", "town small", true, "night town small", 0 },
-	{ "adventure", "adventure", "adventure adventures adventurous journey journeys travel travels traveling travelling voyage "
+	{ "adventure", "adventure", "adventure adventures adventurous freedom journey journeys travel travels traveling travelling voyage "
 		"field fields road roads flying flight airship airships explore exploring exploration overworld quest plains", 0, 0,
 		"stage town", false, 0, "field fields road roads overworld plains" },
 };
